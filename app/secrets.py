@@ -19,6 +19,11 @@ def _streamlit_secrets() -> Any | None:
         return None
 
 
+def streamlit_secrets() -> Any | None:
+    """``st.secrets`` when Streamlit is running; ``None`` in other contexts."""
+    return _streamlit_secrets()
+
+
 def get_secret(name: str, default: str = "") -> str:
     secrets = _streamlit_secrets()
     if secrets is not None:

@@ -14,6 +14,8 @@ import streamlit as st
 
 from app import auth
 from app.cache import sheets_service, load_users_cached
+from app.navigation import ROLE_SALES, normalize_role
+from app.smtp_profiles import SmtpResolved, resolve_smtp_detail
 from app.state import bump_contacts_cache
 from config.settings import (
     CONTACT_ESTADO_OPCIONES,
@@ -21,7 +23,7 @@ from config.settings import (
 )
 from services.activity_log import append_activity
 from services.contact_use_cases import save_contact_by_id
-from services.email_service import render_template, send_email, validate_placeholders
+from services.email_service import render_template, send_email, smtp_exception_user_message, validate_placeholders
 from services.sheet_date_format import is_valid_dd_mm_yyyy
 from ui.components.tables import filter_dataframe
 
@@ -211,6 +213,7 @@ def _render_template_editor(
     contacts: pd.DataFrame,
     df_raw: pd.DataFrame,
     selected_ids: list[str],
+    smtp_detail: SmtpResolved,
 ) -> None:
     subject = st.text_input("Asunto", value=_DEFAULT_SUBJECT, key="email_subject")
     body = st.text_area("Cuerpo", value=_DEFAULT_BODY, height=220, key="email_body")
@@ -257,7 +260,7 @@ def _render_template_editor(
     label = f"Enviar emails ({n})" if n else "Enviar emails"
     if st.button(label, disabled=(bool(invalid) or n == 0), type="primary", use_container_width=True):
         with st.spinner("Enviando emails y actualizando seguimiento…"):
-            _do_send(contacts, df_raw, selected_ids, subject, body)
+            _do_send(contacts, df_raw, selected_ids, subject, body, smtp_detail)
 
 
 def _email_actor_name() -> str:
@@ -275,6 +278,7 @@ def _do_send(
     selected_ids: list[str],
     subject: str,
     body: str,
+    smtp_detail: SmtpResolved,
 ) -> None:
     update_seg: bool = st.session_state.get("email_update_seguimiento", False)
 
@@ -289,6 +293,8 @@ def _do_send(
             st.error("Fecha próxima acción no válida. Corrige antes de enviar.")
             return
 
+    delivery = smtp_detail.delivery
+
     # ---- Send loop ----
     sent_ids: list[str] = []
     send_errors: list[str] = []
@@ -301,10 +307,19 @@ def _do_send(
         if not to:
             continue
         try:
-            send_email(to, render_template(subject, contact), render_template(body, contact))
+            send_email(
+                to,
+                render_template(subject, contact),
+                render_template(body, contact),
+                delivery=delivery,
+            )
             sent_ids.append(cid)
         except Exception as exc:
-            send_errors.append(f"{contact.get('nombre', cid)}: {exc}")
+            friendly = smtp_exception_user_message(
+                exc,
+                routed_profile_slug=smtp_detail.routed_profile_slug,
+            )
+            send_errors.append(f"{contact.get('nombre', cid)}: {friendly}")
 
     if sent_ids:
         st.success(f"Emails enviados: {len(sent_ids)} / {len(selected_ids)} seleccionados.")
@@ -378,10 +393,81 @@ def _do_send(
 # Main entry point
 # ---------------------------------------------------------------------------
 
+_EMAIL_PORTAL_UID_KEY = "_email_portal_unlocked_uid"
+
+
+def _render_email_password_gate() -> bool:
+    """Return True when the current user has confirmed their CRM password for this visit."""
+    uid = auth.get_authenticated_user_id()
+    users = load_users_cached(st.session_state.get("users_cache_version", 0))
+    me = next((u for u in users if u.employee_id == uid), None)
+    if me is None:
+        st.error("No se encontró tu usuario en «Usuarios CRM».")
+        return False
+
+    if st.session_state.get(_EMAIL_PORTAL_UID_KEY) == uid:
+        return True
+
+    st.info(
+        "Introduce la **misma contraseña** que en la hoja «Usuarios CRM» para este usuario. "
+        "Así se confirma que eres tú y el envío usará el buzón SMTP que te corresponde (Jiajun / Kabir / …)."
+    )
+    with st.form("email_portal_password", clear_on_submit=False):
+        pw = st.text_input("Contraseña de Usuarios CRM", type="password", key="_email_portal_pw_input")
+        submitted = st.form_submit_button("Desbloquear envío de emails", use_container_width=True)
+    if submitted:
+        if pw == me.password:
+            st.session_state[_EMAIL_PORTAL_UID_KEY] = uid
+            st.session_state.pop("login_error", None)
+            st.rerun()
+        else:
+            st.error("Contraseña incorrecta.")
+    return False
+
+
 def render(df: pd.DataFrame) -> None:
     st.title("Email")
     if df.empty:
         st.info("No hay contactos cargados.")
+        return
+
+    if not _render_email_password_gate():
+        return
+
+    uid = auth.get_authenticated_user_id()
+    actor_nombre = ""
+    app_role = ""
+    for u in load_users_cached(st.session_state.get("users_cache_version", 0)):
+        if u.employee_id == uid:
+            actor_nombre = u.nombre
+            app_role = u.role
+            break
+    smtp_detail = resolve_smtp_detail(
+        employee_id=uid, nombre=actor_nombre, app_role=app_role
+    )
+
+    if not smtp_detail.profile_complete:
+        if smtp_detail.routed_profile_slug:
+            slug = smtp_detail.routed_profile_slug
+            st.error(
+                f"No se pueden enviar correos: tu usuario está enlazado al perfil SMTP «{slug}» (por ejemplo "
+                f"la cuenta de correo de **{actor_nombre or uid}**), pero ese perfil **no está bien configurado** "
+                "o falta en secrets / `.env` (host, usuario SMTP, contraseña de aplicación)."
+            )
+        elif normalize_role(app_role) == ROLE_SALES:
+            st.error(
+                "No se pueden enviar correos: con rol **sales** hace falta una **ruta SMTP propia** para tu usuario. "
+                f"Tu `employee_id` en «Usuarios CRM» es **`{uid}`**; en `.env`/secretos debe existir "
+                f"`SMTP_ROUTE_BY_EMPLOYEE_{uid}=kabir` (o el perfil que corresponda) "
+                "y además el bloque `SMTP_PROFILE_KABIR_*` / `[smtp_profiles.kabir]` con usuario y contraseña. "
+                "Si el `employee_id` no coincide con `EMP002` de tu `.env`, la app no te asigna Kabir y antes "
+                "podía caer en el SMTP global (p. ej. Jiajun)."
+            )
+        else:
+            st.error(
+                "No se pueden enviar correos: **SMTP global no configurado** (`SMTP_HOST`, `SMTP_USER`, etc.) "
+                "o no tienes ruta a un perfil (`SMTP_ROUTE_BY_EMPLOYEE_…` / `[smtp_route_by_*]`)."
+            )
         return
 
     _ensure_state()
@@ -403,4 +489,8 @@ def render(df: pd.DataFrame) -> None:
 
     with right:
         st.subheader("Plantilla")
-        _render_template_editor(contacts, df, selected_ids)
+        if smtp_detail.routed_profile_slug:
+            st.caption(
+                f"Enviando como **{smtp_detail.delivery.user}** (perfil «{smtp_detail.routed_profile_slug}»)."
+            )
+        _render_template_editor(contacts, df, selected_ids, smtp_detail)

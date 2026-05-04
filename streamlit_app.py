@@ -115,6 +115,9 @@ with st.sidebar:
     st.session_state["_last_page"] = page
     st.session_state.active_page = page
 
+    if page != "Email":
+        st.session_state.pop("_email_portal_unlocked_uid", None)
+
     if st.button("Recargar datos", use_container_width=True):
         clear_all_cache()
         st.rerun()
@@ -142,7 +145,9 @@ if page == "Dashboard":
     dashboard.render(contacts_df)
 elif page == ACCIONES_PAGE:
     if normalize_role(selected_user.role) not in ROLES_WITH_ACCIONES_PAGE:
-        st.error("La sección Acciones solo está disponible para administradores y equipo agro.")
+        st.error(
+            "La sección Acciones solo está disponible para administradores, equipo agro y ventas (sales)."
+        )
         st.stop()
     actions_dashboard.render()
 elif page == "Contactos":

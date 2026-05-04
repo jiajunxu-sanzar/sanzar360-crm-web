@@ -5,7 +5,7 @@ import time
 
 import pandas as pd
 
-from app.navigation import ROLE_EMPLOYEE
+from app.navigation import ROLE_ADMIN, ROLE_EMPLOYEE, ROLE_SALES
 from services.sheets_service import SheetsService
 
 USERS_WS = "Usuarios CRM"
@@ -22,13 +22,13 @@ class AppUser:
 
 def _default_users() -> list[AppUser]:
     role_by_name = {
-        "Jiajun Xu": "admin",
-        "David Ortiz": "agro_team",
+        "Jiajun Xu": ROLE_SALES,
+        "David Ortiz": ROLE_ADMIN,
         "Andrei Pop": ROLE_EMPLOYEE,
         "Viviana Castañeda": "agro_team",
         "Victor Gonzalez": ROLE_EMPLOYEE,
         "Pablo Sacristán": ROLE_EMPLOYEE,
-        "Kabir Caravotta": "agro_team",
+        "Kabir Caravotta": ROLE_SALES,
         "Carla Moreno": "agro_team",
         "Carolina Simoes": ROLE_EMPLOYEE,
         "Marco Ruano": "agro_team",

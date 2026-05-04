@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 import smtplib
+import ssl
 from email.message import EmailMessage
 
-from config.settings import CONFIG, TEMPLATE_LABEL_ALIASES
+from app.smtp_profiles import SmtpDeliveryConfig, default_smtp_from_config
+from config.settings import TEMPLATE_LABEL_ALIASES
 
 PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
 
@@ -26,17 +28,51 @@ def render_template(text: str, contact: dict[str, str]) -> str:
     return PLACEHOLDER_RE.sub(repl, text or "")
 
 
-def send_email(to: str, subject: str, body: str, *, config=CONFIG) -> None:
-    if not config.smtp_host or not config.smtp_user:
+def smtp_exception_user_message(exc: BaseException, *, routed_profile_slug: str | None) -> str:
+    """Mensaje en castellano para fallos SMTP (autenticación, red, etc.)."""
+    perfil = (
+        f"El perfil SMTP «{routed_profile_slug}» (p. ej. cuenta de Jiajun o Kabir)"
+        if routed_profile_slug
+        else "La cuenta SMTP configurada para esta app"
+    )
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return (
+            f"{perfil} no pudo autenticarse: el servidor rechazó usuario o contraseña. "
+            "Revisa la contraseña de aplicación del proveedor (en Gmail, no uses la contraseña normal de la cuenta). "
+            "Si el error persiste, comprueba en secrets / .env que host, puerto y TLS coincidan con tu proveedor."
+        )
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return f"{perfil} rechazó el destinatario. Comprueba que la dirección de correo del contacto sea válida."
+    if isinstance(exc, smtplib.SMTPException):
+        return f"{perfil} devolvió un error al enviar: {exc}"
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return (
+            f"No hubo conexión con el servidor SMTP de {perfil}. "
+            "Comprueba host, puerto, firewall y que el servicio de correo permita SMTP."
+        )
+    if isinstance(exc, ssl.SSLError):
+        return f"Error de cifrado (TLS/SSL) con el servidor SMTP. {perfil}: revisa use_tls / puerto."
+    return f"{perfil} — error al enviar: {exc}"
+
+
+def send_email(
+    to: str,
+    subject: str,
+    body: str,
+    *,
+    delivery: SmtpDeliveryConfig | None = None,
+) -> None:
+    cfg = delivery or default_smtp_from_config()
+    if not cfg.host or not cfg.user:
         raise RuntimeError("SMTP no está configurado.")
     msg = EmailMessage()
-    msg["From"] = config.smtp_user
+    msg["From"] = cfg.user
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
-    with smtplib.SMTP(config.smtp_host, config.smtp_port) as smtp:
-        if config.smtp_use_tls:
+    with smtplib.SMTP(cfg.host, cfg.port) as smtp:
+        if cfg.use_tls:
             smtp.starttls()
-        if config.smtp_password:
-            smtp.login(config.smtp_user, config.smtp_password)
+        if cfg.password:
+            smtp.login(cfg.user, cfg.password)
         smtp.send_message(msg)
