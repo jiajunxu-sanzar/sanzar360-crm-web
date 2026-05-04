@@ -1,0 +1,944 @@
+from __future__ import annotations
+
+import html
+from datetime import date, datetime, timedelta
+
+import pandas as pd
+import streamlit as st
+
+from app import auth
+from app.cache import history_service, sheets_service, load_users_cached
+from app.state import bump_contacts_cache, bump_history_cache, select_contact
+from app.telemetry import timed
+from config.settings import (
+    CANONICAL_COLUMNS,
+    CONTACT_ESTADO_OPCIONES,
+    FUENTE_LEAD_OPCIONES,
+    PERSONA_COMERCIAL_OPCIONES,
+    SEGUIMIENTO_COMERCIAL_FIELDS,
+    VALOR_OPCIONES,
+)
+from services.activity_log import append_activity
+from services.history_service import HISTORY_SPECS, count_sensor_assets
+from services.contact_use_cases import create_empty_contact, save_contact_by_id
+from services.sheet_date_format import (
+    SENSOR_SERIAL_NUMBER_FORMAT_HELP,
+    is_valid_dd_mm_yyyy,
+    is_valid_sensor_serial_number,
+    validate_contact_date_fields,
+    validate_dd_mm_yyyy_fields,
+)
+from ui.components.cards import card, chip
+from ui.components.customer_timeline import render_contact_timeline_block
+from ui.components.contact_detail_header import render_contact_detail_header
+from ui import modal_state
+from ui.components.history import (
+    render_history_summary,
+    render_history_table,
+)
+from ui.components.tables import filter_dataframe
+from ui.palette import (
+    STATUS_INFO,
+    STATUS_DANGER,
+    STATUS_NEUTRAL,
+    dash_bucket_button_style,
+    incident_status_style,
+    subscription_status_style,
+)
+
+DATE_COLUMNS_BY_KIND = {
+    "sensores": [("Fecha inicio", "fecha_inicio"), ("Fecha fin", "fecha_fin"), ("Última revisión", "ultima_revision")],
+    "campanas": [("Fecha inicio campaña", "fecha_campana_inicio"), ("Fecha fin campaña", "fecha_campana_fin")],
+    "suscripciones": [
+        ("Fecha pago", "fecha_pago"),
+        ("Inicio suscripción", "suscripcion_fecha_inicio"),
+        ("Fin suscripción", "suscripcion_fecha_fin"),
+    ],
+    "incidencias": [("Fecha apertura", "fecha_apertura"), ("Fecha cierre", "fecha_cierre")],
+}
+
+SELECT_OPTIONS = {
+    "red": ["auto", "movistar", "vodafone", "orange", "yoigo", "otro"],
+    "tipo_operacion": ["prestamo", "venta", "demo", "mantenimiento", "otro"],
+    "estado_sensor": ["activo", "en revisión", "devuelto", "mantenimiento", "baja"],
+    "moneda": ["EUR", "Dólar"],
+    "metodo_pago": ["transferencia", "tarjeta", "recibo", "efectivo", "otro"],
+    "estado_suscripcion": ["activa", "caduca pronto", "inactiva"],
+    "tipo_incidencia": ["sensor", "conectividad", "riego", "facturación", "campaña", "otro"],
+    "estado": ["abierta", "en curso", "bloqueada", "cerrada"],
+    "prioridad": ["alta", "media", "baja"],
+}
+
+CONTACT_LIST_PANEL_HEIGHT_BASE = 980
+CONTACT_LIST_PANEL_HEIGHT_WITH_DETAIL = 1320
+
+
+def _clear_modal_flags() -> None:
+    st.session_state["contact_create_confirm_open"] = False
+    st.session_state["contact_creating_in_progress"] = False
+    modal_state.close_modal()
+
+
+def _clear_history_selection(contact_id: str, kind: str) -> None:
+    """Remove the persisted dataframe-widget selection for (contact, kind).
+
+    Without this, st.dataframe keeps the highlighted row across reruns and
+    _handle_history_table_secondary_open keeps showing "Editar fila seleccionada"
+    even after the modal has been dismissed.
+    """
+    key = f"hist_table_select_{contact_id}_{kind}"
+    st.session_state.pop(key, None)
+
+
+def render(df: pd.DataFrame) -> pd.DataFrame:
+    with timed("contacts.render"):
+        refreshed = st.session_state.pop("_contacts_refresh_df", None)
+        if isinstance(refreshed, pd.DataFrame):
+            df = refreshed
+
+        st.title("Contactos")
+        if df.empty:
+            st.warning("No hay contactos cargados. Puedes crear el primero desde el formulario inferior.")
+
+        left, right = st.columns([0.38, 0.62], gap="large")
+        with left:
+            selected_id = _render_contact_list(df)
+        with right:
+            if selected_id:
+                df = _render_contact_detail(df, selected_id)
+            else:
+                st.info("Selecciona un contacto para abrir la ficha.")
+        return df
+
+
+def _render_contact_list(df: pd.DataFrame) -> str:
+    _render_next_action_strip(df)
+    if "contact_search_open" not in st.session_state:
+        st.session_state.contact_search_open = False
+    if "contact_filters_open" not in st.session_state:
+        st.session_state.contact_filters_open = False
+
+    st.subheader("Buscar")
+    top_row = st.columns([0.16, 0.84], gap="small")
+    if top_row[0].button("🔍", key="contact_toggle_search", use_container_width=True):
+        st.session_state.contact_search_open = not st.session_state.contact_search_open
+        if not st.session_state.contact_search_open:
+            st.session_state.contact_filter_text = ""
+            st.session_state.contact_filters_open = False
+        st.rerun()
+
+    query = ""
+    if st.session_state.contact_search_open:
+        search_row = top_row[1].columns([0.86, 0.14], gap="small")
+        query = search_row[0].text_input(
+            "Buscar",
+            key="contact_filter_text",
+            label_visibility="collapsed",
+            placeholder="Nombre, municipio, provincia, correo, teléfono, cultivo o contact_id",
+        )
+        if search_row[1].button("⏬", key="contact_toggle_filters", use_container_width=True, help="Filtros"):
+            st.session_state.contact_filters_open = not st.session_state.contact_filters_open
+            st.rerun()
+
+    province = ""
+    status = ""
+    entity_type = ""
+    municipio = ""
+    cultivos_filter = ""
+    if st.session_state.contact_filters_open:
+        filter_row_1 = st.columns([1.2, 1.2, 1.2], gap="small")
+        status = filter_row_1[0].selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
+        province = filter_row_1[1].selectbox(
+            "Provincia",
+            [""] + sorted([x for x in df.get("provincia", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
+            key="contact_filter_province",
+        )
+        entity_type = filter_row_1[2].selectbox(
+            "Tipo de entidad",
+            [""] + sorted([x for x in df.get("tipo_entidad", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
+            key="contact_filter_entity",
+        )
+        filter_row_2 = st.columns([1.2, 1.2], gap="small")
+        municipio = filter_row_2[0].selectbox(
+            "Municipio",
+            [""] + sorted([x for x in df.get("municipio", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
+            key="contact_filter_municipio",
+        )
+        cultivos_filter = filter_row_2[1].text_input("Cultivos contiene", key="contact_filter_cultivos")
+
+    filtered = filter_dataframe(
+        df,
+        query,
+        ["nombre", "municipio", "provincia", "correo", "telefono", "cultivos", "contact_id"],
+    )
+    if province:
+        filtered = filtered[filtered["provincia"].astype(str) == province]
+    if status:
+        filtered = filtered[filtered["estado"].astype(str) == status]
+    if entity_type:
+        filtered = filtered[filtered["tipo_entidad"].astype(str) == entity_type]
+    if municipio:
+        filtered = filtered[filtered["municipio"].astype(str) == municipio]
+    if (cultivos_filter or "").strip():
+        filtered = filtered[
+            filtered["cultivos"].fillna("").astype(str).str.contains(cultivos_filter.strip(), case=False, na=False)
+        ]
+    if st.session_state.contact_filters_open and not st.checkbox("Mostrar Perdido", value=True, key="contact_filter_show_lost"):
+        filtered = filtered[filtered["estado"].astype(str).str.lower() != "perdido"]
+    dash_bucket = st.session_state.get("dash_bucket", "")
+    if dash_bucket:
+        today = pd.Timestamp(date.today())
+        next_actions = pd.to_datetime(
+            filtered["proxima_accion_fecha"].fillna("").astype(str),
+            format="%d/%m/%Y",
+            errors="coerce",
+        )
+        if dash_bucket == "past":
+            filtered = filtered[next_actions < today]
+        elif dash_bucket == "today":
+            filtered = filtered[next_actions == today]
+        elif dash_bucket == "tomorrow":
+            filtered = filtered[next_actions == (today + pd.Timedelta(days=1))]
+    filtered = filtered.reset_index(drop=True)
+
+    if st.button("Nuevo contacto", key="create_contact_top", use_container_width=True):
+        st.session_state.contact_create_confirm_open = True
+        st.rerun()
+    if st.session_state.get("contact_create_confirm_open", False):
+        _render_create_contact_confirmation(df)
+
+    st.caption(f"{len(filtered)} contactos encontrados")
+    st.caption("Haz click en una fila para abrir la ficha automáticamente.")
+    current = st.session_state.get("selected_contact_id", "")
+    selected_from_table = _render_contact_table(filtered, current)
+    if selected_from_table:
+        current = selected_from_table
+    selected_id = selected_from_table or current
+    if selected_id:
+        st.session_state.selected_contact_id = selected_id
+    return selected_id
+
+
+def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> str:
+    if filtered.empty:
+        st.info("No hay datos para mostrar.")
+        return ""
+
+    panel_height = (
+        CONTACT_LIST_PANEL_HEIGHT_WITH_DETAIL
+        if (selected_contact_id or "").strip()
+        else CONTACT_LIST_PANEL_HEIGHT_BASE
+    )
+    with st.container(height=panel_height, border=True):
+        st.markdown(
+            "<div class='sanzar-contact-table'>"
+            "<div class='sanzar-contact-row sanzar-contact-header'>"
+            "<span>Nombre</span><span>Estado</span><span>Provincia</span><span>Municipio</span>"
+            "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        for row in filtered.fillna("").astype(str).to_dict("records"):
+            contact_id = row.get("contact_id", "")
+            row_label = " | ".join(
+                [
+                    row.get("nombre", "") or "Sin nombre",
+                    row.get("estado", "") or "Sin estado",
+                    row.get("provincia", "") or "Sin provincia",
+                    row.get("municipio", "") or "Sin municipio",
+                ]
+            )
+            if contact_id == selected_contact_id:
+                st.markdown(
+                    "<div class='sanzar-contact-row selected'>"
+                    f"<span class='sanzar-contact-cell'>{html.escape(row.get('nombre', ''))}</span>"
+                    f"<span class='sanzar-contact-cell'>{html.escape(row.get('estado', ''))}</span>"
+                    f"<span class='sanzar-contact-cell'>{html.escape(row.get('provincia', ''))}</span>"
+                    f"<span class='sanzar-contact-cell'>{html.escape(row.get('municipio', ''))}</span>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                continue
+            if st.button(row_label, key=f"contact_row_{contact_id}", use_container_width=True):
+                _clear_modal_flags()
+                st.session_state.selected_contact_id = contact_id
+                st.rerun()
+    return ""
+
+
+@st.dialog("Nuevo contacto")
+def _create_contact_dialog(df: pd.DataFrame) -> None:
+    if st.session_state.get("contact_creating_in_progress", False):
+        with st.spinner("Creando nuevo contacto..."):
+            nombre_crear = st.session_state.pop("_create_contact_nombre", "").strip()
+            new_df, new_contact_id = create_empty_contact(
+                df,
+                sheets_service(),
+                nombre=nombre_crear,
+            )
+            bump_contacts_cache()
+            st.session_state["_contacts_refresh_df"] = new_df
+            append_activity(
+                sheets_service(),
+                contact_id=new_contact_id,
+                nombre_contacto=nombre_crear,
+                tipo_accion="creacion nuevo contacto",
+                detalle="",
+                persona=_actor_name(),
+            )
+            select_contact(new_contact_id)
+            st.session_state.contact_create_confirm_open = False
+            st.session_state.contact_creating_in_progress = False
+        st.rerun()
+
+    st.markdown("Introduce el **nombre** del nuevo contacto y confirma para crear la ficha.")
+    st.text_input(
+        "Nombre del contacto",
+        key="dialog_new_contact_nombre",
+        placeholder="Ej. Cooperativa San José",
+    )
+    col_confirm, col_cancel = st.columns(2)
+    with col_confirm:
+        if st.button("Confirmar", use_container_width=True, key="confirm_create_contact_dialog"):
+            nombre_val = str(st.session_state.get("dialog_new_contact_nombre", "")).strip()
+            if not nombre_val:
+                st.error("Introduce un nombre para el contacto.")
+                return
+            st.session_state["_create_contact_nombre"] = nombre_val
+            st.session_state.contact_creating_in_progress = True
+            st.rerun()
+    with col_cancel:
+        if st.button("Cancelar", use_container_width=True, key="cancel_create_contact_dialog"):
+            st.session_state.pop("dialog_new_contact_nombre", None)
+            _clear_modal_flags()
+            st.rerun()
+
+
+def _render_create_contact_confirmation(df: pd.DataFrame) -> None:
+    _create_contact_dialog(df)
+
+
+def _actor_name() -> str:
+    """Return the display name of the currently logged-in user."""
+    uid = auth.get_authenticated_user_id()
+    users = load_users_cached(st.session_state.get("users_cache_version", 0))
+    for u in users:
+        if u.employee_id == uid:
+            return u.nombre
+    return uid
+
+
+def _log_contact_save_actions(
+    original: dict[str, str],
+    values: dict[str, str],
+    actor: str,
+) -> None:
+    """Diff old vs new values and log 'seguimiento comercial' and/or
+    'modificacion contacto' actions for whichever field groups changed."""
+    contact_id = str(original.get("contact_id", ""))
+    nombre_contacto = str(values.get("nombre") or original.get("nombre", ""))
+    sheets = sheets_service()
+
+    seg_changed: list[str] = []
+    other_changed: list[str] = []
+    skip = {"contact_id"}
+
+    for key, new_val in values.items():
+        if key in skip:
+            continue
+        old_val = str(original.get(key, "")).strip()
+        if str(new_val).strip() != old_val:
+            if key in SEGUIMIENTO_COMERCIAL_FIELDS:
+                seg_changed.append(key)
+            else:
+                other_changed.append(key)
+
+    if seg_changed:
+        append_activity(
+            sheets,
+            contact_id=contact_id,
+            nombre_contacto=nombre_contacto,
+            tipo_accion="seguimiento comercial",
+            detalle=", ".join(seg_changed),
+            persona=actor,
+        )
+    if other_changed:
+        append_activity(
+            sheets,
+            contact_id=contact_id,
+            nombre_contacto=nombre_contacto,
+            tipo_accion="modificacion contacto",
+            detalle=", ".join(other_changed),
+            persona=actor,
+        )
+
+
+def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
+    matches = df[df["contact_id"].astype(str) == str(contact_id)]
+    if matches.empty:
+        st.error("El contacto seleccionado no existe en la tabla actual.")
+        return df
+    row_idx = matches.index[0]
+    contact = matches.iloc[0].fillna("").astype(str).to_dict()
+
+    hs = history_service()
+    subscription_status = hs.subscription_status_for_contact(contact_id)
+    open_incidents = hs.has_open_incidents(contact_id)
+    render_contact_detail_header(
+        contact=contact,
+        contact_id=contact_id,
+        subscription_status=subscription_status,
+        open_incidents=open_incidents,
+    )
+    if st.toggle(
+        "Mostrar línea de tiempo (sensores, campañas, pagos e incidencias)",
+        value=True,
+        key=f"contact_timeline_visible_{contact_id}",
+    ):
+        render_contact_timeline_block(contact_id)
+    st.divider()
+    view_mode = st.radio(
+        "Vista de ficha",
+        ("Datos", "Históricos"),
+        horizontal=True,
+        key=f"contact_detail_view_mode_{contact_id}",
+    )
+    if view_mode == "Datos":
+        updated = _render_contact_form(df, row_idx, contact)
+    else:
+        updated = None
+        _render_operativa_cards(contact)
+    return updated if updated is not None else df
+
+
+def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]) -> pd.DataFrame | None:
+    st.subheader("Ficha del cliente")
+    sections_left: list[tuple[str, str, list[str]]] = [
+        ("Identificación", "#e6fffa", ["nombre", "tipo_entidad", "detalle"]),
+        ("Localización", "#ebf8ff", ["país", "provincia", "municipio", "coordenadas", "direccion"]),
+        ("Contacto", "#f7fafc", ["telefono", "correo", "otros_contactos"]),
+        ("Perfil agrícola y lead", "#f7f3ff", ["cultivos", "superficie_ha", "tipo_riego", "fuente_lead", "lead_detalle"]),
+    ]
+    sections_right: list[tuple[str, str, list[str]]] = [
+        (
+            "Seguimiento comercial",
+            "#fffaf0",
+            [
+                "fuente_lead",
+                "lead_detalle",
+                "fecha_primer_contacto",
+                "persona_primer_contacto",
+                "fecha_ultimo_contacto",
+                "persona_ultimo_contacto",
+                "proxima_accion_fecha",
+                "persona_proxima_accion",
+                "proxima_accion_detalle",
+                "fecha_veces_sin_respuesta",
+            ],
+        ),
+        ("Estado y oportunidad", "#fff5f5", ["estado", "fecha_estado", "razon_perdida", "valor"]),
+        ("Operativa y suscripción", "#f2f5f7", ["cuenta_usuario"]),
+    ]
+
+    with st.form(f"contact_form_{contact['contact_id']}"):
+        values: dict[str, str] = {}
+        values["contact_id"] = st.text_input(
+            "Contact id",
+            value=contact.get("contact_id", ""),
+            disabled=True,
+            key=f"{contact.get('contact_id', 'new')}_contact_id",
+        )
+        col_left, col_right = st.columns(2, gap="large")
+        with col_left:
+            _render_form_sections(values, contact, sections_left, section_key="left")
+        with col_right:
+            _render_form_sections(values, contact, sections_right, section_key="right")
+        submitted = st.form_submit_button("Guardar ficha")
+    if submitted:
+        error = validate_contact_date_fields(values)
+        if error:
+            st.error(error)
+            return None
+        with st.spinner("Guardando ficha…"):
+            new_df = save_contact_by_id(
+                df,
+                row_idx=row_idx,
+                contact_id=contact["contact_id"],
+                values=values,
+                sheets=sheets_service(),
+            )
+            bump_contacts_cache()
+            _log_contact_save_actions(contact, values, _actor_name())
+        st.success("Ficha guardada correctamente.")
+        return new_df
+    return None
+
+
+def _render_form_sections(
+    values: dict[str, str],
+    contact: dict[str, str],
+    sections: list[tuple[str, str, list[str]]],
+    section_key: str,
+) -> None:
+    for title, color, columns in sections:
+        st.markdown(
+            f"<div class='sanzar-form-section-title' style='background:{color};'>{html.escape(title)}</div>",
+            unsafe_allow_html=True,
+        )
+        with st.container(border=True):
+            cols = st.columns(2)
+            for idx, column in enumerate(columns):
+                with cols[idx % 2]:
+                    values[column] = _render_contact_field_input(
+                        column,
+                        contact.get(column, ""),
+                        key=f"contact_{contact.get('contact_id', 'new')}_{section_key}_{column}",
+                    )
+
+
+def _handle_history_table_secondary_open(
+    kind: str,
+    rows: list[dict[str, str]],
+    contact: dict[str, str],
+    selected_pos: int | None,
+) -> None:
+    """Segunda acción explícita: editar la fila actualmente destacada en la tabla."""
+    if selected_pos is None or selected_pos < 0:
+        return
+    if selected_pos >= len(rows):
+        return
+    spec = HISTORY_SPECS[kind]
+    contact_id = contact.get("contact_id", "")
+    row_id = str(rows[selected_pos].get(spec.id_column, "")).strip()
+    if not row_id:
+        return
+    suffix = f"{contact_id}_{kind}"
+    if st.button(
+        "Editar fila seleccionada",
+        key=f"hist_edit_selected_{suffix}",
+        use_container_width=True,
+        type="primary",
+    ):
+        modal_state.open_edit_history_modal(kind, contact_id, row_id)
+        st.rerun()
+
+
+def _render_operativa_cards(contact: dict[str, str]) -> None:
+    hs = history_service()
+    contact_id = contact.get("contact_id", "")
+    st.markdown("##### Sensores / Campañas / Suscripciones / Incidencias")
+    for kind in ("sensores", "campanas", "suscripciones", "incidencias"):
+        rows = hs.rows_for_contact(kind, contact_id)
+        spec = HISTORY_SPECS[kind]
+        latest = rows[0] if rows else {}
+        summary_parts = [
+            f"{column}: {latest.get(column, '—')}"
+            for column in spec.summary_columns[:2]
+        ]
+        style = STATUS_NEUTRAL
+        if kind == "suscripciones":
+            style = subscription_status_style(hs.subscription_status_for_contact(contact_id))
+        if kind == "incidencias":
+            style = incident_status_style(hs.has_open_incidents(contact_id))
+        card(
+            spec.title,
+            (
+                chip(f"{len(rows)} registros", STATUS_INFO)
+                + "<br>"
+                + "<br>".join(summary_parts if summary_parts else ["Sin registros todavía."])
+            ),
+            style=style,
+        )
+        c1, c2 = st.columns([0.6, 0.4], gap="small")
+        if c1.button("Historial", key=f"inline_history_{kind}_{contact_id}", use_container_width=True):
+            _clear_modal_flags()
+            _clear_history_selection(contact_id, kind)
+            st.session_state[f"show_history_{kind}_{contact_id}"] = not st.session_state.get(
+                f"show_history_{kind}_{contact_id}", False
+            )
+            st.rerun()
+        if c2.button(
+            "Nuevo histórico",
+            key=f"inline_add_{kind}_{contact_id}",
+            use_container_width=True,
+        ):
+            _clear_modal_flags()
+            modal_state.open_add_history_modal(kind, contact_id)
+            st.rerun()
+
+        if st.session_state.get(f"show_history_{kind}_{contact_id}", False):
+            selected_pos = render_history_table(
+                kind,
+                rows,
+                technical=False,
+                contact_id=contact_id,
+            )
+            _handle_history_table_secondary_open(kind, rows, contact, selected_pos)
+
+    _maybe_render_add_history_modal(contact)
+    _maybe_render_edit_history_modal(contact)
+
+
+def _maybe_render_add_history_modal(contact: dict[str, str]) -> None:
+    m = modal_state.get_active_modal()
+    if not m or m.get("type") != "add_history":
+        return
+    if m.get("contact_id") != contact.get("contact_id", ""):
+        return
+    _add_history_dialog(m["kind"], contact)
+
+
+def _maybe_render_edit_history_modal(contact: dict[str, str]) -> None:
+    m = modal_state.get_active_modal()
+    if not m or m.get("type") != "edit_history":
+        return
+    contact_id = contact.get("contact_id", "")
+    if m.get("contact_id") != contact_id:
+        return
+    kind = m["kind"]
+    row_id = m["row_id"]
+    spec = HISTORY_SPECS.get(kind)
+    if spec is None:
+        return
+    rows = history_service().rows_for_contact(kind, contact_id)
+    row = next((item for item in rows if str(item.get(spec.id_column, "")) == row_id), None)
+    if row is None:
+        return
+    _edit_history_dialog(kind, contact, row)
+
+
+@st.dialog("Nuevo histórico")
+def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
+    spec = HISTORY_SPECS[kind]
+    st.markdown(f"### {spec.title}")
+    st.caption("Completa los campos y confirma para crear el nuevo registro.")
+    with st.form(f"history_add_modal_{kind}_{contact.get('contact_id', '')}"):
+        _render_history_form_body(kind, contact, None)
+        action_cols = st.columns(2)
+        confirm = action_cols[0].form_submit_button("Confirmar", use_container_width=True)
+        cancel = action_cols[1].form_submit_button("Cancelar", use_container_width=True)
+
+    if cancel:
+        _clear_modal_flags()
+        st.rerun()
+
+    if confirm:
+        if _submit_history_form(kind, contact, None):
+            _clear_modal_flags()
+            st.rerun()
+
+
+@st.dialog("Editar histórico")
+def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]) -> None:
+    spec = HISTORY_SPECS[kind]
+    contact_id = contact.get("contact_id", "")
+    st.markdown(f"### {spec.title}")
+    st.caption("Edita la fila seleccionada. Puedes guardar, cancelar o borrar.")
+    with st.form(f"history_edit_modal_{kind}_{row.get(spec.id_column, '')}"):
+        _render_history_form_grouped_body(kind, contact, row)
+        action_cols = st.columns(3)
+        confirm = action_cols[0].form_submit_button("Guardar", use_container_width=True)
+        cancel = action_cols[1].form_submit_button("Cancelar", use_container_width=True)
+        delete = action_cols[2].form_submit_button("Borrar", use_container_width=True)
+
+    if cancel:
+        _clear_modal_flags()
+        _clear_history_selection(contact_id, kind)
+        st.rerun()
+
+    if delete:
+        try:
+            history_service().delete_row(kind, str(row.get(spec.id_column, "")))
+            bump_history_cache()
+            st.success("Histórico eliminado correctamente.")
+            _clear_modal_flags()
+            _clear_history_selection(contact_id, kind)
+            st.rerun()
+        except Exception as exc:
+            st.error(f"No se pudo eliminar el histórico: {exc}")
+
+    if confirm:
+        if _submit_history_form(kind, contact, row):
+            _clear_modal_flags()
+            _clear_history_selection(contact_id, kind)
+            st.rerun()
+
+
+def _parse_ddmmyyyy(value: str) -> date | None:
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%d/%m/%Y").date()
+    except ValueError:
+        return None
+
+
+def _render_next_action_strip(df: pd.DataFrame) -> None:
+    if "dash_bucket" not in st.session_state:
+        st.session_state.dash_bucket = ""
+    today = date.today()
+    counts = {"past": 0, "today": 0, "tomorrow": 0}
+    for row in df.fillna("").astype(str).to_dict("records"):
+        when = _parse_ddmmyyyy(row.get("proxima_accion_fecha", ""))
+        if when is None:
+            continue
+        if when < today:
+            counts["past"] += 1
+        elif when == today:
+            counts["today"] += 1
+        elif when == today + timedelta(days=1):
+            counts["tomorrow"] += 1
+    st.markdown("##### Próximas acciones")
+    active_bucket = st.session_state.get("dash_bucket", "")
+    _dash_css_chunks: list[str] = []
+    for _kind in ("past", "today", "tomorrow"):
+        _bg, _bd, _fg, _bleft = dash_bucket_button_style(active_bucket, _kind)
+        _dash_css_chunks.append(
+            f".st-key-dash_bucket_{_kind} button{{"
+            f"background:{_bg}!important;"
+            f"border:1px solid {_bd}!important;"
+            f"color:{_fg}!important;"
+            f"border-left:{_bleft}!important;"
+            f"border-radius:8px!important;font-weight:500!important;}}"
+        )
+    st.markdown("<style>" + "".join(_dash_css_chunks) + "</style>", unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3, gap="small")
+    for col, key, label in (
+        (c1, "past", "Fecha anterior"),
+        (c2, "today", "Hoy"),
+        (c3, "tomorrow", "Mañana"),
+    ):
+        active = st.session_state.dash_bucket == key
+        if col.button(
+            f"{label}\n{counts[key]}",
+            key=f"dash_bucket_{key}",
+            use_container_width=True,
+            type="secondary",
+        ):
+            _clear_modal_flags()
+            st.session_state.dash_bucket = "" if active else key
+            st.rerun()
+
+
+def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
+    label = column.replace("_", " ").capitalize()
+    if column == "estado":
+        opts = [""] + list(CONTACT_ESTADO_OPCIONES)
+        return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
+    if column == "fuente_lead":
+        opts = [""] + list(FUENTE_LEAD_OPCIONES)
+        return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
+    if column in {"persona_ultimo_contacto", "persona_proxima_accion", "persona_primer_contacto"}:
+        opts = [""] + list(PERSONA_COMERCIAL_OPCIONES)
+        return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
+    if column == "valor":
+        opts = [""] + list(VALOR_OPCIONES)
+        return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
+    if column in {"detalle", "otros_contactos", "proxima_accion_detalle", "razon_perdida"}:
+        return st.text_area(label, value=value, height=80, key=key)
+    return st.text_input(label, value=value, key=key)
+
+
+def _render_histories(contact: dict[str, str]) -> None:
+    contact_id = contact.get("contact_id", "")
+    for kind in ("sensores", "campanas", "suscripciones", "incidencias"):
+        spec = HISTORY_SPECS[kind]
+        rows = history_service().rows_for_contact(kind, contact_id)
+        with st.expander(spec.title, expanded=kind in {"sensores", "suscripciones", "incidencias"}):
+            render_history_summary(kind, rows)
+            col_a, col_b = st.columns([0.24, 0.76])
+            with col_a:
+                technical = st.checkbox("Ver columnas técnicas", key=f"{kind}_technical_{contact_id}")
+            with col_b:
+                selected_pos = render_history_table(
+                    kind,
+                    rows,
+                    technical=technical,
+                    contact_id=contact_id,
+                )
+                _handle_history_table_secondary_open(kind, rows, contact, selected_pos)
+            _render_history_create_form(kind, contact)
+            if rows:
+                _render_history_edit_form(kind, rows)
+
+
+def _render_history_create_form(kind: str, contact: dict[str, str]) -> None:
+    spec = HISTORY_SPECS[kind]
+    with st.expander(f"Añadir {spec.title.lower()}"):
+        _render_history_form(kind, contact, None)
+
+
+def _render_history_edit_form(kind: str, rows: list[dict[str, str]]) -> None:
+    spec = HISTORY_SPECS[kind]
+    ids = [row.get(spec.id_column, "") for row in rows if row.get(spec.id_column)]
+    selected = st.selectbox(f"Editar registro de {spec.title.lower()}", [""] + ids, key=f"edit_{kind}_selector")
+    if not selected:
+        return
+    row = next((item for item in rows if item.get(spec.id_column) == selected), None)
+    if row:
+        _render_history_form(kind, row, row)
+
+
+def _render_history_form(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> None:
+    spec = HISTORY_SPECS[kind]
+    suffix = existing.get(spec.id_column, "new") if existing else "new"
+    with st.form(f"history_form_{kind}_{suffix}_{base.get('contact_id', '')}"):
+        _render_history_form_body(kind, base, existing)
+        submitted = st.form_submit_button("Guardar histórico")
+    if submitted and _submit_history_form(kind, base, existing):
+        st.rerun()
+
+
+def _render_history_form_body(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> None:
+    spec = HISTORY_SPECS[kind]
+    prefix = f"{kind}_{existing.get(spec.id_column) if existing else 'new'}"
+    initial = {header: (existing or {}).get(header, "") for header in spec.headers}
+    initial["contact_id"] = initial.get("contact_id") or base.get("contact_id", "")
+    initial["nombre_cliente"] = initial.get("nombre_cliente") or base.get("nombre", base.get("nombre_cliente", ""))
+    st.markdown("**Identificación**")
+    id_cols = st.columns(3)
+    with id_cols[0]:
+        st.text_input("Contact ID", value=initial["contact_id"], disabled=True, key=f"{prefix}_id_contact")
+    with id_cols[1]:
+        st.text_input("Nombre cliente", value=initial["nombre_cliente"], disabled=True, key=f"{prefix}_id_nombre")
+    with id_cols[2]:
+        if existing:
+            st.text_input(
+                spec.id_column,
+                value=initial.get(spec.id_column, ""),
+                disabled=True,
+                key=f"{prefix}_id_historial",
+            )
+
+    st.markdown("**Datos principales**")
+    for header in spec.headers:
+        if header in {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}:
+            continue
+        _field_for_header(kind, header, initial.get(header, ""), prefix)
+
+
+def _render_history_form_grouped_body(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> None:
+    spec = HISTORY_SPECS[kind]
+    prefix = f"{kind}_{existing.get(spec.id_column) if existing else 'new'}"
+    initial = {header: (existing or {}).get(header, "") for header in spec.headers}
+    initial["contact_id"] = initial.get("contact_id") or base.get("contact_id", "")
+    initial["nombre_cliente"] = initial.get("nombre_cliente") or base.get("nombre", base.get("nombre_cliente", ""))
+
+    st.markdown("**Identificación**")
+    with st.container(border=True):
+        id_cols = st.columns(3)
+        with id_cols[0]:
+            st.text_input("Contact ID", value=initial["contact_id"], disabled=True, key=f"{prefix}_id_contact")
+        with id_cols[1]:
+            st.text_input("Nombre cliente", value=initial["nombre_cliente"], disabled=True, key=f"{prefix}_id_nombre")
+        with id_cols[2]:
+            if existing:
+                st.text_input(
+                    spec.id_column,
+                    value=initial.get(spec.id_column, ""),
+                    disabled=True,
+                    key=f"{prefix}_id_historial",
+                )
+
+    all_fields = [
+        header
+        for header in spec.headers
+        if header not in {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}
+    ]
+    first_group = all_fields[: max(1, len(all_fields) // 2)]
+    second_group = all_fields[max(1, len(all_fields) // 2) :]
+
+    st.markdown("**Bloque principal**")
+    with st.container(border=True):
+        for header in first_group:
+            _field_for_header(kind, header, initial.get(header, ""), prefix)
+
+    if second_group:
+        st.markdown("**Bloque complementario**")
+        with st.container(border=True):
+            for header in second_group:
+                _field_for_header(kind, header, initial.get(header, ""), prefix)
+
+
+def _submit_history_form(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> bool:
+    spec = HISTORY_SPECS[kind]
+    prefix = f"{kind}_{existing.get(spec.id_column) if existing else 'new'}"
+    values: dict[str, str] = {}
+    values["contact_id"] = str(base.get("contact_id", ""))
+    values["nombre_cliente"] = str(base.get("nombre", base.get("nombre_cliente", "")))
+    if existing:
+        values[spec.id_column] = str(existing.get(spec.id_column, ""))
+    for header in spec.headers:
+        if header in {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}:
+            continue
+        values[header] = str(st.session_state.get(f"{prefix}_{header}", ""))
+
+    error = _validate_history_values(kind, values)
+    if error:
+        st.error(error)
+        return False
+    try:
+        with st.spinner("Guardando y comprobando que no se solapen sensores..."):
+            if kind == "sensores":
+                conflicts = history_service().sensor_assignment_conflicts(
+                    values,
+                    ignore_historial_sensor_id=values.get(spec.id_column, ""),
+                )
+                if conflicts:
+                    lines = [
+                        f"{conflict.asset.asset_type.upper()} {conflict.asset.serial} ya está en {conflict.nombre_cliente} "
+                        f"({conflict.fecha_inicio or 'sin inicio'} - {conflict.fecha_fin or 'sin fin'})."
+                        for conflict in conflicts
+                    ]
+                    st.error("No se puede guardar porque hay solape temporal:\n\n" + "\n".join(lines))
+                    return False
+                values["cantidad_sensores"] = str(count_sensor_assets(values.get("sensor_serial_number", "")))
+            if existing:
+                history_service().update_row(kind, values[spec.id_column], values)
+            else:
+                history_service().add_row(kind, values)
+        bump_history_cache()
+        st.success("Histórico guardado correctamente.")
+        return True
+    except Exception as exc:
+        st.error(f"No se pudo guardar el histórico: {exc}")
+        return False
+
+
+def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
+    label = header.replace("_", " ").capitalize()
+    key = f"{prefix}_{header}"
+    if header == "sensor_serial_number":
+        st.caption(SENSOR_SERIAL_NUMBER_FORMAT_HELP)
+        return st.text_area(label, value=value, key=key, height=90)
+    if header == "cantidad_sensores":
+        return st.text_input(label, value=str(count_sensor_assets(st.session_state.get(f"{prefix}_sensor_serial_number", value))), key=key, disabled=True)
+    if header in SELECT_OPTIONS:
+        options = [""] + SELECT_OPTIONS[header]
+        index = options.index(value) if value in options else 0
+        return st.selectbox(label, options, index=index, key=key)
+    if header == "red_otro":
+        red_value = st.session_state.get(f"{prefix}_red", "")
+        return st.text_input(label, value=value, key=key, disabled=red_value != "otro")
+    if header in {"detalles", "detalle", "resolucion"}:
+        return st.text_area(label, value=value, key=key, height=90)
+    return st.text_input(label, value=value, key=key)
+
+
+def _validate_history_values(kind: str, values: dict[str, str]) -> str | None:
+    dates = [(label, values.get(column, "")) for label, column in DATE_COLUMNS_BY_KIND.get(kind, [])]
+    date_error = validate_dd_mm_yyyy_fields(dates)
+    if date_error:
+        return date_error
+    if kind == "sensores":
+        if not is_valid_sensor_serial_number(values.get("sensor_serial_number", "")):
+            return "El sensor_serial_number no tiene un formato válido.\n\n" + SENSOR_SERIAL_NUMBER_FORMAT_HELP
+        if values.get("red") == "otro" and not values.get("red_otro", "").strip():
+            return "Si red = otro, debes completar el campo red_otro."
+    if kind == "campanas":
+        start = values.get("fecha_campana_inicio", "")
+        end = values.get("fecha_campana_fin", "")
+        if start and end and is_valid_dd_mm_yyyy(start) and is_valid_dd_mm_yyyy(end):
+            pass
+    return None

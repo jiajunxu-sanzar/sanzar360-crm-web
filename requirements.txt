@@ -1,0 +1,12 @@
+streamlit
+pandas
+gspread
+google-auth
+python-dotenv
+folium
+streamlit-folium
+geopy
+plotly
+reportlab
+jinja2
+pytest

@@ -1,0 +1,532 @@
+from __future__ import annotations
+
+import re
+import uuid
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+
+import pandas as pd
+
+from app.telemetry import timed
+from services.sheet_date_format import is_valid_sensor_serial_number
+from services.sheets_service import SheetsService
+
+HistoryKind = str
+SubscriptionStatus = str
+
+
+@dataclass(frozen=True)
+class HistorySpec:
+    kind: HistoryKind
+    title: str
+    worksheet_name: str
+    id_column: str
+    date_column: str
+    headers: tuple[str, ...]
+    summary_columns: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SensorAsset:
+    asset_type: str
+    serial: str
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return (self.asset_type.lower(), self.serial.lower())
+
+
+@dataclass(frozen=True)
+class SensorAssignmentConflict:
+    asset: SensorAsset
+    contact_id: str
+    nombre_cliente: str
+    fecha_inicio: str
+    fecha_fin: str
+    historial_sensor_id: str
+
+
+@dataclass(frozen=True)
+class SensorAssetOccurrence:
+    asset: SensorAsset
+    contact_id: str
+    nombre_cliente: str
+    fecha_inicio: str
+    fecha_fin: str
+    historial_sensor_id: str
+    associated_with: str
+    sensor_serial_number: str
+    red: str
+    red_otro: str
+    tipo_operacion: str
+    aws_user_id: str
+    detalles: str
+
+
+HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
+    "sensores": HistorySpec(
+        "sensores",
+        "Histórico de sensores",
+        "HistoricoSensores",
+        "historial_sensor_id",
+        "fecha_inicio",
+        (
+            "historial_sensor_id",
+            "contact_id",
+            "nombre_cliente",
+            "fecha_inicio",
+            "fecha_fin",
+            "sensor_serial_number",
+            "cantidad_sensores",
+            "tipo_operacion",
+            "estado_sensor",
+            "ultima_revision",
+            "red",
+            "red_otro",
+            "cuenta_usuario",
+            "aws_user_id",
+            "detalles",
+            "created_at",
+            "updated_at",
+        ),
+        (
+            "fecha_inicio",
+            "fecha_fin",
+            "estado_sensor",
+            "ultima_revision",
+            "cantidad_sensores",
+            "tipo_operacion",
+            "red",
+        ),
+    ),
+    "campanas": HistorySpec(
+        "campanas",
+        "Histórico de campañas",
+        "HistoricoCampanas",
+        "historial_campana_id",
+        "fecha_campana_inicio",
+        (
+            "historial_campana_id",
+            "contact_id",
+            "nombre_cliente",
+            "nombre_campana",
+            "fecha_campana_inicio",
+            "fecha_campana_fin",
+            "dias_campana",
+            "p_tabla",
+            "k_1",
+            "k_3",
+            "k_5",
+            "porcentaje_fase_1",
+            "porcentaje_fase_2",
+            "porcentaje_fase_3",
+            "porcentaje_fase_4",
+            "cultivo",
+            "parcela",
+            "coordenadas_parcela",
+            "tipo_suelo",
+            "detalles",
+            "created_at",
+            "updated_at",
+        ),
+        (
+            "nombre_campana",
+            "fecha_campana_inicio",
+            "fecha_campana_fin",
+            "cultivo",
+            "parcela",
+            "tipo_suelo",
+        ),
+    ),
+    "suscripciones": HistorySpec(
+        "suscripciones",
+        "Histórico de suscripciones",
+        "HistoricoSuscripciones",
+        "historial_suscripcion_id",
+        "fecha_pago",
+        (
+            "historial_suscripcion_id",
+            "contact_id",
+            "nombre_cliente",
+            "fecha_pago",
+            "cantidad_pago",
+            "moneda",
+            "suscripcion_fecha_inicio",
+            "suscripcion_fecha_fin",
+            "estado_suscripcion",
+            "factura_url",
+            "factura_pago_url",
+            "metodo_pago",
+            "detalles",
+            "created_at",
+            "updated_at",
+        ),
+        (
+            "fecha_pago",
+            "cantidad_pago",
+            "suscripcion_fecha_inicio",
+            "suscripcion_fecha_fin",
+            "estado_suscripcion",
+        ),
+    ),
+    "incidencias": HistorySpec(
+        "incidencias",
+        "Histórico de incidencias",
+        "HistoricoIncidencias",
+        "historial_incidencia_id",
+        "fecha_apertura",
+        (
+            "historial_incidencia_id",
+            "contact_id",
+            "nombre_cliente",
+            "fecha_apertura",
+            "fecha_cierre",
+            "tipo_incidencia",
+            "estado",
+            "prioridad",
+            "historial_sensor_id",
+            "sensor_serial_number",
+            "historial_campana_id",
+            "nombre_campana",
+            "detalle",
+            "resolucion",
+            "created_at",
+            "updated_at",
+        ),
+        (
+            "fecha_apertura",
+            "estado",
+            "prioridad",
+            "tipo_incidencia",
+            "sensor_serial_number",
+            "nombre_campana",
+        ),
+    ),
+}
+
+
+def _today() -> str:
+    return date.today().strftime("%d/%m/%Y")
+
+
+def _parse_date(value: str) -> date | None:
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%d/%m/%Y").date()
+    except ValueError:
+        return None
+
+
+def _overlap(start_a: date | None, end_a: date | None, start_b: date | None, end_b: date | None) -> bool:
+    min_date = date(1900, 1, 1)
+    max_date = date(9999, 12, 31)
+    a0, a1 = start_a or min_date, end_a or max_date
+    b0, b1 = start_b or min_date, end_b or max_date
+    return a0 <= b1 and b0 <= a1
+
+
+def count_sensor_assets(sensor_serial_number: str) -> int:
+    return len(parse_sensor_assets(sensor_serial_number))
+
+
+def parse_sensor_assets(sensor_serial_number: str) -> list[tuple[SensorAsset, str]]:
+    if not is_valid_sensor_serial_number(sensor_serial_number):
+        return []
+    assets: list[tuple[SensorAsset, str]] = []
+    current_gateway = ""
+    for item in [part.strip() for part in (sensor_serial_number or "").split(",") if part.strip()]:
+        lower = item.lower()
+        if lower.startswith("uc501-"):
+            parts = item.split("-")
+            if len(parts) == 4:
+                assets.extend(
+                    [
+                        (SensorAsset("uc501", parts[1]), item),
+                        (SensorAsset("teros10", parts[2]), item),
+                        (SensorAsset("sim", parts[3]), item),
+                    ]
+                )
+            current_gateway = ""
+        elif lower.startswith("ug67-"):
+            parts = item.split("-")
+            if len(parts) == 3:
+                gateway_token = f"ug67-{parts[1]}"
+                current_gateway = gateway_token
+                assets.extend(
+                    [
+                        (SensorAsset("ug67", parts[1]), gateway_token),
+                        (SensorAsset("sim", parts[2]), gateway_token),
+                    ]
+                )
+        elif "-" in item:
+            asset_type, serial = item.split("-", 1)
+            assets.append((SensorAsset(asset_type.lower(), serial), current_gateway or item))
+    return assets
+
+
+def parse_sensor_asset_occurrences(rows: list[dict[str, str]]) -> list[SensorAssetOccurrence]:
+    occurrences: list[SensorAssetOccurrence] = []
+    for row in rows:
+        serial_text = row.get("sensor_serial_number", "")
+        for asset, associated_with in parse_sensor_assets(serial_text):
+            occurrences.append(
+                SensorAssetOccurrence(
+                    asset=asset,
+                    contact_id=row.get("contact_id", ""),
+                    nombre_cliente=row.get("nombre_cliente", ""),
+                    fecha_inicio=row.get("fecha_inicio", ""),
+                    fecha_fin=row.get("fecha_fin", ""),
+                    historial_sensor_id=row.get("historial_sensor_id", ""),
+                    associated_with=associated_with,
+                    sensor_serial_number=serial_text,
+                    red=row.get("red", ""),
+                    red_otro=row.get("red_otro", ""),
+                    tipo_operacion=row.get("tipo_operacion", ""),
+                    aws_user_id=row.get("aws_user_id", ""),
+                    detalles=row.get("detalles", ""),
+                )
+            )
+    return occurrences
+
+
+class HistoryService:
+    def __init__(self, sheets_service: SheetsService) -> None:
+        self._sheets_service = sheets_service
+        self._frames: dict[HistoryKind, pd.DataFrame] = {
+            kind: pd.DataFrame(columns=spec.headers) for kind, spec in HISTORY_SPECS.items()
+        }
+        self._loaded: set[HistoryKind] = set()
+        self._row_numbers: dict[HistoryKind, dict[str, int]] = {kind: {} for kind in HISTORY_SPECS}
+        self._sensor_occurrences_cache: list[SensorAssetOccurrence] | None = None
+
+    def invalidate_all(self) -> None:
+        self._frames = {
+            kind: pd.DataFrame(columns=spec.headers) for kind, spec in HISTORY_SPECS.items()
+        }
+        self._loaded.clear()
+        self._row_numbers = {kind: {} for kind in HISTORY_SPECS}
+        self._sensor_occurrences_cache = None
+
+    def load_all(self) -> None:
+        for kind in HISTORY_SPECS:
+            self.load_kind(kind, force=True)
+
+    def load_kind(self, kind: HistoryKind, *, force: bool = False) -> None:
+        if not force and kind in self._loaded:
+            return
+        spec = HISTORY_SPECS[kind]
+        with timed("history.load_kind", kind=kind):
+            df = self._sheets_service.read_worksheet_df(spec.worksheet_name, list(spec.headers))
+            self._frames[kind] = self._normalize_dataframe(df, spec)
+            framed = self._frames[kind]
+            if spec.id_column in framed.columns:
+                mapping: dict[str, int] = {}
+                for idx, row_id in enumerate(framed[spec.id_column].astype(str).tolist(), start=2):
+                    if row_id:
+                        mapping[row_id] = idx
+                self._row_numbers[kind] = mapping
+            else:
+                self._row_numbers[kind] = {}
+            if kind == "sensores":
+                self._sensor_occurrences_cache = None
+            self._loaded.add(kind)
+
+    def _normalize_dataframe(self, df: pd.DataFrame, spec: HistorySpec) -> pd.DataFrame:
+        if df.empty:
+            return pd.DataFrame(columns=spec.headers)
+        df = df.fillna("").astype(str)
+        for header in spec.headers:
+            if header not in df.columns:
+                df[header] = ""
+        return df[list(spec.headers)]
+
+    def frame(self, kind: HistoryKind) -> pd.DataFrame:
+        self.load_kind(kind)
+        return self._frames[kind].copy()
+
+    def rows(self, kind: HistoryKind) -> list[dict[str, str]]:
+        self.load_kind(kind)
+        return self._frames[kind].to_dict("records")
+
+    def rows_for_contact(self, kind: HistoryKind, contact_id: str) -> list[dict[str, str]]:
+        self.load_kind(kind)
+        df = self._frames[kind]
+        if df.empty:
+            return []
+        sub = df[df["contact_id"].astype(str) == str(contact_id)]
+        if sub.empty:
+            return []
+        rows = sub.to_dict("records")
+        return sorted(rows, key=lambda row: _parse_date(row.get(HISTORY_SPECS[kind].date_column, "")) or date.min, reverse=True)
+
+    def latest_for_contact(self, kind: HistoryKind, contact_id: str) -> dict[str, str] | None:
+        rows = self.rows_for_contact(kind, contact_id)
+        return rows[0] if rows else None
+
+    def add_row(self, kind: HistoryKind, values: dict[str, str]) -> dict[str, str]:
+        spec = HISTORY_SPECS[kind]
+        self.load_kind(kind)
+        now = _today()
+        row = {header: str(values.get(header, "") or "") for header in spec.headers}
+        row[spec.id_column] = row.get(spec.id_column) or str(uuid.uuid4())
+        row["created_at"] = row.get("created_at") or now
+        row["updated_at"] = now
+        if kind == "sensores":
+            row["cantidad_sensores"] = str(count_sensor_assets(row.get("sensor_serial_number", "")))
+        if kind == "campanas":
+            row["dias_campana"] = row.get("dias_campana") or self._campaign_days(row)
+        self._sheets_service.append_worksheet_row(spec.worksheet_name, list(spec.headers), row)
+        df = pd.concat([self._frames[kind], pd.DataFrame([row])], ignore_index=True)
+        self._frames[kind] = self._normalize_dataframe(df, spec)
+        self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
+        if kind == "sensores":
+            self._sensor_occurrences_cache = None
+        self._loaded.add(kind)
+        return row
+
+    def update_row(self, kind: HistoryKind, row_id: str, values: dict[str, str]) -> dict[str, str]:
+        spec = HISTORY_SPECS[kind]
+        self.load_kind(kind)
+        df = self._frames[kind].copy()
+        if df.empty or spec.id_column not in df.columns:
+            raise ValueError(f"No existe {row_id}")
+        mask = df[spec.id_column].astype(str) == str(row_id)
+        if not mask.any():
+            raise ValueError(f"No existe {row_id}")
+        for header in spec.headers:
+            if header in values:
+                df.loc[mask, header] = str(values.get(header, "") or "")
+        df.loc[mask, "updated_at"] = _today()
+        if kind == "sensores":
+            df.loc[mask, "cantidad_sensores"] = str(
+                count_sensor_assets(str(df.loc[mask, "sensor_serial_number"].iloc[0]))
+            )
+        if kind == "campanas":
+            df.loc[mask, "dias_campana"] = self._campaign_days(df.loc[mask].iloc[0].to_dict())
+        updated_row = df.loc[mask].iloc[0].to_dict()
+        row_number = self._row_numbers.get(kind, {}).get(str(row_id))
+        if row_number is None:
+            self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
+            row_number = self._row_numbers.get(kind, {}).get(str(row_id))
+        if row_number is None:
+            raise ValueError(f"No existe {row_id}")
+        self._sheets_service.update_worksheet_row(
+            spec.worksheet_name,
+            list(spec.headers),
+            row_number,
+            updated_row,
+        )
+        self._frames[kind] = self._normalize_dataframe(df, spec)
+        if kind == "sensores":
+            self._sensor_occurrences_cache = None
+        self._loaded.add(kind)
+        return updated_row
+
+    def delete_row(self, kind: HistoryKind, row_id: str) -> None:
+        spec = HISTORY_SPECS[kind]
+        self.load_kind(kind)
+        df = self._frames[kind].copy()
+        if df.empty or spec.id_column not in df.columns:
+            raise ValueError(f"No existe {row_id}")
+        mask = df[spec.id_column].astype(str) == str(row_id)
+        if not mask.any():
+            raise ValueError(f"No existe {row_id}")
+        df = df.loc[~mask].copy()
+        self._sheets_service.write_worksheet_df(spec.worksheet_name, df, list(spec.headers))
+        self._frames[kind] = self._normalize_dataframe(df, spec)
+        self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
+        if kind == "sensores":
+            self._sensor_occurrences_cache = None
+        self._loaded.add(kind)
+
+    @staticmethod
+    def _campaign_days(row: dict[str, str]) -> str:
+        start = _parse_date(row.get("fecha_campana_inicio", ""))
+        end = _parse_date(row.get("fecha_campana_fin", ""))
+        if not start or not end:
+            return ""
+        return str(max(0, (end - start).days))
+
+    def sensor_assignment_conflicts(
+        self,
+        candidate: dict[str, str],
+        *,
+        ignore_historial_sensor_id: str = "",
+    ) -> list[SensorAssignmentConflict]:
+        candidate_assets = {asset.key: asset for asset, _ in parse_sensor_assets(candidate.get("sensor_serial_number", ""))}
+        if not candidate_assets:
+            return []
+        candidate_start = _parse_date(candidate.get("fecha_inicio", ""))
+        candidate_end = _parse_date(candidate.get("fecha_fin", ""))
+        candidate_contact_id = str(candidate.get("contact_id", ""))
+        conflicts: list[SensorAssignmentConflict] = []
+        for row in self.rows("sensores"):
+            if ignore_historial_sensor_id and row.get("historial_sensor_id") == ignore_historial_sensor_id:
+                continue
+            if str(row.get("contact_id", "")) == candidate_contact_id:
+                continue
+            if not _overlap(candidate_start, candidate_end, _parse_date(row.get("fecha_inicio", "")), _parse_date(row.get("fecha_fin", ""))):
+                continue
+            for asset, _ in parse_sensor_assets(row.get("sensor_serial_number", "")):
+                if asset.key in candidate_assets:
+                    conflicts.append(
+                        SensorAssignmentConflict(
+                            asset=asset,
+                            contact_id=row.get("contact_id", ""),
+                            nombre_cliente=row.get("nombre_cliente", ""),
+                            fecha_inicio=row.get("fecha_inicio", ""),
+                            fecha_fin=row.get("fecha_fin", ""),
+                            historial_sensor_id=row.get("historial_sensor_id", ""),
+                        )
+                    )
+        return conflicts
+
+    def search_sensor_assets(self, query: str = "", asset_type: str = "") -> list[SensorAssetOccurrence]:
+        query_norm = (query or "").strip().lower()
+        type_norm = (asset_type or "").strip().lower()
+        occurrences = self._sensor_occurrences()
+        results: list[SensorAssetOccurrence] = []
+        for occurrence in occurrences:
+            if type_norm and occurrence.asset.asset_type.lower() != type_norm:
+                continue
+            haystack = {
+                occurrence.asset.asset_type.lower(),
+                occurrence.asset.serial.lower(),
+                f"{occurrence.asset.asset_type.lower()}-{occurrence.asset.serial.lower()}",
+                occurrence.associated_with.lower(),
+                occurrence.nombre_cliente.lower(),
+                occurrence.contact_id.lower(),
+                occurrence.aws_user_id.lower(),
+            }
+            if query_norm and not any(query_norm in item for item in haystack):
+                continue
+            results.append(occurrence)
+        return results
+
+    def _sensor_occurrences(self) -> list[SensorAssetOccurrence]:
+        if self._sensor_occurrences_cache is None:
+            self._sensor_occurrences_cache = parse_sensor_asset_occurrences(self.rows("sensores"))
+        return self._sensor_occurrences_cache
+
+    def subscription_status_for_contact(self, contact_id: str) -> SubscriptionStatus:
+        latest = self.latest_for_contact("suscripciones", contact_id)
+        if not latest:
+            return "inactiva"
+        end = _parse_date(latest.get("suscripcion_fecha_fin", ""))
+        if not end:
+            return "activa" if latest.get("estado_suscripcion", "").lower() == "activa" else "inactiva"
+        today = date.today()
+        if end < today:
+            return "inactiva"
+        if end <= today + timedelta(days=31):
+            return "caduca pronto"
+        return "activa"
+
+    def has_open_incidents(self, contact_id: str) -> bool:
+        for row in self.rows_for_contact("incidencias", contact_id):
+            estado = row.get("estado", "").strip().lower()
+            if estado not in {"cerrada", "cerrado", "resuelta", "resuelto"}:
+                return True
+        return False
