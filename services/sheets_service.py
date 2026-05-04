@@ -189,3 +189,95 @@ class SheetsService:
             if row_id:
                 out[row_id] = row_number
         return out
+
+    def _get_worksheet_existing(self, title: str) -> Any | None:
+        """Return the tab or ``None`` if it does not exist (does not create a new sheet)."""
+        try:
+            return self.spreadsheet().worksheet(title)
+        except gspread.WorksheetNotFound:
+            return None
+
+    @staticmethod
+    def _column_index_in_header(header_row: list[str], column_name: str) -> int | None:
+        want = (column_name or "").strip().lower()
+        for i, raw in enumerate(header_row):
+            if str(raw).strip().lower() == want:
+                return i
+        return None
+
+    def _batch_delete_row_numbers(self, worksheet: Any, row_numbers_1based: list[int]) -> None:
+        """Single Sheets API ``batchUpdate`` with ``deleteDimension`` (bottom rows first)."""
+        unique_desc = sorted(set(row_numbers_1based), reverse=True)
+        if not unique_desc:
+            return
+        sheet_id = worksheet.id
+        requests: list[dict[str, Any]] = []
+        for row in unique_desc:
+            start_idx = row - 1
+            requests.append(
+                {
+                    "deleteDimension": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "ROWS",
+                            "startIndex": start_idx,
+                            "endIndex": row,
+                        }
+                    }
+                }
+            )
+        with timed("sheets.batch_delete_rows", rows=len(unique_desc)):
+            self.spreadsheet().batch_update({"requests": requests})
+
+    def delete_rows_where_column_equals(
+        self,
+        worksheet_title: str,
+        column_name: str,
+        value: str,
+    ) -> int:
+        """Elimina filas de datos donde ``column_name`` coincide con ``value`` (sin recrear la hoja).
+
+        No crea la pestaña si falta. Cuenta como ~1 lectura + 1 escritura por llamada (batch de baja).
+        Devuelve cuántas filas se borraron.
+        """
+        ws = self._get_worksheet_existing(worksheet_title)
+        if ws is None:
+            return 0
+        target = str(value).strip()
+        with timed("sheets.delete_rows_where_read", worksheet=worksheet_title):
+            values = ws.get_all_values()
+        if len(values) < 2:
+            return 0
+        header = [str(h) for h in values[0]]
+        col_idx = self._column_index_in_header(header, column_name)
+        if col_idx is None:
+            return 0
+        rows_to_delete: list[int] = []
+        for row_number in range(2, len(values) + 1):
+            row = values[row_number - 1]
+            cell = str(row[col_idx] if col_idx < len(row) else "").strip()
+            if cell == target:
+                rows_to_delete.append(row_number)
+        if not rows_to_delete:
+            return 0
+        self._batch_delete_row_numbers(ws, rows_to_delete)
+        return len(rows_to_delete)
+
+    def contact_id_exists_on_contacts_sheet(self, contact_id: str) -> bool:
+        """Una sola lectura ligera para comprobar si el id está en la pestaña de contactos."""
+        ws = self._get_worksheet_existing(self.config.google_worksheet_name)
+        if ws is None:
+            return False
+        target = str(contact_id).strip()
+        with timed("sheets.contact_id_exists", worksheet=self.config.google_worksheet_name):
+            values = ws.get_all_values()
+        if len(values) < 2:
+            return False
+        col_idx = self._column_index_in_header([str(h) for h in values[0]], "contact_id")
+        if col_idx is None:
+            return False
+        for row in values[1:]:
+            cell = str(row[col_idx] if col_idx < len(row) else "").strip()
+            if cell == target:
+                return True
+        return False

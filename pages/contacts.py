@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.cache import history_service, sheets_service, load_users_cached
+from app.cache import clear_all_cache, history_service, load_users_cached, sheets_service
 from app.state import bump_contacts_cache, bump_history_cache, select_contact
 from app.telemetry import timed
 from config.settings import (
@@ -20,6 +20,7 @@ from config.settings import (
 )
 from services.activity_log import append_activity
 from services.history_service import HISTORY_SPECS, count_sensor_assets
+from services.contact_deletion import delete_contact_and_related_data
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
 from services.sheet_date_format import (
     SENSOR_SERIAL_NUMBER_FORMAT_HELP,
@@ -373,6 +374,34 @@ def _log_contact_save_actions(
         )
 
 
+def _render_delete_contact_confirmation(*, contact_id: str, nombre: str) -> None:
+    """Panel de confirmación tras pulsar «Eliminar contacto» en el formulario."""
+    dlg = f"contact_delete_open_{contact_id}"
+    if st.session_state.get(dlg):
+        st.warning(
+            f"**Vas a eliminar permanentemente** a «**{html.escape(nombre)}**» (`{html.escape(contact_id)}`). "
+            "Se borrarán la fila en **Contactos**, todas las filas de histórico ligadas a este id y las entradas en "
+            "**Acciones**. **No se puede deshacer.**"
+        )
+        c_yes, c_no = st.columns(2)
+        if c_yes.button("Confirmar eliminación", type="primary", key=f"btn_delete_yes_{contact_id}"):
+            try:
+                with st.spinner("Eliminando en Google Sheets…"):
+                    delete_contact_and_related_data(sheets_service(), contact_id)
+                clear_all_cache()
+                bump_contacts_cache()
+                bump_history_cache()
+                st.session_state.pop(dlg, None)
+                select_contact("")
+                st.success("Contacto y datos relacionados eliminados.")
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
+        if c_no.button("Cancelar", key=f"btn_delete_no_{contact_id}"):
+            st.session_state.pop(dlg, None)
+            st.rerun()
+
+
 def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     matches = df[df["contact_id"].astype(str) == str(contact_id)]
     if matches.empty:
@@ -453,8 +482,27 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
             _render_form_sections(values, contact, sections_left, section_key="left")
         with col_right:
             _render_form_sections(values, contact, sections_right, section_key="right")
-        submitted = st.form_submit_button("Guardar ficha")
-    if submitted:
+        col_save, col_del = st.columns(2, gap="small")
+        submitted_save = col_save.form_submit_button(
+            "Guardar ficha",
+            type="primary",
+            use_container_width=True,
+        )
+        submitted_delete = col_del.form_submit_button(
+            "Eliminar contacto…",
+            type="secondary",
+            use_container_width=True,
+            help="Borra la ficha, históricos (sensores, campañas, suscripciones, incidencias) y Acciones.",
+        )
+
+    cid = str(contact.get("contact_id", "") or "")
+    nombre_ficha = str(contact.get("nombre", "") or "").strip() or "(sin nombre)"
+
+    if submitted_delete:
+        st.session_state[f"contact_delete_open_{cid}"] = True
+        st.rerun()
+
+    if submitted_save:
         error = validate_contact_date_fields(values)
         if error:
             st.error(error)
@@ -471,6 +519,8 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
             _log_contact_save_actions(contact, values, _actor_name())
         st.success("Ficha guardada correctamente.")
         return new_df
+
+    _render_delete_contact_confirmation(contact_id=cid, nombre=nombre_ficha)
     return None
 
 

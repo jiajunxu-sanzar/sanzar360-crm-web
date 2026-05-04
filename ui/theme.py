@@ -487,6 +487,73 @@ def apply_theme() -> None:
         .st-key-vac_cancel_edit_btn button:hover {
           background: var(--ui-btn-neutral-hover) !important;
         }
+
+        /*
+         * Ficha contacto — botones del formulario (Guardar + Eliminar en la misma fila).
+         *
+         * Verificación Streamlit 1.32 (DOM real):
+         * - form_submit usa kind="primaryFormSubmit" / "secondaryFormSubmit" y
+         *   data-testid="baseButton-primaryFormSubmit" (no "stBaseButton-…").
+         * - En esta versión suele no generarse ninguna clase "st-key-*" en el HTML,
+         *   así que selectores basados en st.form("contact_form_…") no aplican.
+         * - La fila de las dos columnas es un único bloque horizontal que contiene
+         *   ambos tipos de submit; :has() permite estilos sin afectar otros form
+         *   (p. ej. solo secondary como "Guardar histórico").
+         */
+        div[data-testid="stHorizontalBlock"]:has(button[kind="primaryFormSubmit"]):has(button[kind="secondaryFormSubmit"]) button[kind="primaryFormSubmit"],
+        div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-primaryFormSubmit"]):has(button[data-testid="baseButton-secondaryFormSubmit"]) button[data-testid="baseButton-primaryFormSubmit"],
+        div[class*="st-key-contact_form"] button[kind="primaryFormSubmit"],
+        div[class*="st-key-contact_form"] button[data-testid="baseButton-primaryFormSubmit"],
+        div[class*="st-key-contact_form"] button[data-testid="stBaseButton-primaryFormSubmit"] {
+          background: #15803d !important;
+          color: #ffffff !important;
+          border: 1px solid #166534 !important;
+          border-radius: 8px !important;
+          font-weight: 600 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(button[kind="primaryFormSubmit"]):has(button[kind="secondaryFormSubmit"]) button[kind="primaryFormSubmit"]:hover,
+        div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-primaryFormSubmit"]):has(button[data-testid="baseButton-secondaryFormSubmit"]) button[data-testid="baseButton-primaryFormSubmit"]:hover,
+        div[class*="st-key-contact_form"] button[kind="primaryFormSubmit"]:hover,
+        div[class*="st-key-contact_form"] button[data-testid="baseButton-primaryFormSubmit"]:hover,
+        div[class*="st-key-contact_form"] button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
+          background: #166534 !important;
+          border-color: #14532d !important;
+          color: #ffffff !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(button[kind="primaryFormSubmit"]):has(button[kind="secondaryFormSubmit"]) button[kind="secondaryFormSubmit"],
+        div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-primaryFormSubmit"]):has(button[data-testid="baseButton-secondaryFormSubmit"]) button[data-testid="baseButton-secondaryFormSubmit"],
+        div[class*="st-key-contact_form"] button[kind="secondaryFormSubmit"],
+        div[class*="st-key-contact_form"] button[data-testid="baseButton-secondaryFormSubmit"],
+        div[class*="st-key-contact_form"] button[data-testid="stBaseButton-secondaryFormSubmit"] {
+          background: #dc2626 !important;
+          color: #ffffff !important;
+          border: 1px solid #b91c1c !important;
+          border-radius: 8px !important;
+          font-weight: 600 !important;
+        }
+        div[data-testid="stHorizontalBlock"]:has(button[kind="primaryFormSubmit"]):has(button[kind="secondaryFormSubmit"]) button[kind="secondaryFormSubmit"]:hover,
+        div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-primaryFormSubmit"]):has(button[data-testid="baseButton-secondaryFormSubmit"]) button[data-testid="baseButton-secondaryFormSubmit"]:hover,
+        div[class*="st-key-contact_form"] button[kind="secondaryFormSubmit"]:hover,
+        div[class*="st-key-contact_form"] button[data-testid="baseButton-secondaryFormSubmit"]:hover,
+        div[class*="st-key-contact_form"] button[data-testid="stBaseButton-secondaryFormSubmit"]:hover {
+          background: #b91c1c !important;
+          border-color: #991b1b !important;
+          color: #ffffff !important;
+        }
+
+        /* Confirmar eliminación (fuera del formulario) */
+        div[class*="st-key-btn_delete_yes"] button {
+          background: #dc2626 !important;
+          color: #ffffff !important;
+          border: 1px solid #b91c1c !important;
+          border-radius: 8px !important;
+          font-weight: 600 !important;
+        }
+        div[class*="st-key-btn_delete_yes"] button:hover {
+          background: #b91c1c !important;
+          border-color: #991b1b !important;
+          color: #ffffff !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
