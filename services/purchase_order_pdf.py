@@ -103,7 +103,7 @@ def generate_purchase_order_pdf(data: PurchaseOrderData) -> bytes:
         y -= 4.5 * mm
         pdf.drawString(x0, y, line)
 
-    blocks_top_y = y - 6 * mm
+    blocks_top_y = y
     gap = 4 * mm
     block_w = (x1 - x0 - gap) / 2
     block_h = 34 * mm
@@ -238,27 +238,28 @@ def generate_purchase_order_pdf(data: PurchaseOrderData) -> bytes:
     y -= 38 * mm
     pdf.setFillColor(black)
     pdf.setFont("Helvetica", 8)
-    pdf.drawCentredString(
-        width / 2,
+    pdf.drawString(
+        x0,
         y,
         "If you have any questions about this purchase order, please contact",
     )
     y -= 4 * mm
-    pdf.drawCentredString(
-        width / 2,
+    pdf.drawString(
+        x0,
         y,
         "[Marco Ruano, Phone +34670272900, E-mail: marco.ruano@sanzar-group.com]",
     )
-    footer_y = 18 * mm
+    y -= 7 * mm
     pdf.setFont("Helvetica-Oblique", 7.7)
-    pdf.drawCentredString(
-        width / 2,
-        footer_y + 3.5 * mm,
+    pdf.drawString(
+        x0,
+        y,
         "This document is property of AgroAerospace S.L. and shall not be used distributed or reproduce",
     )
-    pdf.drawCentredString(
-        width / 2,
-        footer_y,
+    y -= 3.5 * mm
+    pdf.drawString(
+        x0,
+        y,
         "without prior written authorization of AgroAerospace S.L.",
     )
 
