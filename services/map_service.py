@@ -6,7 +6,7 @@ import pandas as pd
 from services.geo_service import geocode_address, parse_coordinates
 
 
-def _resolve_row_coordinates(row: dict[str, str]) -> tuple[float, float] | None:
+def resolve_row_coordinates(row: dict[str, str]) -> tuple[float, float] | None:
     # Prioridad solicitada: coordenadas -> municipio -> provincia.
     coords = parse_coordinates(row.get("coordenadas", ""))
     if coords:
@@ -33,14 +33,20 @@ def _resolve_row_coordinates(row: dict[str, str]) -> tuple[float, float] | None:
     return None
 
 
-def build_contacts_map(df: pd.DataFrame) -> folium.Map:
-    center = [40.4168, -3.7038]
-    fmap = folium.Map(location=center, zoom_start=6, tiles="OpenStreetMap")
+def build_contacts_map(
+    df: pd.DataFrame,
+    *,
+    focus_coords: tuple[float, float] | None = None,
+    focus_zoom: int = 13,
+) -> folium.Map:
+    center = list(focus_coords) if focus_coords else [40.4168, -3.7038]
+    zoom = focus_zoom if focus_coords else 6
+    fmap = folium.Map(location=center, zoom_start=zoom, tiles="OpenStreetMap")
     if df.empty:
         return fmap
     points: list[tuple[float, float]] = []
     for row in df.fillna("").astype(str).to_dict("records"):
-        coords = _resolve_row_coordinates(row)
+        coords = resolve_row_coordinates(row)
         if not coords:
             continue
         lat, lon = coords
@@ -61,6 +67,6 @@ def build_contacts_map(df: pd.DataFrame) -> folium.Map:
             popup=folium.Popup(popup, max_width=320),
             tooltip=marker_token,
         ).add_to(fmap)
-    if points:
+    if points and not focus_coords:
         fmap.fit_bounds(points)
     return fmap

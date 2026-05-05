@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app.state import select_contact
-from services.map_service import build_contacts_map
+from services.map_service import build_contacts_map, resolve_row_coordinates
 from ui.components.map import render_folium_map
 
 
@@ -16,6 +16,34 @@ def render(df: pd.DataFrame) -> None:
     if df.empty:
         st.info("No hay contactos para pintar.")
         return
+
+    records = df.fillna("").astype(str).to_dict("records")
+    options_by_label = {
+        f"{row.get('nombre', '(sin nombre)')} ({row.get('contact_id', '')})": row
+        for row in records
+        if row.get("contact_id", "")
+    }
+    search_col, go_col = st.columns([0.8, 0.2], gap="small")
+    selected_label = search_col.selectbox(
+        "Buscar contacto",
+        options=[""] + list(options_by_label.keys()),
+        key="map_search_contact_label",
+        help="Selecciona un contacto y pulsa 'Ir al mapa' para centrarlo.",
+    )
+    if go_col.button("Ir al mapa", use_container_width=True):
+        selected_row = options_by_label.get(selected_label, {})
+        focus_contact_id = str(selected_row.get("contact_id", "") or "")
+        focus_contact_name = str(selected_row.get("nombre", "") or focus_contact_id)
+        coords = resolve_row_coordinates(selected_row) if selected_row else None
+        if not focus_contact_id:
+            st.warning("Selecciona un contacto para centrar el mapa.")
+        elif not coords:
+            st.warning("No se pudo resolver ubicación para ese contacto.")
+        else:
+            st.session_state["map_focus_contact_id"] = focus_contact_id
+            st.session_state["map_selected_contact_id"] = focus_contact_id
+            st.session_state["map_selected_contact_name"] = focus_contact_name
+            st.rerun()
 
     selected_id = st.session_state.get("map_selected_contact_id", "")
     selected_name = st.session_state.get("map_selected_contact_name", selected_id)
@@ -35,7 +63,13 @@ def render(df: pd.DataFrame) -> None:
             select_contact(selected_id)
             st.rerun()
 
-    event = render_folium_map(build_contacts_map(df))
+    focus_id = str(st.session_state.get("map_focus_contact_id", "") or "")
+    focus_coords: tuple[float, float] | None = None
+    if focus_id:
+        focused = next((row for row in records if str(row.get("contact_id", "")) == focus_id), None)
+        if focused:
+            focus_coords = resolve_row_coordinates(focused)
+    event = render_folium_map(build_contacts_map(df, focus_coords=focus_coords))
     tooltip = str((event or {}).get("last_object_clicked_tooltip", "") or "")
     if tooltip.startswith("cid::"):
         parts = tooltip.split("::", 2)
