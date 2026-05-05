@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import uuid
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -19,7 +20,15 @@ from config.settings import (
     VALOR_OPCIONES,
 )
 from services.activity_log import append_activity
-from services.history_service import HISTORY_SPECS, count_sensor_assets
+from services.history_service import (
+    HISTORY_SPECS,
+    ProjectIotAssignment,
+    count_sensor_assets,
+    parse_projectiotid_assignments,
+    sensor_association_tokens,
+    serialize_projectiotid_assignments,
+    validate_projectiotid_assignments,
+)
 from services.contact_deletion import delete_contact_and_related_data
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
 from services.sheet_date_format import (
@@ -907,13 +916,98 @@ def _render_history_form_grouped_body(kind: str, base: dict[str, str], existing:
     st.markdown("**Bloque principal**")
     with st.container(border=True):
         for header in first_group:
-            _field_for_header(kind, header, initial.get(header, ""), prefix)
+                _field_for_header(kind, header, initial.get(header, ""), prefix)
 
     if second_group:
         st.markdown("**Bloque complementario**")
         with st.container(border=True):
             for header in second_group:
                 _field_for_header(kind, header, initial.get(header, ""), prefix)
+
+
+def _render_projectiotid_editor(prefix: str, raw_value: str, sensor_serial_number: str) -> str:
+    """Render dynamic ProjectIoTId -> sensors mapping editor and return JSON payload."""
+    state_key = f"{prefix}_projectiotid_blocks"
+    source_key = f"{prefix}_projectiotid_blocks_source"
+    available_tokens = sensor_association_tokens(sensor_serial_number)
+    source_fingerprint = f"{sensor_serial_number}||{raw_value}"
+    if state_key not in st.session_state or st.session_state.get(source_key) != source_fingerprint:
+        parsed = parse_projectiotid_assignments(raw_value)
+        st.session_state[state_key] = [
+            {
+                "uid": uuid.uuid4().hex[:8],
+                "projectiotid": item.projectiotid,
+                "sensors": list(item.sensors),
+            }
+            for item in parsed
+        ]
+        st.session_state[source_key] = source_fingerprint
+
+    blocks = st.session_state.get(state_key, [])
+    st.markdown("**ProjectIoTId por sensor**")
+    st.caption("Asocia cada ProjectIoTId a uno o varios sensores de este histórico.")
+
+    def _sync_blocks_from_widgets() -> None:
+        for block in blocks:
+            uid = str(block.get("uid", "")).strip()
+            if not uid:
+                continue
+            pid_key = f"{prefix}_projectiotid_value_{uid}"
+            sns_key = f"{prefix}_projectiotid_sensors_{uid}"
+            block["projectiotid"] = str(st.session_state.get(pid_key, block.get("projectiotid", "")) or "")
+            current = st.session_state.get(sns_key, block.get("sensors", []))
+            block["sensors"] = [str(x).strip() for x in current if str(x).strip()]
+
+    add_clicked = st.form_submit_button("➕ Añadir ProjectIoTId", use_container_width=True)
+    remove_clicked = st.form_submit_button("➖ Quitar último ProjectIoTId", use_container_width=True)
+    if add_clicked:
+        _sync_blocks_from_widgets()
+        blocks.append({"uid": uuid.uuid4().hex[:8], "projectiotid": "", "sensors": []})
+        st.session_state[state_key] = blocks
+        st.rerun()
+    if remove_clicked and blocks:
+        _sync_blocks_from_widgets()
+        removed = blocks.pop()
+        uid = str(removed.get("uid", "") or "")
+        if uid:
+            st.session_state.pop(f"{prefix}_projectiotid_value_{uid}", None)
+            st.session_state.pop(f"{prefix}_projectiotid_sensors_{uid}", None)
+        st.session_state[state_key] = blocks
+        st.rerun()
+
+    collected: list[ProjectIotAssignment] = []
+    used_in_previous: set[str] = set()
+    for idx, block in enumerate(blocks, start=1):
+        uid = str(block.get("uid", "") or uuid.uuid4().hex[:8])
+        pid_key = f"{prefix}_projectiotid_value_{uid}"
+        sns_key = f"{prefix}_projectiotid_sensors_{uid}"
+        if pid_key not in st.session_state:
+            st.session_state[pid_key] = str(block.get("projectiotid", "") or "")
+        if sns_key not in st.session_state:
+            defaults = [s for s in block.get("sensors", []) if s in available_tokens]
+            st.session_state[sns_key] = defaults
+        current_selected = [str(x).strip() for x in st.session_state.get(sns_key, []) if str(x).strip()]
+        options = [t for t in available_tokens if t.lower() not in used_in_previous or t in current_selected]
+        st.text_input(f"ProjectIoTId #{idx}", key=pid_key)
+        st.multiselect(
+            f"Sensores asociados #{idx}",
+            options=options,
+            key=sns_key,
+            help="Puedes dejar sensores sin asociar.",
+        )
+        pid_val = str(st.session_state.get(pid_key, "") or "").strip()
+        sensors_val = [str(x).strip() for x in st.session_state.get(sns_key, []) if str(x).strip()]
+        if pid_val:
+            collected.append(ProjectIotAssignment(projectiotid=pid_val, sensors=tuple(sensors_val)))
+        used_in_previous.update(s.lower() for s in sensors_val)
+
+    used = {s.lower() for item in collected for s in item.sensors}
+    unassigned = [token for token in available_tokens if token.lower() not in used]
+    if unassigned:
+        st.caption("Sensores sin ProjectIoTId: " + ", ".join(unassigned))
+    serialized = serialize_projectiotid_assignments(collected)
+    st.session_state[f"{prefix}_projectiotid"] = serialized
+    return serialized
 
 
 def _submit_history_form(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> bool:
@@ -964,6 +1058,9 @@ def _submit_history_form(kind: str, base: dict[str, str], existing: dict[str, st
 def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
     label = "ProjectIoTId" if header == "projectiotid" else header.replace("_", " ").capitalize()
     key = f"{prefix}_{header}"
+    if kind == "sensores" and header == "projectiotid":
+        sensor_serial = str(st.session_state.get(f"{prefix}_sensor_serial_number", ""))
+        return _render_projectiotid_editor(prefix, value, sensor_serial)
     if header == "sensor_serial_number":
         st.caption(SENSOR_SERIAL_NUMBER_FORMAT_HELP)
         return st.text_area(label, value=value, key=key, height=90)
@@ -991,6 +1088,13 @@ def _validate_history_values(kind: str, values: dict[str, str]) -> str | None:
             return "El sensor_serial_number no tiene un formato válido.\n\n" + SENSOR_SERIAL_NUMBER_FORMAT_HELP
         if values.get("red") == "otro" and not values.get("red_otro", "").strip():
             return "Si red = otro, debes completar el campo red_otro."
+        assignments = parse_projectiotid_assignments(values.get("projectiotid", ""))
+        projectiot_error = validate_projectiotid_assignments(
+            assignments,
+            sensor_association_tokens(values.get("sensor_serial_number", "")),
+        )
+        if projectiot_error:
+            return projectiot_error
     if kind == "campanas":
         start = values.get("fecha_campana_inicio", "")
         end = values.get("fecha_campana_fin", "")

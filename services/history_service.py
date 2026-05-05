@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from dataclasses import dataclass
@@ -61,6 +62,12 @@ class SensorAssetOccurrence:
     tipo_operacion: str
     aws_user_id: str
     detalles: str
+
+
+@dataclass(frozen=True)
+class ProjectIotAssignment:
+    projectiotid: str
+    sensors: tuple[str, ...]
 
 
 HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
@@ -230,6 +237,100 @@ def _overlap(start_a: date | None, end_a: date | None, start_b: date | None, end
 
 def count_sensor_assets(sensor_serial_number: str) -> int:
     return len(parse_sensor_assets(sensor_serial_number))
+
+
+def sensor_asset_tokens(sensor_serial_number: str) -> list[str]:
+    """Return unique normalized sensor tokens like ``uc501-UC001``."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for asset, _ in parse_sensor_assets(sensor_serial_number):
+        token = f"{asset.asset_type.lower()}-{asset.serial}"
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(token)
+    return out
+
+
+def sensor_association_tokens(sensor_serial_number: str) -> list[str]:
+    """Return association tokens preserving comma-delimited pack/group inputs.
+
+    For ProjectIoTId mapping, users expect each original comma-delimited item
+    to be selectable as one token (e.g. ``uc501-a-b-c`` as a full pack).
+    """
+    value = (sensor_serial_number or "").strip()
+    if not value:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in value.split(","):
+        token = raw.strip()
+        if not token:
+            continue
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(token)
+    return out
+
+
+def parse_projectiotid_assignments(raw: str) -> list[ProjectIotAssignment]:
+    value = (raw or "").strip()
+    if not value:
+        return []
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        # Legacy single-value mode: treat whole cell as one project id.
+        return [ProjectIotAssignment(projectiotid=value, sensors=tuple())]
+    if not isinstance(payload, list):
+        return []
+    out: list[ProjectIotAssignment] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        pid = str(item.get("projectiotid", "") or "").strip()
+        sensors_raw = item.get("sensors", [])
+        if not pid:
+            continue
+        sensors: list[str] = []
+        if isinstance(sensors_raw, list):
+            for token in sensors_raw:
+                token_clean = str(token or "").strip()
+                if token_clean:
+                    sensors.append(token_clean)
+        out.append(ProjectIotAssignment(projectiotid=pid, sensors=tuple(sensors)))
+    return out
+
+
+def serialize_projectiotid_assignments(assignments: list[ProjectIotAssignment]) -> str:
+    payload = [
+        {"projectiotid": item.projectiotid, "sensors": list(item.sensors)}
+        for item in assignments
+        if item.projectiotid.strip()
+    ]
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def validate_projectiotid_assignments(
+    assignments: list[ProjectIotAssignment],
+    available_tokens: list[str],
+) -> str | None:
+    allowed = {token.lower() for token in available_tokens}
+    used: set[str] = set()
+    for item in assignments:
+        if not item.projectiotid.strip():
+            return "Cada bloque ProjectIoTId debe tener un id."
+        for token in item.sensors:
+            key = token.lower()
+            if key not in allowed:
+                return f"El sensor asociado '{token}' no existe en sensor_serial_number."
+            if key in used:
+                return f"El sensor '{token}' no puede pertenecer a más de un ProjectIoTId."
+            used.add(key)
+    return None
 
 
 def parse_sensor_assets(sensor_serial_number: str) -> list[tuple[SensorAsset, str]]:

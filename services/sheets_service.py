@@ -162,14 +162,16 @@ class SheetsService:
 
     def append_worksheet_row(self, name: str, headers: list[str], row: dict[str, Any]) -> int:
         worksheet = self.get_or_create_worksheet(name, headers)
-        values = [str(row.get(header, "") or "") for header in headers]
+        sheet_headers = worksheet.row_values(1) or headers
+        values = [str(row.get(header, "") or "") for header in sheet_headers]
         with timed("sheets.append_worksheet_row", worksheet=name):
             worksheet.append_row(values, value_input_option="USER_ENTERED")
             return len(worksheet.col_values(1))
 
     def update_worksheet_row(self, name: str, headers: list[str], row_number: int, row: dict[str, Any]) -> None:
         worksheet = self.get_or_create_worksheet(name, headers)
-        values = [str(row.get(header, "") or "") for header in headers]
+        sheet_headers = worksheet.row_values(1) or headers
+        values = [str(row.get(header, "") or "") for header in sheet_headers]
         with timed("sheets.update_worksheet_row", worksheet=name):
             worksheet.update(f"A{row_number}", [values])
 
