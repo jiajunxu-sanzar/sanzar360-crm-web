@@ -84,6 +84,7 @@ HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
             "red",
             "red_otro",
             "cuenta_usuario",
+            "projectiotid",
             "aws_user_id",
             "detalles",
             "created_at",

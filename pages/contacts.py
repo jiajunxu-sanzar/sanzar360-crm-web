@@ -466,7 +466,7 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
             ],
         ),
         ("Estado y oportunidad", "#fff5f5", ["estado", "fecha_estado", "razon_perdida", "valor"]),
-        ("Operativa y suscripción", "#f2f5f7", ["cuenta_usuario"]),
+        ("Operativa y suscripción", "#f2f5f7", ["cuenta_usuario", "digital_maps", "iot_module", "sowing_module"]),
     ]
 
     with st.form(f"contact_form_{contact['contact_id']}"):
@@ -536,9 +536,10 @@ def _render_form_sections(
             unsafe_allow_html=True,
         )
         with st.container(border=True):
-            cols = st.columns(2)
+            col_count = 1 if title == "Operativa y suscripción" else 2
+            cols = st.columns(col_count)
             for idx, column in enumerate(columns):
-                with cols[idx % 2]:
+                with cols[idx % col_count]:
                     values[column] = _render_contact_field_input(
                         column,
                         contact.get(column, ""),
@@ -773,6 +774,10 @@ def _render_next_action_strip(df: pd.DataFrame) -> None:
 
 def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
     label = column.replace("_", " ").capitalize()
+    if column in {"digital_maps", "iot_module", "sowing_module"}:
+        normalized = (value or "").strip().lower()
+        checked = normalized in {"true", "1", "yes", "si", "sí"}
+        return "True" if st.checkbox(label, value=checked, key=key) else "False"
     if column == "estado":
         opts = [""] + list(CONTACT_ESTADO_OPCIONES)
         return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
@@ -957,7 +962,7 @@ def _submit_history_form(kind: str, base: dict[str, str], existing: dict[str, st
 
 
 def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
-    label = header.replace("_", " ").capitalize()
+    label = "ProjectIoTId" if header == "projectiotid" else header.replace("_", " ").capitalize()
     key = f"{prefix}_{header}"
     if header == "sensor_serial_number":
         st.caption(SENSOR_SERIAL_NUMBER_FORMAT_HELP)
