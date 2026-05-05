@@ -10,6 +10,7 @@ import streamlit as st
 
 _AUTH_KEY = "_authenticated_user_id"
 _TRANSIENT_UI_KEYS = (
+    "new_contact_flow_state",
     "contact_create_confirm_open",
     "contact_creating_in_progress",
     "dialog_new_contact_nombre",

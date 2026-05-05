@@ -32,6 +32,11 @@ from ui.components.tables import filter_dataframe
 # ---------------------------------------------------------------------------
 _KEY_SELECTED = "email_selected_ids"    # set[str] — contact_ids selected in table
 _KEY_FILTERS_OPEN = "email_filters_open"
+_KEY_SEG_PERSONA_ULT = "email_seg_persona_ult"
+_KEY_SEG_FECHA_ULT = "email_seg_fecha_ult"
+_KEY_SEG_PROX_FECHA = "email_seg_prox_fecha"
+_KEY_SEG_PERSONA_PROX = "email_seg_persona_prox"
+_KEY_SEG_PROX_DETALLE = "email_seg_prox_detalle"
 
 _DEFAULT_SUBJECT = "Hola {Nombre}"
 _DEFAULT_BODY = "Hola {Nombre},\n\nTe escribimos desde Sanzar."
@@ -239,16 +244,16 @@ def _render_template_editor(
     )
     if update_seg:
         c1, c2 = st.columns(2, gap="small")
-        c1.selectbox("Persona último contacto", opts, key="seg_persona_ult")
-        c2.text_input("Fecha último contacto (dd/mm/aaaa)", key="seg_fecha_ult")
+        c1.selectbox("Persona último contacto", opts, key=_KEY_SEG_PERSONA_ULT)
+        c2.text_input("Fecha último contacto (dd/mm/aaaa)", key=_KEY_SEG_FECHA_ULT)
         c3, c4 = st.columns(2, gap="small")
-        c3.text_input("Fecha próxima acción (dd/mm/aaaa)", key="seg_prox_fecha")
-        c4.selectbox("Persona próxima acción", opts, key="seg_persona_prox")
-        st.text_area("Detalle próxima acción", key="seg_prox_detalle", height=80)
+        c3.text_input("Fecha próxima acción (dd/mm/aaaa)", key=_KEY_SEG_PROX_FECHA)
+        c4.selectbox("Persona próxima acción", opts, key=_KEY_SEG_PERSONA_PROX)
+        st.text_area("Detalle próxima acción", key=_KEY_SEG_PROX_DETALLE, height=80)
 
         # Inline date validation feedback (non-blocking, so user can still hit send)
-        fecha_ult_val = st.session_state.get("seg_fecha_ult", "").strip()
-        prox_fecha_val = st.session_state.get("seg_prox_fecha", "").strip()
+        fecha_ult_val = st.session_state.get(_KEY_SEG_FECHA_ULT, "").strip()
+        prox_fecha_val = st.session_state.get(_KEY_SEG_PROX_FECHA, "").strip()
         if fecha_ult_val and not is_valid_dd_mm_yyyy(fecha_ult_val):
             st.warning("Fecha último contacto no válida — usa dd/mm/aaaa.")
         if prox_fecha_val and not is_valid_dd_mm_yyyy(prox_fecha_val):
@@ -284,8 +289,8 @@ def _do_send(
 
     # Validate seguimiento dates before sending anything
     if update_seg:
-        fecha_ult = st.session_state.get("seg_fecha_ult", "").strip()
-        prox_fecha = st.session_state.get("seg_prox_fecha", "").strip()
+        fecha_ult = st.session_state.get(_KEY_SEG_FECHA_ULT, "").strip()
+        prox_fecha = st.session_state.get(_KEY_SEG_PROX_FECHA, "").strip()
         if fecha_ult and not is_valid_dd_mm_yyyy(fecha_ult):
             st.error("Fecha último contacto no válida. Corrige antes de enviar.")
             return
@@ -331,11 +336,11 @@ def _do_send(
 
     # ---- Bulk seguimiento update ----
     patch: dict[str, str] = {}
-    persona_ult = st.session_state.get("seg_persona_ult", "")
-    fecha_ult   = st.session_state.get("seg_fecha_ult", "").strip()
-    prox_fecha  = st.session_state.get("seg_prox_fecha", "").strip()
-    persona_prox = st.session_state.get("seg_persona_prox", "")
-    prox_detalle = st.session_state.get("seg_prox_detalle", "").strip()
+    persona_ult = st.session_state.get(_KEY_SEG_PERSONA_ULT, "")
+    fecha_ult = st.session_state.get(_KEY_SEG_FECHA_ULT, "").strip()
+    prox_fecha = st.session_state.get(_KEY_SEG_PROX_FECHA, "").strip()
+    persona_prox = st.session_state.get(_KEY_SEG_PERSONA_PROX, "")
+    prox_detalle = st.session_state.get(_KEY_SEG_PROX_DETALLE, "").strip()
 
     if persona_ult:   patch["persona_ultimo_contacto"] = persona_ult
     if fecha_ult:     patch["fecha_ultimo_contacto"]   = fecha_ult

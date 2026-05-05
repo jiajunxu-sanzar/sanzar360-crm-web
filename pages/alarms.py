@@ -17,6 +17,8 @@ from ui.components.alarms import WorkAlarmItem, render_work_inbox_row
 CAT_FUNNEL = "Embudo comercial"
 CAT_INCIDENTS = "Incidencias"
 CAT_SUBS = "Suscripciones"
+CAT_SENSORS = "Sensores"
+CAT_CAMPAIGNS = "Campañas"
 
 
 def _parse_sheet_date(value: str) -> date | None:
@@ -265,6 +267,108 @@ def _subscriptions_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[
     return items
 
 
+def _sensors_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[WorkAlarmItem]:
+    items: list[WorkAlarmItem] = []
+    rows = hs.rows("sensores")
+    if not rows:
+        return items
+    today = date.today()
+    horizon = today + timedelta(days=7)
+    contacts_by_id: dict[str, dict[str, str]] = {
+        str(row.get("contact_id", "")).strip(): row
+        for row in contacts_df.fillna("").astype(str).to_dict("records")
+    }
+    for row in rows:
+        if str(row.get("estado_cierre_sensor", "")).strip().lower() == "cerrado":
+            continue
+        end_raw = str(row.get("fecha_fin", "") or "").strip()
+        end = _parse_sheet_date(end_raw)
+        if not end:
+            continue
+        cid = str(row.get("contact_id", "") or "").strip()
+        if not cid:
+            continue
+        if end > horizon:
+            continue
+        if end < today:
+            days = (today - end).days
+            priority = "Alta"
+            ctx = f'Finalizado hace {days} día{"s" if days != 1 else ""}'
+            suggested = "Cerrar histórico o registrar renovación del sensor"
+        else:
+            days = (end - today).days
+            priority = "Media"
+            ctx = "Finaliza hoy" if days == 0 else f"Finaliza en {days} días (<=7)"
+            suggested = "Planificar renovación antes de fecha fin"
+        contact_row = contacts_by_id.get(cid, {})
+        sensor_label = str(row.get("sensor_serial_number", "") or "").strip() or "Sensor"
+        items.append(
+            WorkAlarmItem(
+                title=str(row.get("nombre_cliente", "") or contact_row.get("nombre", "") or "Sensor"),
+                priority=priority,
+                due=end_raw,
+                owner=str(contact_row.get("persona_proxima_accion", "") or contact_row.get("persona_ultimo_contacto", "")),
+                suggested_action=str(row.get("detalles", "") or "").strip() or suggested,
+                detail=sensor_label,
+                contact_id=cid,
+                context_line=ctx,
+            )
+        )
+    items.sort(key=lambda i: (_due_date_key(i), _priority_key(i)))
+    return items
+
+
+def _campaigns_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[WorkAlarmItem]:
+    items: list[WorkAlarmItem] = []
+    rows = hs.rows("campanas")
+    if not rows:
+        return items
+    today = date.today()
+    horizon = today + timedelta(days=7)
+    contacts_by_id: dict[str, dict[str, str]] = {
+        str(row.get("contact_id", "")).strip(): row
+        for row in contacts_df.fillna("").astype(str).to_dict("records")
+    }
+    for row in rows:
+        if str(row.get("estado_cierre_campana", "")).strip().lower() == "cerrado":
+            continue
+        end_raw = str(row.get("fecha_campana_fin", "") or "").strip()
+        end = _parse_sheet_date(end_raw)
+        if not end:
+            continue
+        cid = str(row.get("contact_id", "") or "").strip()
+        if not cid:
+            continue
+        if end > horizon:
+            continue
+        if end < today:
+            days = (today - end).days
+            priority = "Alta"
+            ctx = f'Finalizada hace {days} día{"s" if days != 1 else ""}'
+            suggested = "Cerrar campaña o crear la siguiente fase"
+        else:
+            days = (end - today).days
+            priority = "Media"
+            ctx = "Finaliza hoy" if days == 0 else f"Finaliza en {days} días (<=7)"
+            suggested = "Revisar cierre de campaña antes de fecha fin"
+        contact_row = contacts_by_id.get(cid, {})
+        campaign_name = str(row.get("nombre_campana", "") or "").strip() or "Campaña"
+        items.append(
+            WorkAlarmItem(
+                title=str(row.get("nombre_cliente", "") or contact_row.get("nombre", "") or "Campaña"),
+                priority=priority,
+                due=end_raw,
+                owner=str(contact_row.get("persona_proxima_accion", "") or contact_row.get("persona_ultimo_contacto", "")),
+                suggested_action=str(row.get("detalles", "") or "").strip() or suggested,
+                detail=campaign_name,
+                contact_id=cid,
+                context_line=ctx,
+            )
+        )
+    items.sort(key=lambda i: (_due_date_key(i), _priority_key(i)))
+    return items
+
+
 def render(contacts_df: pd.DataFrame) -> None:
     st.title("Centro de alarmas")
     st.caption("Bandeja de trabajo: prioridad, plazos y siguiente acción sobre la ficha del contacto")
@@ -279,6 +383,8 @@ def render(contacts_df: pd.DataFrame) -> None:
 
     incidents_items: list[WorkAlarmItem] = []
     subs_items: list[WorkAlarmItem] = []
+    sensors_items: list[WorkAlarmItem] = []
+    campaigns_items: list[WorkAlarmItem] = []
 
     if hs is not None:
         try:
@@ -290,11 +396,21 @@ def render(contacts_df: pd.DataFrame) -> None:
             subs_items = _subscriptions_items(contacts_df, hs)
         except Exception as exc:
             st.warning(f"Suscripciones: {exc}")
+        try:
+            sensors_items = _sensors_items(contacts_df, hs)
+        except Exception as exc:
+            st.warning(f"Sensores: {exc}")
+        try:
+            campaigns_items = _campaigns_items(contacts_df, hs)
+        except Exception as exc:
+            st.warning(f"Campañas: {exc}")
 
     items_by_category = {
         CAT_FUNNEL: funnel_items,
         CAT_INCIDENTS: incidents_items,
         CAT_SUBS: subs_items,
+        CAT_SENSORS: sensors_items,
+        CAT_CAMPAIGNS: campaigns_items,
     }
 
     total_all = sum(len(v) for v in items_by_category.values())
@@ -316,6 +432,8 @@ def render(contacts_df: pd.DataFrame) -> None:
         ("Embudo", CAT_FUNNEL),
         ("Incidencias", CAT_INCIDENTS),
         ("Suscripciones", CAT_SUBS),
+        ("Sensores", CAT_SENSORS),
+        ("Campañas", CAT_CAMPAIGNS),
     )
     tabs = st.tabs([c[0] for c in configs])
     for idx, (_, cat_key) in enumerate(configs):

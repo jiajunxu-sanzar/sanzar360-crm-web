@@ -9,6 +9,8 @@ import streamlit as st
 from app.cache import sheets_service
 from services.vacations_service import VacationsService
 
+_VAC_OVERLAY_KEY = "vacaciones.manage_absences_open"
+
 
 @st.cache_resource
 def vacations_service() -> VacationsService:
@@ -44,7 +46,7 @@ def render(_: pd.DataFrame) -> None:
             st.subheader("Resumen anual")
         with action_col:
             if st.button("Gestionar ausencias", use_container_width=True):
-                st.session_state["vac_manage_absences_open"] = True
+                st.session_state[_VAC_OVERLAY_KEY] = True
         summary_view = summary.rename(
             columns={
                 "nombre": "Nombre",
@@ -73,7 +75,7 @@ def render(_: pd.DataFrame) -> None:
         else:
             st.caption("Haz click en una fila del resumen para ver su calendario.")
 
-    if st.session_state.get("vac_manage_absences_open", False):
+    if st.session_state.get(_VAC_OVERLAY_KEY, False):
         _manage_absences_dialog(employees, absences)
 
     st.subheader("Calendario de ausencias (12 meses)")
@@ -139,7 +141,7 @@ def _manage_absences_dialog(employees: pd.DataFrame, absences: pd.DataFrame) -> 
             confirmar = b2.form_submit_button("Confirmar", type="primary", key="vac_confirm_add_btn")
 
         if cancelar:
-            st.session_state["vac_manage_absences_open"] = False
+            st.session_state[_VAC_OVERLAY_KEY] = False
             st.rerun()
         if confirmar:
             payload = {
@@ -156,7 +158,7 @@ def _manage_absences_dialog(employees: pd.DataFrame, absences: pd.DataFrame) -> 
             saved_id = vs.upsert_absence(payload)
             st.success(f"Guardado en Vacaciones_Ausencias ({saved_id}).")
             st.session_state["vacations_cache_version"] = st.session_state.get("vacations_cache_version", 0) + 1
-            st.session_state["vac_manage_absences_open"] = False
+            st.session_state[_VAC_OVERLAY_KEY] = False
             st.rerun()
         return
 
@@ -164,7 +166,7 @@ def _manage_absences_dialog(employees: pd.DataFrame, absences: pd.DataFrame) -> 
     if employee_absences.empty:
         st.info("Este empleado no tiene leave_id registrados.")
         if st.button("Cerrar"):
-            st.session_state["vac_manage_absences_open"] = False
+            st.session_state[_VAC_OVERLAY_KEY] = False
             st.rerun()
         return
 
@@ -204,7 +206,7 @@ def _manage_absences_dialog(employees: pd.DataFrame, absences: pd.DataFrame) -> 
         eliminar = b3.form_submit_button("Eliminar", key="vac_delete_edit_btn")
 
     if cancelar:
-        st.session_state["vac_manage_absences_open"] = False
+        st.session_state[_VAC_OVERLAY_KEY] = False
         st.rerun()
     if confirmar:
         payload = {
@@ -222,14 +224,14 @@ def _manage_absences_dialog(employees: pd.DataFrame, absences: pd.DataFrame) -> 
         saved_id = vs.upsert_absence(payload)
         st.success(f"Actualizado en Vacaciones_Ausencias ({saved_id}).")
         st.session_state["vacations_cache_version"] = st.session_state.get("vacations_cache_version", 0) + 1
-        st.session_state["vac_manage_absences_open"] = False
+        st.session_state[_VAC_OVERLAY_KEY] = False
         st.rerun()
     if eliminar:
         deleted = vs.delete_absence(selected_leave_id)
         if deleted:
             st.success("Ausencia eliminada.")
             st.session_state["vacations_cache_version"] = st.session_state.get("vacations_cache_version", 0) + 1
-            st.session_state["vac_manage_absences_open"] = False
+            st.session_state[_VAC_OVERLAY_KEY] = False
             st.rerun()
         st.error("No se pudo eliminar el registro.")
 

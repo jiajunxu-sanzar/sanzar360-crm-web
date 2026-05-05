@@ -13,7 +13,7 @@ def _kind_class(slug: str) -> str:
     return slug.replace("_", "-")
 
 
-def _render_event_article(ev: CustomerTimelineEvent, *, weekday_label: bool) -> str:
+def _render_event_article(ev: CustomerTimelineEvent, *, weekday_label: bool = False) -> str:
     cls = html_std.escape(_kind_class(ev.kind_slug))
     d = ev.on_date
     if weekday_label:
@@ -68,8 +68,6 @@ def render_contact_timeline_block(contact_id: str) -> None:
         horizontal=True,
         key=f"sanzar_tl_order_{contact_id}",
     )
-    weekdays = st.toggle("Mostrar día de la semana", True, key=f"sanzar_tl_weekday_{contact_id}")
-
     grouped = timeline_events_grouped_months(events, reverse_chrono=order_mode.startswith("Lo más nuevo"))
     blocks: list[str] = []
 
@@ -85,7 +83,7 @@ def render_contact_timeline_block(contact_id: str) -> None:
     blocks.append(pills)
 
     for month_heading, bucket in grouped:
-        inner = "".join(_render_event_article(ev, weekday_label=weekdays) for ev in bucket)
+        inner = "".join(_render_event_article(ev) for ev in bucket)
         blocks.append(
             "<section class='sanzar-timeline-month'>"
             f"<h5 class='sanzar-timeline-month-title'>{html_std.escape(month_heading)}</h5>"

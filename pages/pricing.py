@@ -23,13 +23,11 @@ _PROVIDER_PASSWORD   = "sanzar"
 _MEDIA_DIR  = Path(__file__).resolve().parents[1] / "assets" / "media"
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
-_KEY_PROVIDER    = "pricing_provider_mode"
-_KEY_OPEN_DIALOG = "pricing_open_dialog"
+_KEY_PROVIDER = "pricing.provider_mode"
 
 
 def _ensure_state() -> None:
     st.session_state.setdefault(_KEY_PROVIDER, False)
-    st.session_state.setdefault(_KEY_OPEN_DIALOG, False)
 
 
 def _load_media() -> list[Path]:

@@ -26,6 +26,34 @@ st.set_page_config(page_title="Sanzar CRM", page_icon="S", layout="wide")
 apply_theme()
 init_state()
 
+
+def _close_all_overlays() -> None:
+    """Best-effort cleanup of transient overlays across pages."""
+    from ui import modal_state as _ms
+
+    _ms.close_modal()
+    for key in (
+        "new_contact_flow_state",
+        "contact_create_confirm_open",
+        "contact_creating_in_progress",
+        "dialog_new_contact_nombre",
+        "_create_contact_nombre",
+        "new_contact_similar_candidates",
+        "new_contact_require_second_confirm",
+        "new_contact_confirmed_override",
+        "vac_manage_absences_open",
+        "vacaciones.manage_absences_open",
+        "pricing_open_dialog",
+    ):
+        st.session_state.pop(key, None)
+    for key in list(st.session_state.keys()):
+        if (
+            key.startswith("show_history_")
+            or key.startswith("contact_delete_open_")
+            or key.startswith("hist_table_select_")
+        ):
+            st.session_state.pop(key, None)
+
 with st.sidebar:
     st.title("Sanzar CRM")
     st.caption("Web · Streamlit")
@@ -109,9 +137,8 @@ with st.sidebar:
 
     st.session_state["_last_page"] = st.session_state.get("_last_page", page)
     if st.session_state["_last_page"] != page:
-        # Page changed — close any open modal so it doesn't bleed into the new page.
-        from ui import modal_state as _ms
-        _ms.close_modal()
+        # Page changed — close any open overlay so it doesn't bleed into the new page.
+        _close_all_overlays()
     st.session_state["_last_page"] = page
     st.session_state.active_page = page
 
@@ -119,6 +146,16 @@ with st.sidebar:
         st.session_state.pop("_email_portal_unlocked_uid", None)
 
     if st.button("Recargar datos", use_container_width=True):
+        keep = {
+            "_authenticated_user_id": str(st.session_state.get("_authenticated_user_id", "")),
+            "auth_ok": bool(st.session_state.get("auth_ok", False)),
+            "login_error": "",
+        }
+        _close_all_overlays()
+        for key in list(st.session_state.keys()):
+            st.session_state.pop(key, None)
+        for key, value in keep.items():
+            st.session_state[key] = value
         clear_all_cache()
         st.rerun()
 

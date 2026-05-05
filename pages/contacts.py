@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import uuid
+from difflib import SequenceMatcher
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -71,22 +72,115 @@ SELECT_OPTIONS = {
     "red": ["auto", "movistar", "vodafone", "orange", "yoigo", "otro"],
     "tipo_operacion": ["prestamo", "venta", "demo", "mantenimiento", "otro"],
     "estado_sensor": ["activo", "en revisión", "devuelto", "mantenimiento", "baja"],
+    "estado_cierre_sensor": ["abierto", "cerrado"],
     "moneda": ["EUR", "Dólar"],
     "metodo_pago": ["transferencia", "tarjeta", "recibo", "efectivo", "otro"],
     "estado_suscripcion": ["activa", "caduca pronto", "inactiva"],
     "tipo_incidencia": ["sensor", "conectividad", "riego", "facturación", "campaña", "otro"],
     "estado": ["abierta", "en curso", "bloqueada", "cerrada"],
+    "estado_cierre_campana": ["abierto", "cerrado"],
     "prioridad": ["alta", "media", "baja"],
 }
 
 CONTACT_LIST_PANEL_HEIGHT_BASE = 980
 CONTACT_LIST_PANEL_HEIGHT_WITH_DETAIL = 1320
+NEW_CONTACT_FLOW_KEY = "new_contact_flow_state"
+NEW_CONTACT_FLOW_IDLE = "idle"
+NEW_CONTACT_FLOW_OPEN = "open"
+NEW_CONTACT_FLOW_SUBMITTING = "submitting"
+NEW_CONTACT_SIMILAR_CANDIDATES_KEY = "new_contact_similar_candidates"
+NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY = "new_contact_require_second_confirm"
+NEW_CONTACT_CONFIRM_OVERRIDE_KEY = "new_contact_confirmed_override"
 
 
 def _clear_modal_flags() -> None:
-    st.session_state["contact_create_confirm_open"] = False
-    st.session_state["contact_creating_in_progress"] = False
+    _new_contact_flow_finish(clear_inputs=True)
     modal_state.close_modal()
+
+
+def _new_contact_flow_state_get() -> str:
+    state = str(st.session_state.get(NEW_CONTACT_FLOW_KEY, "") or "").strip().lower()
+    if state in {NEW_CONTACT_FLOW_IDLE, NEW_CONTACT_FLOW_OPEN, NEW_CONTACT_FLOW_SUBMITTING}:
+        return state
+    # Legacy compatibility for previous boolean flags.
+    if st.session_state.get("contact_creating_in_progress", False):
+        return NEW_CONTACT_FLOW_SUBMITTING
+    if st.session_state.get("contact_create_confirm_open", False):
+        return NEW_CONTACT_FLOW_OPEN
+    return NEW_CONTACT_FLOW_IDLE
+
+
+def _new_contact_flow_set(state: str) -> None:
+    normalized = state if state in {NEW_CONTACT_FLOW_IDLE, NEW_CONTACT_FLOW_OPEN, NEW_CONTACT_FLOW_SUBMITTING} else NEW_CONTACT_FLOW_IDLE
+    st.session_state[NEW_CONTACT_FLOW_KEY] = normalized
+    # Keep old keys synchronized for backward compatibility during transition.
+    st.session_state["contact_create_confirm_open"] = normalized in {NEW_CONTACT_FLOW_OPEN, NEW_CONTACT_FLOW_SUBMITTING}
+    st.session_state["contact_creating_in_progress"] = normalized == NEW_CONTACT_FLOW_SUBMITTING
+
+
+def _new_contact_flow_open() -> None:
+    _new_contact_flow_set(NEW_CONTACT_FLOW_OPEN)
+
+
+def _new_contact_flow_start_submit(nombre: str) -> None:
+    st.session_state["_create_contact_nombre"] = nombre
+    _new_contact_flow_set(NEW_CONTACT_FLOW_SUBMITTING)
+
+
+def _new_contact_flow_cancel() -> None:
+    st.session_state.pop("dialog_new_contact_nombre", None)
+    st.session_state.pop("_create_contact_nombre", None)
+    st.session_state.pop(NEW_CONTACT_SIMILAR_CANDIDATES_KEY, None)
+    st.session_state.pop(NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY, None)
+    st.session_state.pop(NEW_CONTACT_CONFIRM_OVERRIDE_KEY, None)
+    _new_contact_flow_set(NEW_CONTACT_FLOW_IDLE)
+
+
+def _new_contact_flow_finish(*, clear_inputs: bool = False) -> None:
+    if clear_inputs:
+        st.session_state.pop("dialog_new_contact_nombre", None)
+    st.session_state.pop("_create_contact_nombre", None)
+    st.session_state.pop(NEW_CONTACT_SIMILAR_CANDIDATES_KEY, None)
+    st.session_state.pop(NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY, None)
+    st.session_state.pop(NEW_CONTACT_CONFIRM_OVERRIDE_KEY, None)
+    _new_contact_flow_set(NEW_CONTACT_FLOW_IDLE)
+
+
+def _normalize_contact_name(value: str) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _find_similar_contact_names(df: pd.DataFrame, new_name: str) -> tuple[bool, list[tuple[str, str]]]:
+    target = _normalize_contact_name(new_name)
+    if not target:
+        return False, []
+    exact = False
+    candidates: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for row in df.fillna("").astype(str).to_dict("records"):
+        existing_name = str(row.get("nombre", "") or "").strip()
+        existing_id = str(row.get("contact_id", "") or "").strip()
+        existing_norm = _normalize_contact_name(existing_name)
+        if not existing_norm:
+            continue
+        if existing_norm == target:
+            exact = True
+            item = (existing_name, existing_id)
+            if item not in seen:
+                seen.add(item)
+                candidates.append(item)
+            continue
+        similar = (
+            target in existing_norm
+            or existing_norm in target
+            or SequenceMatcher(None, target, existing_norm).ratio() >= 0.82
+        )
+        if similar:
+            item = (existing_name, existing_id)
+            if item not in seen:
+                seen.add(item)
+                candidates.append(item)
+    return exact, candidates
 
 
 def _clear_history_selection(contact_id: str, kind: str) -> None:
@@ -100,11 +194,32 @@ def _clear_history_selection(contact_id: str, kind: str) -> None:
     st.session_state.pop(key, None)
 
 
+def _clear_contact_overlay_state(*, keep_contact_id: str = "") -> None:
+    """Clear transient contact UI overlays/toggles that should not persist."""
+    _clear_modal_flags()
+    for key in list(st.session_state.keys()):
+        if key.startswith("show_history_"):
+            # Keep current contact section toggles only if requested.
+            if keep_contact_id and key.endswith(f"_{keep_contact_id}"):
+                continue
+            st.session_state.pop(key, None)
+        if key.startswith("hist_table_select_"):
+            st.session_state.pop(key, None)
+        if key.startswith("contact_delete_open_"):
+            st.session_state.pop(key, None)
+
+
 def render(df: pd.DataFrame) -> pd.DataFrame:
     with timed("contacts.render"):
         refreshed = st.session_state.pop("_contacts_refresh_df", None)
         if isinstance(refreshed, pd.DataFrame):
             df = refreshed
+        # If selected contact changed, purge per-contact transient overlays.
+        current_selected = str(st.session_state.get("selected_contact_id", "") or "")
+        last_selected = str(st.session_state.get("_contacts_last_selected_id", "") or "")
+        if current_selected != last_selected:
+            _clear_contact_overlay_state(keep_contact_id=current_selected)
+            st.session_state["_contacts_last_selected_id"] = current_selected
 
         st.title("Contactos")
         if df.empty:
@@ -212,9 +327,9 @@ def _render_contact_list(df: pd.DataFrame) -> str:
     filtered = filtered.reset_index(drop=True)
 
     if st.button("Nuevo contacto", key="create_contact_top", use_container_width=True):
-        st.session_state.contact_create_confirm_open = True
+        _new_contact_flow_open()
         st.rerun()
-    if st.session_state.get("contact_create_confirm_open", False):
+    if _new_contact_flow_state_get() in {NEW_CONTACT_FLOW_OPEN, NEW_CONTACT_FLOW_SUBMITTING}:
         _render_create_contact_confirmation(df)
 
     st.caption(f"{len(filtered)} contactos encontrados")
@@ -278,7 +393,10 @@ def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> s
 
 @st.dialog("Nuevo contacto")
 def _create_contact_dialog(df: pd.DataFrame) -> None:
-    if st.session_state.get("contact_creating_in_progress", False):
+    flow_state = _new_contact_flow_state_get()
+    if flow_state == NEW_CONTACT_FLOW_IDLE:
+        return
+    if flow_state == NEW_CONTACT_FLOW_SUBMITTING:
         with st.spinner("Creando nuevo contacto..."):
             nombre_crear = st.session_state.pop("_create_contact_nombre", "").strip()
             new_df, new_contact_id = create_empty_contact(
@@ -297,11 +415,18 @@ def _create_contact_dialog(df: pd.DataFrame) -> None:
                 persona=_actor_name(),
             )
             select_contact(new_contact_id)
-            st.session_state.contact_create_confirm_open = False
-            st.session_state.contact_creating_in_progress = False
+            _new_contact_flow_finish(clear_inputs=True)
         st.rerun()
 
     st.markdown("Introduce el **nombre** del nuevo contacto y confirma para crear la ficha.")
+    similar_candidates = st.session_state.get(NEW_CONTACT_SIMILAR_CANDIDATES_KEY, [])
+    if similar_candidates:
+        lines = "\n".join([f"- {name} ({cid})" if cid else f"- {name}" for name, cid in similar_candidates])
+        st.warning(
+            "Existen contactos con nombres similares:\n\n"
+            f"{lines}\n\n"
+            "¿Estás seguro de crear este contacto? Pulsa confirmar de nuevo para continuar."
+        )
     st.text_input(
         "Nombre del contacto",
         key="dialog_new_contact_nombre",
@@ -314,13 +439,25 @@ def _create_contact_dialog(df: pd.DataFrame) -> None:
             if not nombre_val:
                 st.error("Introduce un nombre para el contacto.")
                 return
-            st.session_state["_create_contact_nombre"] = nombre_val
-            st.session_state.contact_creating_in_progress = True
+            exact_match, similars = _find_similar_contact_names(df, nombre_val)
+            if exact_match:
+                st.error("Ya existe este contacto.")
+                return
+            require_second = bool(st.session_state.get(NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY, False))
+            override_ok = bool(st.session_state.get(NEW_CONTACT_CONFIRM_OVERRIDE_KEY, False))
+            if similars and not (require_second and override_ok):
+                st.session_state[NEW_CONTACT_SIMILAR_CANDIDATES_KEY] = similars
+                st.session_state[NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY] = True
+                st.session_state[NEW_CONTACT_CONFIRM_OVERRIDE_KEY] = True
+                st.rerun()
+            st.session_state.pop(NEW_CONTACT_SIMILAR_CANDIDATES_KEY, None)
+            st.session_state.pop(NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY, None)
+            st.session_state.pop(NEW_CONTACT_CONFIRM_OVERRIDE_KEY, None)
+            _new_contact_flow_start_submit(nombre_val)
             st.rerun()
     with col_cancel:
         if st.button("Cancelar", use_container_width=True, key="cancel_create_contact_dialog"):
-            st.session_state.pop("dialog_new_contact_nombre", None)
-            _clear_modal_flags()
+            _new_contact_flow_cancel()
             st.rerun()
 
 
@@ -430,7 +567,7 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     )
     if st.toggle(
         "Mostrar línea de tiempo (sensores, campañas, pagos e incidencias)",
-        value=True,
+        value=False,
         key=f"contact_timeline_visible_{contact_id}",
     ):
         render_contact_timeline_block(contact_id)
@@ -455,7 +592,7 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
         ("Identificación", "#e6fffa", ["nombre", "tipo_entidad", "detalle"]),
         ("Localización", "#ebf8ff", ["país", "provincia", "municipio", "coordenadas", "direccion"]),
         ("Contacto", "#f7fafc", ["telefono", "correo", "otros_contactos"]),
-        ("Perfil agrícola y lead", "#f7f3ff", ["cultivos", "superficie_ha", "tipo_riego", "fuente_lead", "lead_detalle"]),
+        ("Perfil agrícola y lead", "#f7f3ff", ["cultivos", "superficie_ha", "tipo_riego"]),
     ]
     sections_right: list[tuple[str, str, list[str]]] = [
         (
@@ -611,7 +748,7 @@ def _render_operativa_cards(contact: dict[str, str]) -> None:
         )
         c1, c2 = st.columns([0.6, 0.4], gap="small")
         if c1.button("Historial", key=f"inline_history_{kind}_{contact_id}", use_container_width=True):
-            _clear_modal_flags()
+            _clear_contact_overlay_state(keep_contact_id=contact_id)
             _clear_history_selection(contact_id, kind)
             st.session_state[f"show_history_{kind}_{contact_id}"] = not st.session_state.get(
                 f"show_history_{kind}_{contact_id}", False
@@ -622,7 +759,7 @@ def _render_operativa_cards(contact: dict[str, str]) -> None:
             key=f"inline_add_{kind}_{contact_id}",
             use_container_width=True,
         ):
-            _clear_modal_flags()
+            _clear_contact_overlay_state(keep_contact_id=contact_id)
             modal_state.open_add_history_modal(kind, contact_id)
             st.rerun()
 
@@ -1061,6 +1198,19 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
     if kind == "sensores" and header == "projectiotid":
         sensor_serial = str(st.session_state.get(f"{prefix}_sensor_serial_number", ""))
         return _render_projectiotid_editor(prefix, value, sensor_serial)
+    if kind == "campanas" and header == "historial_sensor_id":
+        contact_id = str(st.session_state.get(f"{prefix}_id_contact", "") or "")
+        sensor_rows = history_service().rows_for_contact("sensores", contact_id) if contact_id else []
+        options = [""] + [str(row.get("historial_sensor_id", "")).strip() for row in sensor_rows if str(row.get("historial_sensor_id", "")).strip()]
+        unique_options = []
+        seen: set[str] = set()
+        for opt in options:
+            if opt in seen:
+                continue
+            seen.add(opt)
+            unique_options.append(opt)
+        index = unique_options.index(value) if value in unique_options else 0
+        return st.selectbox(label, unique_options, index=index, key=key)
     if header == "sensor_serial_number":
         st.caption(SENSOR_SERIAL_NUMBER_FORMAT_HELP)
         return st.text_area(label, value=value, key=key, height=90)
@@ -1068,7 +1218,10 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         return st.text_input(label, value=str(count_sensor_assets(st.session_state.get(f"{prefix}_sensor_serial_number", value))), key=key, disabled=True)
     if header in SELECT_OPTIONS:
         options = [""] + SELECT_OPTIONS[header]
-        index = options.index(value) if value in options else 0
+        selected_value = value
+        if header in {"estado_cierre_sensor", "estado_cierre_campana"} and not (value or "").strip():
+            selected_value = "abierto"
+        index = options.index(selected_value) if selected_value in options else 0
         return st.selectbox(label, options, index=index, key=key)
     if header == "red_otro":
         red_value = st.session_state.get(f"{prefix}_red", "")
