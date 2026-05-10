@@ -137,8 +137,8 @@ def _manage_absences_dialog(employees: pd.DataFrame, absences: pd.DataFrame) -> 
             medio_dia = st.checkbox("medio_dia", key="vac_add_medio")
             comentario = st.text_area("comentario", value="", key="vac_add_comentario")
             b1, b2 = st.columns(2)
-            cancelar = b1.form_submit_button("Cancelar", key="vac_cancel_add_btn")
-            confirmar = b2.form_submit_button("Confirmar", type="primary", key="vac_confirm_add_btn")
+            cancelar = b1.form_submit_button("Cancelar", key="btn_neutral_vac_cancel_add")
+            confirmar = b2.form_submit_button("Confirmar", type="primary", key="btn_save_vac_add")
 
         if cancelar:
             st.session_state[_VAC_OVERLAY_KEY] = False
@@ -201,9 +201,9 @@ def _manage_absences_dialog(employees: pd.DataFrame, absences: pd.DataFrame) -> 
         medio_dia = st.checkbox("medio_dia", value=default_half, key="vac_edit_medio")
         comentario = st.text_area("comentario", value=default_comment, key="vac_edit_comentario")
         b1, b2, b3 = st.columns(3)
-        cancelar = b1.form_submit_button("Cancelar", key="vac_cancel_edit_btn")
-        confirmar = b2.form_submit_button("Confirmar", type="primary", key="vac_confirm_edit_btn")
-        eliminar = b3.form_submit_button("Eliminar", key="vac_delete_edit_btn")
+        cancelar = b1.form_submit_button("Cancelar", key="btn_neutral_vac_cancel_edit")
+        confirmar = b2.form_submit_button("Confirmar", type="primary", key="btn_save_vac_edit")
+        eliminar = b3.form_submit_button("Eliminar", key="btn_destruct_vac_delete")
 
     if cancelar:
         st.session_state[_VAC_OVERLAY_KEY] = False
@@ -282,10 +282,10 @@ def _build_calendar_df(absences: pd.DataFrame, employees: pd.DataFrame) -> pd.Da
 def _render_year_calendar(calendar_df: pd.DataFrame, year: int, holiday_dates: set[date]) -> None:
     day_types = _expand_day_types(calendar_df, year)
     st.markdown(
-        "<div style='font-size:0.9rem; margin-bottom:8px;'>"
-        "<span style='display:inline-block;width:12px;height:12px;background:#fecaca;border:1px solid #fca5a5;margin-right:6px;'></span>Ausencia / vacaciones "
-        "<span style='display:inline-block;width:12px;height:12px;background:#fef08a;border:1px solid #fde047;margin:0 6px 0 14px;'></span>Teletrabajo "
-        "<span style='display:inline-block;width:12px;height:12px;background:#dbeafe;border:1px solid #93c5fd;margin:0 6px 0 14px;'></span>Festivo Leganes"
+        "<div class='sanzar-legend-row'>"
+        "<span class='sanzar-legend-item sanzar-legend-ausencia'>Ausencia / vacaciones</span>"
+        "<span class='sanzar-legend-item sanzar-legend-teletrabajo'>Teletrabajo</span>"
+        "<span class='sanzar-legend-item sanzar-legend-festivo'>Festivo Leganes</span>"
         "</div>",
         unsafe_allow_html=True,
     )

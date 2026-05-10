@@ -348,7 +348,7 @@ def _render_inventory_form_dialog(
             c1, c2 = st.columns(2)
             if c1.button(
                 "Confirmar eliminación",
-                key=f"{prefix}_delete_step2_confirm",
+                key=f"btn_destruct_{prefix}_step2_confirm",
                 width="stretch",
                 type="primary",
             ):
@@ -363,7 +363,7 @@ def _render_inventory_form_dialog(
                 st.rerun()
             if c2.button(
                 "Cancelar eliminación",
-                key=f"{prefix}_delete_step2_cancel",
+                key=f"btn_neutral_{prefix}_step2_cancel",
                 width="stretch",
             ):
                 st.session_state.pop(INVENTORY_DELETE_STEP2_KEY, None)

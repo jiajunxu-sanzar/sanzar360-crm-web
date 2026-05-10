@@ -64,7 +64,6 @@ from ui.palette import (
     STATUS_INFO,
     STATUS_DANGER,
     STATUS_NEUTRAL,
-    dash_bucket_button_style,
     incident_status_style,
     subscription_status_style,
 )
@@ -505,7 +504,7 @@ def _create_contact_dialog(df: pd.DataFrame) -> None:
     )
     col_confirm, col_cancel = st.columns(2)
     with col_confirm:
-        if st.button("Confirmar", width="stretch", key="confirm_create_contact_dialog"):
+        if st.button("Confirmar", width="stretch", key="btn_save_create_contact"):
             nombre_val = str(st.session_state.get("dialog_new_contact_nombre", "")).strip()
             if not nombre_val:
                 st.error("Introduce un nombre para el contacto.")
@@ -602,7 +601,7 @@ def _render_delete_contact_confirmation(*, contact_id: str, nombre: str) -> None
             "**Acciones**. **No se puede deshacer.**"
         )
         c_yes, c_no = st.columns(2)
-        if c_yes.button("Confirmar eliminación", type="primary", key=f"btn_delete_yes_{target_id}"):
+        if c_yes.button("Confirmar eliminación", type="primary", key=f"btn_destruct_contact_del_{target_id}"):
             try:
                 with st.spinner("Eliminando en Google Sheets…"):
                     delete_contact_and_related_data(sheets_service(), target_id)
@@ -660,16 +659,15 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
 
 def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]) -> pd.DataFrame | None:
     st.subheader("Ficha del cliente")
-    sections_left: list[tuple[str, str, list[str]]] = [
-        ("Identificación", "#e6fffa", ["nombre", "tipo_entidad", "detalle"]),
-        ("Localización", "#ebf8ff", ["país", "provincia", "municipio", "coordenadas", "direccion"]),
-        ("Contacto", "#f7fafc", ["telefono", "correo", "otros_contactos"]),
-        ("Perfil agrícola y lead", "#f7f3ff", ["cultivos", "superficie_ha", "tipo_riego"]),
+    sections_left: list[tuple[str, list[str]]] = [
+        ("Identificación", ["nombre", "tipo_entidad", "detalle"]),
+        ("Localización", ["país", "provincia", "municipio", "coordenadas", "direccion"]),
+        ("Contacto", ["telefono", "correo", "otros_contactos"]),
+        ("Perfil agrícola y lead", ["cultivos", "superficie_ha", "tipo_riego"]),
     ]
-    sections_right: list[tuple[str, str, list[str]]] = [
+    sections_right: list[tuple[str, list[str]]] = [
         (
             "Seguimiento comercial",
-            "#fffaf0",
             [
                 "fuente_lead",
                 "lead_detalle",
@@ -683,8 +681,8 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
                 "fecha_veces_sin_respuesta",
             ],
         ),
-        ("Estado y oportunidad", "#fff5f5", ["estado", "fecha_estado", "razon_perdida", "valor"]),
-        ("Operativa y suscripción", "#f2f5f7", ["cuenta_usuario", "digital_maps", "iot_module", "sowing_module"]),
+        ("Estado y oportunidad", ["estado", "fecha_estado", "razon_perdida", "valor"]),
+        ("Operativa y suscripción", ["cuenta_usuario", "digital_maps", "iot_module", "sowing_module"]),
     ]
 
     with st.form(f"contact_form_{contact['contact_id']}"):
@@ -705,11 +703,13 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
             "Guardar ficha",
             type="primary",
             width="stretch",
+            key="btn_save_contact_ficha",
         )
         submitted_delete = col_del.form_submit_button(
             "Eliminar contacto…",
             type="secondary",
             width="stretch",
+            key="btn_destruct_contact_ficha",
             help="Borra la ficha, históricos (sensores, campañas, suscripciones, incidencias) y Acciones.",
         )
 
@@ -771,12 +771,12 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
 def _render_form_sections(
     values: dict[str, str],
     contact: dict[str, str],
-    sections: list[tuple[str, str, list[str]]],
+    sections: list[tuple[str, list[str]]],
     section_key: str,
 ) -> None:
-    for title, color, columns in sections:
+    for title, columns in sections:
         st.markdown(
-            f"<div class='sanzar-form-section-title' style='background:{color};'>{html.escape(title)}</div>",
+            f"<div class='sanzar-form-section-title'>{html.escape(title)}</div>",
             unsafe_allow_html=True,
         )
         with st.container(border=True):
@@ -1132,19 +1132,6 @@ def _render_next_action_strip(df: pd.DataFrame) -> None:
         elif when == today + timedelta(days=1):
             counts["tomorrow"] += 1
     st.markdown("##### Próximas acciones")
-    active_bucket = st.session_state.get("dash_bucket", "")
-    _dash_css_chunks: list[str] = []
-    for _kind in ("past", "today", "tomorrow"):
-        _bg, _bd, _fg, _bleft = dash_bucket_button_style(active_bucket, _kind)
-        _dash_css_chunks.append(
-            f".st-key-dash_bucket_{_kind} button{{"
-            f"background:{_bg}!important;"
-            f"border:1px solid {_bd}!important;"
-            f"color:{_fg}!important;"
-            f"border-left:{_bleft}!important;"
-            f"border-radius:8px!important;font-weight:500!important;}}"
-        )
-    st.markdown("<style>" + "".join(_dash_css_chunks) + "</style>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3, gap="small")
     for col, key, label in (
         (c1, "past", "Fecha anterior"),
@@ -1156,7 +1143,7 @@ def _render_next_action_strip(df: pd.DataFrame) -> None:
             f"{label}\n{counts[key]}",
             key=f"dash_bucket_{key}",
             width="stretch",
-            type="secondary",
+            type="primary" if active else "secondary",
         ):
             _clear_modal_flags()
             st.session_state.dash_bucket = "" if active else key

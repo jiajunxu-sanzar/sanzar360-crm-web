@@ -29,7 +29,7 @@ def render(df: pd.DataFrame) -> None:
         funnel = funnel_counts(df)
         if funnel:
             chart_df = pd.DataFrame({"estado": list(funnel.keys()), "contactos": list(funnel.values())})
-            st.plotly_chart(px.bar(chart_df, x="estado", y="contactos"), width="stretch")
+            st.plotly_chart(px.bar(chart_df, x="estado", y="contactos"), use_container_width=True)
         else:
             st.info("No hay estados disponibles.")
     with right:
@@ -37,7 +37,7 @@ def render(df: pd.DataFrame) -> None:
         provinces = value_counts(df, "provincia", top=8)
         if provinces:
             chart_df = pd.DataFrame({"provincia": list(provinces.keys()), "contactos": list(provinces.values())})
-            st.plotly_chart(px.bar(chart_df, x="contactos", y="provincia", orientation="h"), width="stretch")
+            st.plotly_chart(px.bar(chart_df, x="contactos", y="provincia", orientation="h"), use_container_width=True)
         else:
             st.info("No hay provincias disponibles.")
 

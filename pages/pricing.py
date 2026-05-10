@@ -63,17 +63,15 @@ def render(_: pd.DataFrame) -> None:
     # --- Header row: title + mode badge + swap icon ---
     h_left, h_mid, h_right = st.columns([0.72, 0.2, 0.08])
     h_left.title("Pricing")
-    badge_color = "#d97706" if is_provider else "#6b7280"
+    badge_class = "sanzar-badge-proveedor" if is_provider else "sanzar-badge-cliente"
     badge_label = "PROVEEDOR" if is_provider else "CLIENTE"
     h_mid.markdown(
-        f"<div style='padding-top:1.4rem;text-align:right;"
-        f"color:{badge_color};font-weight:700;font-size:0.85rem'>{badge_label}</div>",
+        f"<span class='{badge_class}'>{badge_label}</span>",
         unsafe_allow_html=True,
     )
-    h_right.markdown("<div style='padding-top:1.8rem'>", unsafe_allow_html=True)
+    h_right.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
     if h_right.button("🔄", key="pricing_swap_btn", help="Cambiar vista cliente / proveedor"):
         _view_switch_dialog()
-    h_right.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
 

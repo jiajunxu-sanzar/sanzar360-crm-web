@@ -7,8 +7,11 @@ def apply_theme() -> None:
     st.markdown(
         """
         <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         :root {
-          /* Core — minimalist neutral + single accent line */
+          /* Typography */
+          --ui-font: 'Inter', ui-sans-serif, system-ui, sans-serif;
+          /* Core — minimalist neutral + single accent */
           --ui-bg-page: #fafafa;
           --ui-bg-elevated: #ffffff;
           --ui-sidebar: #f4f4f5;
@@ -16,18 +19,19 @@ def apply_theme() -> None:
           --ui-border-strong: #d4d4d8;
           --ui-text: #18181b;
           --ui-text-muted: #737373;
-          --ui-accent: #18181b;
+          /* Brand accent — single green */
+          --ui-accent: #15803d;
+          --ui-accent-hover: #166534;
           --ui-accent-contrast: #ffffff;
           /* Legacy aliases (contacts / alarms) */
           --sanzar-green: #15803d;
           --sanzar-green-soft: #ecfdf5;
           --sanzar-border: var(--ui-border);
           --sanzar-text: var(--ui-text);
-          /* Dialog & tiered buttons */
-          --ui-btn-affirm-bg: #fafafa;
-          --ui-btn-affirm-border: #e5e5e5;
-          --ui-btn-affirm-hover: #f4f4f5;
-          --ui-btn-affirm-fg: #18181b;
+          /* Semantic button tokens */
+          --ui-btn-save-bg: #15803d;
+          --ui-btn-save-hover: #166534;
+          --ui-btn-save-fg: #ffffff;
           --ui-btn-destruct-bg: #fef2f2;
           --ui-btn-destruct-border: #fecaca;
           --ui-btn-destruct-hover: #ffe4e6;
@@ -36,7 +40,13 @@ def apply_theme() -> None:
           --ui-btn-neutral-border: #e5e5e5;
           --ui-btn-neutral-hover: #f4f4f5;
           --ui-btn-neutral-fg: #404040;
+          /* Kept for any legacy reference */
+          --ui-btn-affirm-bg: #fafafa;
+          --ui-btn-affirm-border: #e5e5e5;
+          --ui-btn-affirm-hover: #f4f4f5;
+          --ui-btn-affirm-fg: #18181b;
         }
+        body, .stApp { font-family: var(--ui-font) !important; }
         /* Page */
         .block-container {
           padding-top: 1.5rem;
@@ -62,7 +72,8 @@ def apply_theme() -> None:
           font-weight: 550 !important;
         }
         .stButton > button[kind="primary"]:hover {
-          opacity: 0.92 !important;
+          background-color: var(--ui-accent-hover) !important;
+          border-color: var(--ui-accent-hover) !important;
         }
         .stButton > button[kind="secondary"],
         .stButton > button[kind="tertiary"] {
@@ -76,6 +87,23 @@ def apply_theme() -> None:
         .stButton > button[kind="tertiary"]:hover {
           background: #f4f4f5 !important;
           border-color: var(--ui-border-strong) !important;
+        }
+
+        /* Sidebar — blocked/unavailable pages */
+        .sanzar-nav-blocked-label {
+          margin: 6px 0 4px;
+          color: var(--ui-text-muted);
+          font-size: 0.78rem;
+          font-weight: 500;
+        }
+        .sanzar-nav-blocked-item {
+          padding: 4px 10px;
+          margin-bottom: 4px;
+          border: 1px solid var(--ui-border);
+          border-radius: 8px;
+          color: var(--ui-text-muted);
+          background: var(--ui-bg-page);
+          font-size: 0.85rem;
         }
 
         /* Cards & chips */
@@ -441,6 +469,50 @@ def apply_theme() -> None:
           line-height: 1.5;
         }
 
+        /* Pricing — mode badge */
+        .sanzar-badge-proveedor {
+          display: inline-block;
+          padding-top: 1.4rem;
+          text-align: right;
+          color: #d97706;
+          font-weight: 700;
+          font-size: 0.85rem;
+        }
+        .sanzar-badge-cliente {
+          display: inline-block;
+          padding-top: 1.4rem;
+          text-align: right;
+          color: #6b7280;
+          font-weight: 700;
+          font-size: 0.85rem;
+        }
+
+        /* Vacaciones — calendar legend */
+        .sanzar-legend-row {
+          font-size: 0.9rem;
+          margin-bottom: 8px;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 6px 14px;
+        }
+        .sanzar-legend-item {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .sanzar-legend-item::before {
+          content: '';
+          display: inline-block;
+          width: 12px;
+          height: 12px;
+          border-radius: 2px;
+          flex-shrink: 0;
+        }
+        .sanzar-legend-ausencia::before  { background: #fecaca; border: 1px solid #fca5a5; }
+        .sanzar-legend-teletrabajo::before { background: #fef08a; border: 1px solid #fde047; }
+        .sanzar-legend-festivo::before   { background: #dbeafe; border: 1px solid #93c5fd; }
+
         /* Form section titles — override inline pastel blocks for one neutral look */
         .sanzar-form-section-title {
           border-radius: 8px !important;
@@ -453,111 +525,69 @@ def apply_theme() -> None:
           margin: 10px 0 8px 0 !important;
         }
 
-        /* Dialog confirmations — same language as Streamlit secondary, tiered semantics */
-        .st-key-confirm_create_contact_dialog button,
-        .st-key-vac_confirm_add_btn button,
-        .st-key-vac_confirm_edit_btn button {
-          background: var(--ui-btn-affirm-bg) !important;
-          border: 1px solid var(--ui-btn-affirm-border) !important;
-          color: var(--ui-btn-affirm-fg) !important;
-          border-radius: 8px !important;
-          font-weight: 550 !important;
-        }
-        .st-key-confirm_create_contact_dialog button:hover,
-        .st-key-vac_confirm_add_btn button:hover,
-        .st-key-vac_confirm_edit_btn button:hover {
-          background: var(--ui-btn-affirm-hover) !important;
-        }
-        .st-key-cancel_create_contact_dialog button,
-        .st-key-vac_delete_edit_btn button {
-          background: var(--ui-btn-destruct-bg) !important;
-          border: 1px solid var(--ui-btn-destruct-border) !important;
-          color: var(--ui-btn-destruct-fg) !important;
-          border-radius: 8px !important;
-          font-weight: 550 !important;
-        }
-        .st-key-cancel_create_contact_dialog button:hover,
-        .st-key-vac_delete_edit_btn button:hover {
-          background: var(--ui-btn-destruct-hover) !important;
-        }
-        .st-key-vac_cancel_add_btn button,
-        .st-key-vac_cancel_edit_btn button {
-          background: var(--ui-btn-neutral-bg) !important;
-          border: 1px solid var(--ui-btn-neutral-border) !important;
-          color: var(--ui-btn-neutral-fg) !important;
+        /* ── Dashboard próximas acciones bucket buttons ────────────────────────
+         * Idle state: white bg, grey border, no accent stripe.
+         * Active state is driven by a left border; the Python side passes the
+         * active_bucket value but we keep the colour rules here — static, no
+         * per-rerun <style> injection.
+         */
+        .st-key-dash_bucket_past button,
+        .st-key-dash_bucket_today button,
+        .st-key-dash_bucket_tomorrow button {
+          background: #ffffff !important;
+          border: 1px solid #e5e5e5 !important;
+          border-left: 3px solid transparent !important;
+          color: #525252 !important;
           border-radius: 8px !important;
           font-weight: 500 !important;
         }
-        .st-key-vac_cancel_add_btn button:hover,
-        .st-key-vac_cancel_edit_btn button:hover {
-          background: var(--ui-btn-neutral-hover) !important;
-        }
+        /* Selected variants — Python sets type="primary" when active */
+        .st-key-dash_bucket_past button[kind="primary"]     { border-left: 3px solid #e11d48 !important; background: #f4f4f5 !important; border-color: #d4d4d8 !important; color: #18181b !important; }
+        .st-key-dash_bucket_today button[kind="primary"]    { border-left: 3px solid #ca8a04 !important; background: #f4f4f5 !important; border-color: #d4d4d8 !important; color: #18181b !important; }
+        .st-key-dash_bucket_tomorrow button[kind="primary"] { border-left: 3px solid #16a34a !important; background: #f4f4f5 !important; border-color: #d4d4d8 !important; color: #18181b !important; }
+        /* Hover must also stay grey — otherwise the global primary:hover turns them green */
+        .st-key-dash_bucket_past button[kind="primary"]:hover     { background: #ececec !important; border-left-color: #e11d48 !important; border-color: #c4c4c8 !important; }
+        .st-key-dash_bucket_today button[kind="primary"]:hover    { background: #ececec !important; border-left-color: #ca8a04 !important; border-color: #c4c4c8 !important; }
+        .st-key-dash_bucket_tomorrow button[kind="primary"]:hover { background: #ececec !important; border-left-color: #16a34a !important; border-color: #c4c4c8 !important; }
 
-        /*
-         * Ficha contacto — botones del formulario (Guardar + Eliminar en la misma fila).
-         *
-         * Verificación Streamlit 1.32 (DOM real):
-         * - form_submit usa kind="primaryFormSubmit" / "secondaryFormSubmit" y
-         *   data-testid="baseButton-primaryFormSubmit" (no "stBaseButton-…").
-         * - En esta versión suele no generarse ninguna clase "st-key-*" en el HTML,
-         *   así que selectores basados en st.form("contact_form_…") no aplican.
-         * - La fila de las dos columnas es un único bloque horizontal que contiene
-         *   ambos tipos de submit; :has() permite estilos sin afectar otros form
-         *   (p. ej. solo secondary como "Guardar histórico").
+        /* ── Semantic button tiers (key-prefix based, generic and stable) ──────
+         * Save / confirm: any button or form-submit whose widget key starts with
+         * btn_save_  e.g. key="btn_save_contact", key="btn_save_vac_add"
          */
-        div[data-testid="stHorizontalBlock"]:has(button[kind="primaryFormSubmit"]):has(button[kind="secondaryFormSubmit"]) button[kind="primaryFormSubmit"],
-        div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-primaryFormSubmit"]):has(button[data-testid="baseButton-secondaryFormSubmit"]) button[data-testid="baseButton-primaryFormSubmit"],
-        div[class*="st-key-contact_form"] button[kind="primaryFormSubmit"],
-        div[class*="st-key-contact_form"] button[data-testid="baseButton-primaryFormSubmit"],
-        div[class*="st-key-contact_form"] button[data-testid="stBaseButton-primaryFormSubmit"] {
-          background: #15803d !important;
-          color: #ffffff !important;
-          border: 1px solid #166534 !important;
+        [class*="st-key-btn_save_"] button {
+          background: var(--ui-btn-save-bg) !important;
+          color: var(--ui-btn-save-fg) !important;
+          border: 1px solid var(--ui-accent-hover) !important;
           border-radius: 8px !important;
           font-weight: 600 !important;
         }
-        div[data-testid="stHorizontalBlock"]:has(button[kind="primaryFormSubmit"]):has(button[kind="secondaryFormSubmit"]) button[kind="primaryFormSubmit"]:hover,
-        div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-primaryFormSubmit"]):has(button[data-testid="baseButton-secondaryFormSubmit"]) button[data-testid="baseButton-primaryFormSubmit"]:hover,
-        div[class*="st-key-contact_form"] button[kind="primaryFormSubmit"]:hover,
-        div[class*="st-key-contact_form"] button[data-testid="baseButton-primaryFormSubmit"]:hover,
-        div[class*="st-key-contact_form"] button[data-testid="stBaseButton-primaryFormSubmit"]:hover {
-          background: #166534 !important;
-          border-color: #14532d !important;
-          color: #ffffff !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(button[kind="primaryFormSubmit"]):has(button[kind="secondaryFormSubmit"]) button[kind="secondaryFormSubmit"],
-        div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-primaryFormSubmit"]):has(button[data-testid="baseButton-secondaryFormSubmit"]) button[data-testid="baseButton-secondaryFormSubmit"],
-        div[class*="st-key-contact_form"] button[kind="secondaryFormSubmit"],
-        div[class*="st-key-contact_form"] button[data-testid="baseButton-secondaryFormSubmit"],
-        div[class*="st-key-contact_form"] button[data-testid="stBaseButton-secondaryFormSubmit"] {
-          background: #dc2626 !important;
-          color: #ffffff !important;
-          border: 1px solid #b91c1c !important;
-          border-radius: 8px !important;
-          font-weight: 600 !important;
-        }
-        div[data-testid="stHorizontalBlock"]:has(button[kind="primaryFormSubmit"]):has(button[kind="secondaryFormSubmit"]) button[kind="secondaryFormSubmit"]:hover,
-        div[data-testid="stHorizontalBlock"]:has(button[data-testid="baseButton-primaryFormSubmit"]):has(button[data-testid="baseButton-secondaryFormSubmit"]) button[data-testid="baseButton-secondaryFormSubmit"]:hover,
-        div[class*="st-key-contact_form"] button[kind="secondaryFormSubmit"]:hover,
-        div[class*="st-key-contact_form"] button[data-testid="baseButton-secondaryFormSubmit"]:hover,
-        div[class*="st-key-contact_form"] button[data-testid="stBaseButton-secondaryFormSubmit"]:hover {
-          background: #b91c1c !important;
-          border-color: #991b1b !important;
-          color: #ffffff !important;
+        [class*="st-key-btn_save_"] button:hover {
+          background: var(--ui-btn-save-hover) !important;
+          border-color: var(--ui-accent-hover) !important;
         }
 
-        /* Confirmar eliminación (fuera del formulario) */
-        div[class*="st-key-btn_delete_yes"] button {
-          background: #dc2626 !important;
-          color: #ffffff !important;
-          border: 1px solid #b91c1c !important;
+        /* Destructive: key starts with btn_destruct_ */
+        [class*="st-key-btn_destruct_"] button {
+          background: var(--ui-btn-destruct-bg) !important;
+          color: var(--ui-btn-destruct-fg) !important;
+          border: 1px solid var(--ui-btn-destruct-border) !important;
           border-radius: 8px !important;
           font-weight: 600 !important;
         }
-        div[class*="st-key-btn_delete_yes"] button:hover {
-          background: #b91c1c !important;
-          border-color: #991b1b !important;
-          color: #ffffff !important;
+        [class*="st-key-btn_destruct_"] button:hover {
+          background: var(--ui-btn-destruct-hover) !important;
+        }
+
+        /* Neutral / cancel: key starts with btn_neutral_ */
+        [class*="st-key-btn_neutral_"] button {
+          background: var(--ui-btn-neutral-bg) !important;
+          color: var(--ui-btn-neutral-fg) !important;
+          border: 1px solid var(--ui-btn-neutral-border) !important;
+          border-radius: 8px !important;
+          font-weight: 500 !important;
+        }
+        [class*="st-key-btn_neutral_"] button:hover {
+          background: var(--ui-btn-neutral-hover) !important;
         }
         </style>
         """,

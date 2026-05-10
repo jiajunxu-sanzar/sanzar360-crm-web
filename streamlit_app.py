@@ -18,7 +18,22 @@ from app.telemetry import timed
 from app.state import init_state, pop_contacts_df_override
 from config.settings import CONFIG
 from models.contact import empty_contacts_dataframe
-from pages import actions_dashboard, alarms, asset_search, contacts, dashboard, email, inventory, invoices, map, pricing, purchase_orders, vacaciones, users
+from pages import (
+    actions_dashboard,
+    alarms,
+    asset_search,
+    contacts,
+    dashboard,
+    email,
+    inventory,
+    invoices,
+    map,
+    pricing,
+    purchase_orders,
+    referidos,
+    vacaciones,
+    users,
+)
 from ui.theme import apply_theme
 
 
@@ -125,12 +140,11 @@ with st.sidebar:
     page = st.radio("Navegación", available_pages, key="nav_page")
     if blocked_pages:
         st.markdown(
-            "<div style='margin:6px 0 2px 0; color:#94a3b8; font-size:0.8rem;'>No disponible para tu rol</div>",
+            "<p class='sanzar-nav-blocked-label'>No disponible para tu rol</p>",
             unsafe_allow_html=True,
         )
         blocked_html = "".join(
-            f"<div style='padding:4px 8px; margin-bottom:4px; border:1px solid #e2e8f0;"
-            f" border-radius:8px; color:#94a3b8; background:#f8fafc;'>{p}</div>"
+            f"<div class='sanzar-nav-blocked-item'>{p}</div>"
             for p in blocked_pages
         )
         st.markdown(blocked_html, unsafe_allow_html=True)
@@ -226,3 +240,5 @@ elif page == "Facturas":
     invoices.render(contacts_df)
 elif page == "Pricing":
     pricing.render(contacts_df)
+elif page == "Referidos":
+    referidos.render(contacts_df)

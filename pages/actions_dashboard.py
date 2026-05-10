@@ -61,7 +61,7 @@ def _weekly_person_modal(persona: str, breakdown: pd.DataFrame) -> None:
         labels={"count": "Acciones"},
         title="Por semana",
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render() -> None:
@@ -125,7 +125,7 @@ def render() -> None:
             barmode="stack",
             yaxis={"categoryorder": "array", "categoryarray": order},
         )
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
     st.subheader("Detalle por persona (todas las semanas del log)")

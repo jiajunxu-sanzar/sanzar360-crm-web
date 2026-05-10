@@ -47,6 +47,15 @@ def test_unknown_role_maps_to_minimal_employee_tabs() -> None:
     assert pages == navigation.EMPLOYEE_ALLOWED_PAGES
 
 
+def test_referidos_visible_to_commercial_roles_not_employee() -> None:
+    sales = navigation.pages_for_role(navigation.ROLE_SALES)
+    agro = navigation.pages_for_role(navigation.ROLE_AGRO_TEAM)
+    emp = navigation.pages_for_role(navigation.ROLE_EMPLOYEE)
+    assert "Referidos" in sales
+    assert "Referidos" in agro
+    assert "Referidos" not in emp
+
+
 def test_normalize_role() -> None:
     assert navigation.normalize_role(" ADMIN ") == navigation.ROLE_ADMIN
     assert navigation.normalize_role("sales") == navigation.ROLE_SALES

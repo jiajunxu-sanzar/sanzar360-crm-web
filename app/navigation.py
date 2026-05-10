@@ -29,6 +29,7 @@ PAGES: Final[tuple[str, ...]] = (
     "Purchase Orders",
     "Facturas",
     "Pricing",
+    "Referidos",
 )
 
 _PAGES_SET: Final[frozenset[str]] = frozenset(PAGES)
