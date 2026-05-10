@@ -25,6 +25,7 @@ PAGES: Final[tuple[str, ...]] = (
     "Buscador sensores/SIM",
     "Mapa",
     "Email",
+    "Inventario",
     "Purchase Orders",
     "Facturas",
     "Pricing",
@@ -81,7 +82,7 @@ def normalize_role(role: str) -> str:
 
 # Pages that load the main Contacts dataframe from Google Sheets (skip on other pages).
 PAGES_REQUIRING_CONTACTS: Final[frozenset[str]] = frozenset(
-    {"Dashboard", "Contactos", "Centro de alarmas", "Mapa", "Email", "Facturas"}
+    {"Dashboard", "Contactos", "Centro de alarmas", "Mapa", "Email", "Facturas", "Inventario"}
 )
 
 # ── Integrity (fail fast si alguien añade pestañas incoherentes) ────────────

@@ -138,6 +138,50 @@ TEMPLATE_LABEL_ALIASES: dict[str, str] = {
     c: c for c in CANONICAL_COLUMNS
 } | _TEMPLATE_LABEL_ALIASES_EXTRA
 
+INVENTORY_WORKSHEET_NAME = "Inventario"
+INVENTORY_MODEL_FIELDS_WORKSHEET_NAME = "InventarioCamposModelo"
+INVENTORY_HEADERS: tuple[str, ...] = (
+    "inventory_id",
+    "asset_type",
+    "model",
+    "brand",
+    "supplier",
+    "acquisition_type",
+    "acquisition_date",
+    "loan_end_date",
+    "logistics_status",
+    "location_type",
+    "location_contact_id",
+    "location_detail",
+    "serial_number",
+    "eui",
+    "configured",
+    "gateway_config_name",
+    "ui_password",
+    "proforma_invoice_url",
+    "payment_receipt_url",
+    "parent_asset_id",
+    "associated_sim_inventory_id",
+    "associated_probe_inventory_id",
+    "associated_gateway_inventory_id",
+    "notes",
+    "created_at",
+    "updated_at",
+)
+INVENTORY_MODEL_FIELD_HEADERS: tuple[str, ...] = (
+    "model",
+    "field_key",
+    "field_label",
+    "field_type",
+    "required",
+    "options_csv",
+    "help_text",
+    "order_index",
+    "active",
+    "created_at",
+    "updated_at",
+)
+
 
 @dataclass(frozen=True)
 class AppConfig:

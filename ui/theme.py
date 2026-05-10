@@ -321,6 +321,11 @@ def apply_theme() -> None:
           border-bottom-color: transparent;
           font-weight: 600;
         }
+        .sanzar-contact-row-lost {
+          background: #fef2f2;
+          color: #991b1b !important;
+          outline-color: #dc2626 !important;
+        }
         .sanzar-contact-header {
           background: #fafafa;
           color: var(--ui-text-muted) !important;

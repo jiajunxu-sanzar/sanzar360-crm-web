@@ -41,13 +41,13 @@ def _view_switch_dialog() -> None:
     is_provider: bool = st.session_state[_KEY_PROVIDER]
     if is_provider:
         st.markdown("Estás en **vista proveedor**. ¿Volver a vista cliente?")
-        if st.button("Volver a vista cliente", use_container_width=True, type="primary"):
+        if st.button("Volver a vista cliente", width="stretch", type="primary"):
             st.session_state[_KEY_PROVIDER] = False
             st.rerun()
     else:
         st.markdown("Introduce la contraseña para ver **precios de proveedor**.")
         pwd = st.text_input("Contraseña", type="password", key="pricing_pwd_input")
-        if st.button("Desbloquear", use_container_width=True, type="primary"):
+        if st.button("Desbloquear", width="stretch", type="primary"):
             if pwd.strip() == _PROVIDER_PASSWORD:
                 st.session_state[_KEY_PROVIDER] = True
                 st.rerun()
@@ -129,4 +129,4 @@ def render(_: pd.DataFrame) -> None:
         st.markdown("#### Galería de producto")
         cols = st.columns(min(len(images), 6))
         for col, img_path in zip(cols, images[:6]):
-            col.image(str(img_path), use_container_width=True)
+            col.image(str(img_path), width="stretch")

@@ -12,7 +12,7 @@ def render_dataframe(df: pd.DataFrame, *, columns: list[str] | None = None, heig
     if columns:
         existing = [column for column in columns if column in shown.columns]
         shown = shown[existing]
-    st.dataframe(shown, use_container_width=True, hide_index=True, height=height)
+    st.dataframe(shown, width="stretch", hide_index=True, height=height)
 
 
 def render_selectable_dataframe(
@@ -35,7 +35,7 @@ def render_selectable_dataframe(
     try:
         event = st.dataframe(
             shown,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=height,
             key=key,
@@ -43,7 +43,7 @@ def render_selectable_dataframe(
             selection_mode="single-row",
         )
     except TypeError:
-        st.dataframe(shown, use_container_width=True, hide_index=True, height=height, key=key)
+        st.dataframe(shown, width="stretch", hide_index=True, height=height, key=key)
         st.caption("Actualiza Streamlit si quieres selección directa de filas en la tabla.")
         return None
 

@@ -45,7 +45,7 @@ def render(_: pd.DataFrame) -> None:
         with title_col:
             st.subheader("Resumen anual")
         with action_col:
-            if st.button("Gestionar ausencias", use_container_width=True):
+            if st.button("Gestionar ausencias", width="stretch"):
                 st.session_state[_VAC_OVERLAY_KEY] = True
         summary_view = summary.rename(
             columns={
@@ -60,7 +60,7 @@ def render(_: pd.DataFrame) -> None:
         )
         event = st.dataframe(
             summary_view,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
@@ -100,7 +100,7 @@ def render(_: pd.DataFrame) -> None:
             }
         ),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
 

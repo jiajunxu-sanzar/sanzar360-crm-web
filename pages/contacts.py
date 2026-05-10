@@ -9,9 +9,21 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.cache import clear_all_cache, history_service, load_users_cached, sheets_service
-from app.state import bump_contacts_cache, bump_history_cache, select_contact
-from app.telemetry import timed
+from app.cache import clear_all_cache, history_service, inventory_service, load_inventory_cached, load_users_cached, sheets_service
+from app.state import (
+    bump_contacts_cache,
+    bump_history_cache,
+    bump_inventory_cache,
+    clear_contacts_write_status,
+    get_contacts_write_status,
+    pop_pending_created_contact_id,
+    reconcile_selected_contact_id,
+    select_contact,
+    set_contacts_df_override,
+    set_contacts_write_status,
+    set_pending_created_contact_id,
+)
+from app.telemetry import timed, track_event
 from config.settings import (
     CANONICAL_COLUMNS,
     CONTACT_ESTADO_OPCIONES,
@@ -91,6 +103,11 @@ NEW_CONTACT_FLOW_SUBMITTING = "submitting"
 NEW_CONTACT_SIMILAR_CANDIDATES_KEY = "new_contact_similar_candidates"
 NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY = "new_contact_require_second_confirm"
 NEW_CONTACT_CONFIRM_OVERRIDE_KEY = "new_contact_confirmed_override"
+CONTACTS_SHOW_LOST_KEY = "contacts.show_lost"
+CONTACTS_SAVE_SUCCESS_KEY = "contacts.save_success_message"
+CONTACTS_DELETE_SUCCESS_KEY = "contacts.delete_success_message"
+CONTACTS_DELETE_TARGET_ID_KEY = "contacts.delete_target_id"
+CONTACTS_DELETE_TARGET_NAME_KEY = "contacts.delete_target_name"
 
 
 def _clear_modal_flags() -> None:
@@ -205,23 +222,49 @@ def _clear_contact_overlay_state(*, keep_contact_id: str = "") -> None:
             st.session_state.pop(key, None)
         if key.startswith("hist_table_select_"):
             st.session_state.pop(key, None)
-        if key.startswith("contact_delete_open_"):
-            st.session_state.pop(key, None)
+    target_id = str(st.session_state.get(CONTACTS_DELETE_TARGET_ID_KEY, "") or "")
+    if target_id and target_id != str(keep_contact_id or ""):
+        st.session_state.pop(CONTACTS_DELETE_TARGET_ID_KEY, None)
+        st.session_state.pop(CONTACTS_DELETE_TARGET_NAME_KEY, None)
+
+
+def _set_delete_target(contact_id: str, nombre: str) -> None:
+    st.session_state[CONTACTS_DELETE_TARGET_ID_KEY] = str(contact_id or "")
+    st.session_state[CONTACTS_DELETE_TARGET_NAME_KEY] = str(nombre or "")
+
+
+def _clear_delete_target() -> None:
+    st.session_state.pop(CONTACTS_DELETE_TARGET_ID_KEY, None)
+    st.session_state.pop(CONTACTS_DELETE_TARGET_NAME_KEY, None)
 
 
 def render(df: pd.DataFrame) -> pd.DataFrame:
     with timed("contacts.render"):
-        refreshed = st.session_state.pop("_contacts_refresh_df", None)
-        if isinstance(refreshed, pd.DataFrame):
-            df = refreshed
+        write_status = get_contacts_write_status()
+        if write_status.get("status") == "ambiguous":
+            st.warning(write_status.get("message") or "Guardado en verificación. Pulsa Recargar datos si no ves cambios.")
+        elif write_status.get("status") == "failed":
+            st.error(write_status.get("message") or "No se pudo confirmar el guardado.")
+        if write_status.get("status"):
+            clear_contacts_write_status()
+        pending_id = pop_pending_created_contact_id()
+        if pending_id and "contact_id" in df.columns:
+            exists_pending = not df[df["contact_id"].astype(str).str.strip() == pending_id].empty
+            if exists_pending:
+                st.session_state["selected_contact_id"] = pending_id
         # If selected contact changed, purge per-contact transient overlays.
-        current_selected = str(st.session_state.get("selected_contact_id", "") or "")
+        current_selected = reconcile_selected_contact_id(df, str(st.session_state.get("selected_contact_id", "") or ""))
+        st.session_state["selected_contact_id"] = current_selected
         last_selected = str(st.session_state.get("_contacts_last_selected_id", "") or "")
         if current_selected != last_selected:
             _clear_contact_overlay_state(keep_contact_id=current_selected)
             st.session_state["_contacts_last_selected_id"] = current_selected
 
         st.title("Contactos")
+        if st.session_state.get(CONTACTS_SAVE_SUCCESS_KEY):
+            st.success(str(st.session_state.pop(CONTACTS_SAVE_SUCCESS_KEY)))
+        if st.session_state.get(CONTACTS_DELETE_SUCCESS_KEY):
+            st.success(str(st.session_state.pop(CONTACTS_DELETE_SUCCESS_KEY)))
         if df.empty:
             st.warning("No hay contactos cargados. Puedes crear el primero desde el formulario inferior.")
 
@@ -242,10 +285,14 @@ def _render_contact_list(df: pd.DataFrame) -> str:
         st.session_state.contact_search_open = False
     if "contact_filters_open" not in st.session_state:
         st.session_state.contact_filters_open = False
+    if CONTACTS_SHOW_LOST_KEY not in st.session_state:
+        # Soft migration from legacy filter key if present.
+        st.session_state[CONTACTS_SHOW_LOST_KEY] = bool(st.session_state.get("contact_filter_show_lost", False))
 
     st.subheader("Buscar")
+    st.toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
     top_row = st.columns([0.16, 0.84], gap="small")
-    if top_row[0].button("🔍", key="contact_toggle_search", use_container_width=True):
+    if top_row[0].button("🔍", key="contact_toggle_search", width="stretch"):
         st.session_state.contact_search_open = not st.session_state.contact_search_open
         if not st.session_state.contact_search_open:
             st.session_state.contact_filter_text = ""
@@ -261,7 +308,7 @@ def _render_contact_list(df: pd.DataFrame) -> str:
             label_visibility="collapsed",
             placeholder="Nombre, municipio, provincia, correo, teléfono, cultivo o contact_id",
         )
-        if search_row[1].button("⏬", key="contact_toggle_filters", use_container_width=True, help="Filtros"):
+        if search_row[1].button("⏬", key="contact_toggle_filters", width="stretch", help="Filtros"):
             st.session_state.contact_filters_open = not st.session_state.contact_filters_open
             st.rerun()
 
@@ -308,7 +355,7 @@ def _render_contact_list(df: pd.DataFrame) -> str:
         filtered = filtered[
             filtered["cultivos"].fillna("").astype(str).str.contains(cultivos_filter.strip(), case=False, na=False)
         ]
-    if st.session_state.contact_filters_open and not st.checkbox("Mostrar Perdido", value=True, key="contact_filter_show_lost"):
+    if not bool(st.session_state.get(CONTACTS_SHOW_LOST_KEY, True)):
         filtered = filtered[filtered["estado"].astype(str).str.lower() != "perdido"]
     dash_bucket = st.session_state.get("dash_bucket", "")
     if dash_bucket:
@@ -326,7 +373,7 @@ def _render_contact_list(df: pd.DataFrame) -> str:
             filtered = filtered[next_actions == (today + pd.Timedelta(days=1))]
     filtered = filtered.reset_index(drop=True)
 
-    if st.button("Nuevo contacto", key="create_contact_top", use_container_width=True):
+    if st.button("Nuevo contacto", key="create_contact_top", width="stretch"):
         _new_contact_flow_open()
         st.rerun()
     if _new_contact_flow_state_get() in {NEW_CONTACT_FLOW_OPEN, NEW_CONTACT_FLOW_SUBMITTING}:
@@ -341,6 +388,11 @@ def _render_contact_list(df: pd.DataFrame) -> str:
     selected_id = selected_from_table or current
     if selected_id:
         st.session_state.selected_contact_id = selected_id
+    elif st.session_state.get("selected_contact_id") and "contact_id" in filtered.columns:
+        selected_raw = str(st.session_state.get("selected_contact_id") or "")
+        exists = not filtered[filtered["contact_id"].astype(str).str.strip() == selected_raw].empty
+        if not exists:
+            st.session_state.selected_contact_id = ""
     return selected_id
 
 
@@ -365,6 +417,7 @@ def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> s
         )
         for row in filtered.fillna("").astype(str).to_dict("records"):
             contact_id = row.get("contact_id", "")
+            is_lost = str(row.get("estado", "")).strip().lower() == "perdido"
             row_label = " | ".join(
                 [
                     row.get("nombre", "") or "Sin nombre",
@@ -373,9 +426,12 @@ def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> s
                     row.get("municipio", "") or "Sin municipio",
                 ]
             )
+            if is_lost:
+                row_label = f"🔴 {row_label}"
             if contact_id == selected_contact_id:
+                row_class = "sanzar-contact-row selected sanzar-contact-row-lost" if is_lost else "sanzar-contact-row selected"
                 st.markdown(
-                    "<div class='sanzar-contact-row selected'>"
+                    f"<div class='{row_class}'>"
                     f"<span class='sanzar-contact-cell'>{html.escape(row.get('nombre', ''))}</span>"
                     f"<span class='sanzar-contact-cell'>{html.escape(row.get('estado', ''))}</span>"
                     f"<span class='sanzar-contact-cell'>{html.escape(row.get('provincia', ''))}</span>"
@@ -384,7 +440,7 @@ def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> s
                     unsafe_allow_html=True,
                 )
                 continue
-            if st.button(row_label, key=f"contact_row_{contact_id}", use_container_width=True):
+            if st.button(row_label, key=f"contact_row_{contact_id}", width="stretch"):
                 _clear_modal_flags()
                 st.session_state.selected_contact_id = contact_id
                 st.rerun()
@@ -397,26 +453,41 @@ def _create_contact_dialog(df: pd.DataFrame) -> None:
     if flow_state == NEW_CONTACT_FLOW_IDLE:
         return
     if flow_state == NEW_CONTACT_FLOW_SUBMITTING:
-        with st.spinner("Creando nuevo contacto..."):
-            nombre_crear = st.session_state.pop("_create_contact_nombre", "").strip()
-            new_df, new_contact_id = create_empty_contact(
-                df,
-                sheets_service(),
-                nombre=nombre_crear,
+        try:
+            with st.spinner("Creando nuevo contacto..."):
+                nombre_crear = st.session_state.pop("_create_contact_nombre", "").strip()
+                new_df, new_contact_id, verify = create_empty_contact(
+                    df,
+                    sheets_service(),
+                    nombre=nombre_crear,
+                )
+                set_pending_created_contact_id(new_contact_id)
+                bump_contacts_cache()
+                set_contacts_df_override(new_df)
+                if verify.status != "confirmed":
+                    set_contacts_write_status(
+                        verify.status,
+                        message=verify.message or "Contacto creado pero pendiente de verificación remota.",
+                    )
+                append_activity(
+                    sheets_service(),
+                    contact_id=new_contact_id,
+                    nombre_contacto=nombre_crear,
+                    tipo_accion="creacion nuevo contacto",
+                    detalle="",
+                    persona=_actor_name(),
+                )
+                select_contact(new_contact_id)
+                _new_contact_flow_finish(clear_inputs=True)
+            st.rerun()
+        except Exception as exc:
+            st.session_state.pop("_create_contact_nombre", None)
+            _new_contact_flow_set(NEW_CONTACT_FLOW_OPEN)
+            st.error(
+                "No se pudo crear el contacto de forma consistente. "
+                "Comprueba conexión/cuota y vuelve a confirmar. "
+                f"Detalle: {exc}"
             )
-            bump_contacts_cache()
-            st.session_state["_contacts_refresh_df"] = new_df
-            append_activity(
-                sheets_service(),
-                contact_id=new_contact_id,
-                nombre_contacto=nombre_crear,
-                tipo_accion="creacion nuevo contacto",
-                detalle="",
-                persona=_actor_name(),
-            )
-            select_contact(new_contact_id)
-            _new_contact_flow_finish(clear_inputs=True)
-        st.rerun()
 
     st.markdown("Introduce el **nombre** del nuevo contacto y confirma para crear la ficha.")
     similar_candidates = st.session_state.get(NEW_CONTACT_SIMILAR_CANDIDATES_KEY, [])
@@ -434,7 +505,7 @@ def _create_contact_dialog(df: pd.DataFrame) -> None:
     )
     col_confirm, col_cancel = st.columns(2)
     with col_confirm:
-        if st.button("Confirmar", use_container_width=True, key="confirm_create_contact_dialog"):
+        if st.button("Confirmar", width="stretch", key="confirm_create_contact_dialog"):
             nombre_val = str(st.session_state.get("dialog_new_contact_nombre", "")).strip()
             if not nombre_val:
                 st.error("Introduce un nombre para el contacto.")
@@ -456,7 +527,7 @@ def _create_contact_dialog(df: pd.DataFrame) -> None:
             _new_contact_flow_start_submit(nombre_val)
             st.rerun()
     with col_cancel:
-        if st.button("Cancelar", use_container_width=True, key="cancel_create_contact_dialog"):
+        if st.button("Cancelar", width="stretch", key="cancel_create_contact_dialog"):
             _new_contact_flow_cancel()
             st.rerun()
 
@@ -522,29 +593,30 @@ def _log_contact_save_actions(
 
 def _render_delete_contact_confirmation(*, contact_id: str, nombre: str) -> None:
     """Panel de confirmación tras pulsar «Eliminar contacto» en el formulario."""
-    dlg = f"contact_delete_open_{contact_id}"
-    if st.session_state.get(dlg):
+    target_id = str(st.session_state.get(CONTACTS_DELETE_TARGET_ID_KEY, "") or "")
+    target_name = str(st.session_state.get(CONTACTS_DELETE_TARGET_NAME_KEY, "") or "").strip() or nombre
+    if target_id and target_id == str(contact_id):
         st.warning(
-            f"**Vas a eliminar permanentemente** a «**{html.escape(nombre)}**» (`{html.escape(contact_id)}`). "
+            f"**Vas a eliminar permanentemente** a «**{html.escape(target_name)}**» (`{html.escape(target_id)}`). "
             "Se borrarán la fila en **Contactos**, todas las filas de histórico ligadas a este id y las entradas en "
             "**Acciones**. **No se puede deshacer.**"
         )
         c_yes, c_no = st.columns(2)
-        if c_yes.button("Confirmar eliminación", type="primary", key=f"btn_delete_yes_{contact_id}"):
+        if c_yes.button("Confirmar eliminación", type="primary", key=f"btn_delete_yes_{target_id}"):
             try:
                 with st.spinner("Eliminando en Google Sheets…"):
-                    delete_contact_and_related_data(sheets_service(), contact_id)
+                    delete_contact_and_related_data(sheets_service(), target_id)
                 clear_all_cache()
                 bump_contacts_cache()
                 bump_history_cache()
-                st.session_state.pop(dlg, None)
+                _clear_delete_target()
                 select_contact("")
-                st.success("Contacto y datos relacionados eliminados.")
+                st.session_state[CONTACTS_DELETE_SUCCESS_KEY] = "Contacto y datos relacionados eliminados."
                 st.rerun()
             except Exception as exc:
-                st.error(str(exc))
-        if c_no.button("Cancelar", key=f"btn_delete_no_{contact_id}"):
-            st.session_state.pop(dlg, None)
+                st.error(f"No se pudo eliminar el contacto: {exc}")
+        if c_no.button("Cancelar", key=f"btn_delete_no_{target_id}"):
+            _clear_delete_target()
             st.rerun()
 
 
@@ -632,12 +704,12 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
         submitted_save = col_save.form_submit_button(
             "Guardar ficha",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
         submitted_delete = col_del.form_submit_button(
             "Eliminar contacto…",
             type="secondary",
-            use_container_width=True,
+            width="stretch",
             help="Borra la ficha, históricos (sensores, campañas, suscripciones, incidencias) y Acciones.",
         )
 
@@ -645,7 +717,7 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
     nombre_ficha = str(contact.get("nombre", "") or "").strip() or "(sin nombre)"
 
     if submitted_delete:
-        st.session_state[f"contact_delete_open_{cid}"] = True
+        _set_delete_target(cid, nombre_ficha)
         st.rerun()
 
     if submitted_save:
@@ -654,7 +726,9 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
             st.error(error)
             return None
         with st.spinner("Guardando ficha…"):
-            new_df = save_contact_by_id(
+            cache_before = int(st.session_state.get("contacts_cache_version", 0))
+            selected_before = str(st.session_state.get("selected_contact_id", "") or "")
+            new_df, verify = save_contact_by_id(
                 df,
                 row_idx=row_idx,
                 contact_id=contact["contact_id"],
@@ -663,7 +737,31 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
             )
             bump_contacts_cache()
             _log_contact_save_actions(contact, values, _actor_name())
-        st.success("Ficha guardada correctamente.")
+            track_event(
+                "contacts.save.consistency",
+                0,
+                verify.status == "confirmed",
+                operation="update",
+                contact_id=str(contact.get("contact_id", "") or ""),
+                status=verify.status,
+                attempt=verify.attempts,
+                cache_version_before=cache_before,
+                cache_version_after=int(st.session_state.get("contacts_cache_version", 0)),
+                selected_contact_id_before=selected_before,
+                selected_contact_id_after=str(contact.get("contact_id", "") or ""),
+                override_used=True,
+            )
+        set_contacts_df_override(new_df)
+        if verify.status == "confirmed":
+            st.session_state[CONTACTS_SAVE_SUCCESS_KEY] = "Ficha guardada correctamente."
+        elif verify.status == "ambiguous":
+            set_contacts_write_status("ambiguous", message="Guardado enviado, pendiente de confirmación en Google Sheets.")
+        else:
+            set_contacts_write_status("failed", message=verify.message or "No se pudo confirmar el guardado.")
+        st.session_state["selected_contact_id"] = str(contact.get("contact_id", "") or "")
+        st.session_state["active_page"] = "Contactos"
+        st.session_state["pending_nav_page"] = "Contactos"
+        st.rerun()
         return new_df
 
     _render_delete_contact_confirmation(contact_id=cid, nombre=nombre_ficha)
@@ -713,7 +811,7 @@ def _handle_history_table_secondary_open(
     if st.button(
         "Editar fila seleccionada",
         key=f"hist_edit_selected_{suffix}",
-        use_container_width=True,
+        width="stretch",
         type="primary",
     ):
         modal_state.open_edit_history_modal(kind, contact_id, row_id)
@@ -747,7 +845,7 @@ def _render_operativa_cards(contact: dict[str, str]) -> None:
             style=style,
         )
         c1, c2 = st.columns([0.6, 0.4], gap="small")
-        if c1.button("Historial", key=f"inline_history_{kind}_{contact_id}", use_container_width=True):
+        if c1.button("Historial", key=f"inline_history_{kind}_{contact_id}", width="stretch"):
             _clear_contact_overlay_state(keep_contact_id=contact_id)
             _clear_history_selection(contact_id, kind)
             st.session_state[f"show_history_{kind}_{contact_id}"] = not st.session_state.get(
@@ -757,7 +855,7 @@ def _render_operativa_cards(contact: dict[str, str]) -> None:
         if c2.button(
             "Nuevo histórico",
             key=f"inline_add_{kind}_{contact_id}",
-            use_container_width=True,
+            width="stretch",
         ):
             _clear_contact_overlay_state(keep_contact_id=contact_id)
             modal_state.open_add_history_modal(kind, contact_id)
@@ -809,11 +907,22 @@ def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
     spec = HISTORY_SPECS[kind]
     st.markdown(f"### {spec.title}")
     st.caption("Completa los campos y confirma para crear el nuevo registro.")
+
+    # For sensores, render the sensor picker OUTSIDE the form — the dialog
+    # supports reruns from non-form widgets, so the association panel updates
+    # immediately when the user selects an asset.
+    excluded: frozenset[str] = frozenset()
+    if kind == "sensores":
+        excluded = frozenset({"sensor_serial_number"})
+        prefix = f"{kind}_new"
+        st.markdown("**Sensor**")
+        _render_sensor_serial_field("", prefix, f"{prefix}_sensor_serial_number", exclude_hist_id="")
+
     with st.form(f"history_add_modal_{kind}_{contact.get('contact_id', '')}"):
-        _render_history_form_body(kind, contact, None)
+        _render_history_form_body(kind, contact, None, excluded_headers=excluded)
         action_cols = st.columns(2)
-        confirm = action_cols[0].form_submit_button("Confirmar", use_container_width=True)
-        cancel = action_cols[1].form_submit_button("Cancelar", use_container_width=True)
+        confirm = action_cols[0].form_submit_button("Confirmar", width="stretch")
+        cancel = action_cols[1].form_submit_button("Cancelar", width="stretch")
 
     if cancel:
         _clear_modal_flags()
@@ -831,12 +940,28 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
     contact_id = contact.get("contact_id", "")
     st.markdown(f"### {spec.title}")
     st.caption("Edita la fila seleccionada. Puedes guardar, cancelar o borrar.")
+
+    # For sensores, render the sensor picker OUTSIDE the form — reruns work
+    # inside @st.dialog for non-form widgets.
+    excluded: frozenset[str] = frozenset()
+    if kind == "sensores":
+        excluded = frozenset({"sensor_serial_number"})
+        hist_id = str(row.get(spec.id_column, "") or "")
+        prefix = f"{kind}_{hist_id}"
+        st.markdown("**Sensor**")
+        _render_sensor_serial_field(
+            row.get("sensor_serial_number", ""),
+            prefix,
+            f"{prefix}_sensor_serial_number",
+            exclude_hist_id=hist_id,
+        )
+
     with st.form(f"history_edit_modal_{kind}_{row.get(spec.id_column, '')}"):
-        _render_history_form_grouped_body(kind, contact, row)
+        _render_history_form_grouped_body(kind, contact, row, excluded_headers=excluded)
         action_cols = st.columns(3)
-        confirm = action_cols[0].form_submit_button("Guardar", use_container_width=True)
-        cancel = action_cols[1].form_submit_button("Cancelar", use_container_width=True)
-        delete = action_cols[2].form_submit_button("Borrar", use_container_width=True)
+        confirm = action_cols[0].form_submit_button("Guardar", width="stretch")
+        cancel = action_cols[1].form_submit_button("Cancelar", width="stretch")
+        delete = action_cols[2].form_submit_button("Borrar", width="stretch")
 
     if cancel:
         _clear_modal_flags()
@@ -855,10 +980,34 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
             st.error(f"No se pudo eliminar el histórico: {exc}")
 
     if confirm:
+        was_open = str(row.get("estado_cierre_sensor", "")).strip().lower() == "abierto"
+        now_closed = str(st.session_state.get(f"{kind}_{row.get(spec.id_column, '')}_estado_cierre_sensor", "")).strip().lower() == "cerrado"
+        if kind == "sensores" and was_open and now_closed:
+            _sensor_close_location_dialog(kind, contact, row)
+            return
         if _submit_history_form(kind, contact, row):
             _clear_modal_flags()
             _clear_history_selection(contact_id, kind)
             st.rerun()
+
+
+@st.dialog("Ubicación al cerrar histórico sensor")
+def _sensor_close_location_dialog(kind: str, contact: dict[str, str], row: dict[str, str]) -> None:
+    st.markdown("¿Dónde quieres indicar que está este sensor?")
+    choice = st.radio(
+        "Destino",
+        ("oficina", "por definir"),
+        horizontal=True,
+        key=f"sensor_close_target_{row.get('historial_sensor_id', '')}",
+    )
+    c1, c2 = st.columns(2)
+    if c1.button("Guardar cierre", type="primary", width="stretch"):
+        if _submit_history_form(kind, contact, row, close_target_location=choice):
+            _clear_modal_flags()
+            _clear_history_selection(str(contact.get("contact_id", "")), kind)
+            st.rerun()
+    if c2.button("Cancelar", width="stretch"):
+        st.rerun()
 
 
 def _parse_ddmmyyyy(value: str) -> date | None:
@@ -869,6 +1018,102 @@ def _parse_ddmmyyyy(value: str) -> date | None:
         return datetime.strptime(value, "%d/%m/%Y").date()
     except ValueError:
         return None
+
+
+def _extract_uc501_bundle(serial_value: str) -> tuple[str, str, str]:
+    raw = (serial_value or "").strip()
+    if not raw:
+        return "", "", ""
+    first = raw.split(",")[0].strip()
+    if not first.lower().startswith("uc501-"):
+        return "", "", ""
+    parts = first.split("-")
+    if len(parts) != 4:
+        return "", "", ""
+    return parts[1].strip(), parts[3].strip(), parts[2].strip()  # uc501_sn, sim_sn, probe_sn
+
+
+def _extract_ug67_bundle(serial_value: str) -> tuple[str, str]:
+    """Return (ug67_sn, sim_sn) from a ug67-* serial string. Children come from inventory.
+
+    Supports both 3-segment (ug67-{sn}-{sim}) and 2-segment (ug67-{sn}) formats.
+    Returns ("", "") for sim_sn when no SIM is present.
+    """
+    raw = (serial_value or "").strip()
+    if not raw:
+        return "", ""
+    first = raw.split(",")[0].strip()
+    if not first.lower().startswith("ug67-"):
+        return "", ""
+    parts = first.split("-")
+    if len(parts) == 3:
+        return parts[1].strip(), parts[2].strip()
+    if len(parts) == 2:
+        return parts[1].strip(), ""
+    return "", ""
+
+
+def _extract_solenoide_sn(serial_value: str) -> str:
+    raw = (serial_value or "").strip()
+    if not raw.lower().startswith("solenoide-"):
+        return ""
+    parts = raw.split("-", 1)
+    return parts[1].strip() if len(parts) == 2 else ""
+
+
+def _infer_sensor_root_type(serial_value: str) -> str:
+    """Infer root asset type from existing sensor_serial_number. Returns 'uc501'|'ug67'|'solenoide'."""
+    first = (serial_value or "").strip().split(",")[0].strip().lower()
+    if first.startswith("ug67-"):
+        return "ug67"
+    if first.startswith("solenoide-"):
+        return "solenoide"
+    return "uc501"
+
+
+def _collect_all_serials_from_sensor_sn(sensor_serial_number: str) -> list[str]:
+    """Extract every individual serial number from a canonical sensor_serial_number string."""
+    serials: list[str] = []
+    for item in [p.strip() for p in (sensor_serial_number or "").split(",") if p.strip()]:
+        lower = item.lower()
+        if lower.startswith("uc501-"):
+            parts = item.split("-")
+            if len(parts) == 4:
+                serials.extend([parts[1], parts[2], parts[3]])
+        elif lower.startswith("ug67-"):
+            parts = item.split("-")
+            if len(parts) == 3:
+                serials.extend([parts[1], parts[2]])
+            elif len(parts) == 2:
+                serials.append(parts[1])
+        elif lower.startswith("solenoide-"):
+            parts = item.split("-", 1)
+            if len(parts) == 2:
+                serials.append(parts[1])
+        elif "-" in item:
+            serials.append(item.split("-", 1)[1])
+    return [s.strip() for s in serials if s.strip()]
+
+
+def _sync_inventory_from_sensor_history(values: dict[str, str], *, close_target_location: str = "") -> None:
+    ssn = str(values.get("sensor_serial_number", "") or "").strip()
+    serials = _collect_all_serials_from_sensor_sn(ssn)
+    if not serials:
+        return
+    estado_cierre = str(values.get("estado_cierre_sensor", "")).strip().lower()
+    svc = inventory_service()
+    if estado_cierre == "cerrado":
+        target = (close_target_location or "por_definir").strip().lower()
+        location_type = "oficina" if target == "oficina" else "por_definir"
+        svc.set_location_for_serials(serials, location_type=location_type, location_contact_id="", location_detail="")
+    else:
+        svc.set_location_for_serials(
+            serials,
+            location_type="cliente",
+            location_contact_id=str(values.get("contact_id", "")),
+            location_detail=str(values.get("nombre_cliente", "")),
+        )
+    bump_inventory_cache()
 
 
 def _render_next_action_strip(df: pd.DataFrame) -> None:
@@ -910,7 +1155,7 @@ def _render_next_action_strip(df: pd.DataFrame) -> None:
         if col.button(
             f"{label}\n{counts[key]}",
             key=f"dash_bucket_{key}",
-            use_container_width=True,
+            width="stretch",
             type="secondary",
         ):
             _clear_modal_flags()
@@ -984,14 +1229,33 @@ def _render_history_edit_form(kind: str, rows: list[dict[str, str]]) -> None:
 def _render_history_form(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> None:
     spec = HISTORY_SPECS[kind]
     suffix = existing.get(spec.id_column, "new") if existing else "new"
+    prefix = f"{kind}_{suffix}"
+
+    # For sensores, render the sensor picker OUTSIDE the form so that widget
+    # interactions (root-type radio, asset selectbox) trigger reruns and the
+    # association panel updates immediately.
+    excluded: frozenset[str] = frozenset()
+    if kind == "sensores":
+        excluded = frozenset({"sensor_serial_number"})
+        initial_ssn = (existing or {}).get("sensor_serial_number", "")
+        hist_id = (existing or {}).get(spec.id_column, "")
+        st.markdown("**Sensor**")
+        _render_sensor_serial_field(initial_ssn, prefix, f"{prefix}_sensor_serial_number", exclude_hist_id=hist_id)
+
     with st.form(f"history_form_{kind}_{suffix}_{base.get('contact_id', '')}"):
-        _render_history_form_body(kind, base, existing)
+        _render_history_form_body(kind, base, existing, excluded_headers=excluded)
         submitted = st.form_submit_button("Guardar histórico")
     if submitted and _submit_history_form(kind, base, existing):
         st.rerun()
 
 
-def _render_history_form_body(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> None:
+def _render_history_form_body(
+    kind: str,
+    base: dict[str, str],
+    existing: dict[str, str] | None,
+    *,
+    excluded_headers: frozenset[str] = frozenset(),
+) -> None:
     spec = HISTORY_SPECS[kind]
     prefix = f"{kind}_{existing.get(spec.id_column) if existing else 'new'}"
     initial = {header: (existing or {}).get(header, "") for header in spec.headers}
@@ -1013,13 +1277,20 @@ def _render_history_form_body(kind: str, base: dict[str, str], existing: dict[st
             )
 
     st.markdown("**Datos principales**")
+    _always_skip = {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}
     for header in spec.headers:
-        if header in {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}:
+        if header in _always_skip or header in excluded_headers:
             continue
         _field_for_header(kind, header, initial.get(header, ""), prefix)
 
 
-def _render_history_form_grouped_body(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> None:
+def _render_history_form_grouped_body(
+    kind: str,
+    base: dict[str, str],
+    existing: dict[str, str] | None,
+    *,
+    excluded_headers: frozenset[str] = frozenset(),
+) -> None:
     spec = HISTORY_SPECS[kind]
     prefix = f"{kind}_{existing.get(spec.id_column) if existing else 'new'}"
     initial = {header: (existing or {}).get(header, "") for header in spec.headers}
@@ -1042,10 +1313,11 @@ def _render_history_form_grouped_body(kind: str, base: dict[str, str], existing:
                     key=f"{prefix}_id_historial",
                 )
 
+    _always_skip = {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}
     all_fields = [
         header
         for header in spec.headers
-        if header not in {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}
+        if header not in _always_skip and header not in excluded_headers
     ]
     first_group = all_fields[: max(1, len(all_fields) // 2)]
     second_group = all_fields[max(1, len(all_fields) // 2) :]
@@ -1053,7 +1325,7 @@ def _render_history_form_grouped_body(kind: str, base: dict[str, str], existing:
     st.markdown("**Bloque principal**")
     with st.container(border=True):
         for header in first_group:
-                _field_for_header(kind, header, initial.get(header, ""), prefix)
+            _field_for_header(kind, header, initial.get(header, ""), prefix)
 
     if second_group:
         st.markdown("**Bloque complementario**")
@@ -1095,8 +1367,8 @@ def _render_projectiotid_editor(prefix: str, raw_value: str, sensor_serial_numbe
             current = st.session_state.get(sns_key, block.get("sensors", []))
             block["sensors"] = [str(x).strip() for x in current if str(x).strip()]
 
-    add_clicked = st.form_submit_button("➕ Añadir ProjectIoTId", use_container_width=True)
-    remove_clicked = st.form_submit_button("➖ Quitar último ProjectIoTId", use_container_width=True)
+    add_clicked = st.form_submit_button("➕ Añadir ProjectIoTId", width="stretch")
+    remove_clicked = st.form_submit_button("➖ Quitar último ProjectIoTId", width="stretch")
     if add_clicked:
         _sync_blocks_from_widgets()
         blocks.append({"uid": uuid.uuid4().hex[:8], "projectiotid": "", "sensors": []})
@@ -1147,7 +1419,13 @@ def _render_projectiotid_editor(prefix: str, raw_value: str, sensor_serial_numbe
     return serialized
 
 
-def _submit_history_form(kind: str, base: dict[str, str], existing: dict[str, str] | None) -> bool:
+def _submit_history_form(
+    kind: str,
+    base: dict[str, str],
+    existing: dict[str, str] | None,
+    *,
+    close_target_location: str = "",
+) -> bool:
     spec = HISTORY_SPECS[kind]
     prefix = f"{kind}_{existing.get(spec.id_column) if existing else 'new'}"
     values: dict[str, str] = {}
@@ -1160,7 +1438,7 @@ def _submit_history_form(kind: str, base: dict[str, str], existing: dict[str, st
             continue
         values[header] = str(st.session_state.get(f"{prefix}_{header}", ""))
 
-    error = _validate_history_values(kind, values)
+    error = _validate_history_values(kind, values, prefix=prefix)
     if error:
         st.error(error)
         return False
@@ -1184,12 +1462,207 @@ def _submit_history_form(kind: str, base: dict[str, str], existing: dict[str, st
                 history_service().update_row(kind, values[spec.id_column], values)
             else:
                 history_service().add_row(kind, values)
+            if kind == "sensores":
+                _sync_inventory_from_sensor_history(values, close_target_location=close_target_location)
         bump_history_cache()
         st.success("Histórico guardado correctamente.")
         return True
     except Exception as exc:
         st.error(f"No se pudo guardar el histórico: {exc}")
         return False
+
+
+def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hist_id: str = "") -> str:
+    """Guided picker for sensor_serial_number: UC501, UG67, or Solenoide.
+
+    Must be rendered OUTSIDE any st.form so that widget interactions trigger
+    reruns and the association panel updates immediately.
+
+    - Shows only *available* assets (not assigned to a client and no open
+      sensor history for that serial, unless we're editing that very record).
+    - Reads associations (SIM, probe, child sensors) from Inventory — the
+      single source of truth — and shows them read-only below the selector.
+    - Composes the canonical sensor_serial_number string automatically and
+      stores it in session_state[key].
+    """
+    inv_df = load_inventory_cached(st.session_state.get("inventory_cache_version", 0))
+    inv_svc = inventory_service()
+
+    # ID of the record being edited (to exclude it from open-serial blocking).
+    # Prefer the explicitly-passed value; fall back to session state (legacy path).
+    resolved_hist_id = exclude_hist_id or str(st.session_state.get(f"{prefix}_id_historial", "") or "")
+    open_serials = history_service().open_asset_serials(exclude_historial_id=resolved_hist_id)
+
+    # ── Two-step root-type selector ──────────────────────────────────────────
+    # Step 1: UC501 yes/no radio
+    is_uc501_key = f"{prefix}_is_uc501"
+    non_uc501_key = f"{prefix}_non_uc501_type"
+    inferred_type = _infer_sensor_root_type(value)
+    if is_uc501_key not in st.session_state:
+        st.session_state[is_uc501_key] = (inferred_type == "uc501")
+    if non_uc501_key not in st.session_state:
+        st.session_state[non_uc501_key] = inferred_type if inferred_type != "uc501" else "ug67"
+
+    is_uc501 = st.radio(
+        "¿Es un UC501?",
+        options=[True, False],
+        format_func=lambda x: "Sí" if x else "No",
+        horizontal=True,
+        key=is_uc501_key,
+    )
+
+    # Step 2: if not UC501, choose between UG67 and solenoide
+    if is_uc501:
+        root_type = "uc501"
+    else:
+        root_type = st.radio(
+            "Tipo de activo",
+            options=["ug67", "solenoide"],
+            format_func=lambda x: "UG67 (gateway)" if x == "ug67" else "Electroválvula solenoide",
+            horizontal=True,
+            key=non_uc501_key,
+        )
+
+    compound = ""
+
+    # ── UC501 branch ─────────────────────────────────────────────────────────
+    if root_type == "uc501":
+        existing_uc, _, _ = _extract_uc501_bundle(value)
+        uc_sn_key = f"{prefix}_sensor_uc501_sn"
+        if uc_sn_key not in st.session_state:
+            st.session_state[uc_sn_key] = existing_uc
+
+        options_uc501 = inv_svc.available_root_assets_for_history(("uc501",), open_serials=open_serials, inv_df=inv_df)
+        # Always include the currently-selected serial even if it's technically in open_serials
+        # (happens when editing a record that has this UC501 open for another contact)
+        selected_sn = st.session_state.get(uc_sn_key, "")
+        uc_labels = [""]
+        uc_serials_set = {o.serial_number for o in options_uc501}
+        for o in options_uc501:
+            uc_labels.append(o.serial_number)
+        if selected_sn and selected_sn not in uc_serials_set:
+            uc_labels.append(selected_sn)  # keep editing selection visible
+
+        if not options_uc501 and not selected_sn:
+            st.info("Aún no hay ningún UC501 disponible en inventario.")
+        else:
+            uc_idx = uc_labels.index(selected_sn) if selected_sn in uc_labels else 0
+            uc_sn = st.selectbox("UC501 disponibles (SN)", uc_labels, index=uc_idx, key=uc_sn_key)
+            if uc_sn:
+                opt = next((o for o in options_uc501 if o.serial_number == uc_sn), None)
+                if opt is None:
+                    # Editing mode: find in full inventory
+                    all_opts = inv_svc.asset_options_by_models(("uc501",), inv_df=inv_df)
+                    opt = next((o for o in all_opts if o.serial_number == uc_sn), None)
+                if opt:
+                    assoc = inv_svc.associations_for_root_asset(opt.inventory_id, inv_df=inv_df)
+                    with st.container(border=True):
+                        st.caption("**Asociaciones desde Inventario (solo lectura)**")
+                        if assoc.probe:
+                            st.caption(f"🌱 Sonda: **{assoc.probe.serial_number}** ({assoc.probe.model})")
+                        else:
+                            st.warning("Sin sonda asociada en inventario. Ve a Inventario para vincularla.")
+                        if assoc.sim:
+                            st.caption(f"📶 SIM: **{assoc.sim.serial_number}**")
+                        else:
+                            st.warning("Sin SIM asociada en inventario. Ve a Inventario para vincularla.")
+                    probe_sn = assoc.probe.serial_number if assoc.probe else ""
+                    sim_sn = assoc.sim.serial_number if assoc.sim else ""
+                    if probe_sn and sim_sn:
+                        compound = f"uc501-{uc_sn}-{probe_sn}-{sim_sn}"
+                    else:
+                        compound = ""
+                        _missing = []
+                        if not probe_sn:
+                            _missing.append("sonda (Teros 10/12)")
+                        if not sim_sn:
+                            _missing.append("SIM")
+                        st.error(
+                            f"No se puede guardar: el UC501 **{uc_sn}** no tiene "
+                            f"**{' ni '.join(_missing)}** configurada en Inventario. "
+                            "Ve a Inventario → edita ese UC501 y vincula los componentes antes de crear el historial."
+                        )
+
+    # ── UG67 branch ──────────────────────────────────────────────────────────
+    elif root_type == "ug67":
+        existing_ug, _ = _extract_ug67_bundle(value)
+        ug_sn_key = f"{prefix}_sensor_ug67_sn"
+        if ug_sn_key not in st.session_state:
+            st.session_state[ug_sn_key] = existing_ug
+
+        options_ug67 = inv_svc.available_root_assets_for_history(("ug67",), open_serials=open_serials, inv_df=inv_df)
+        selected_sn = st.session_state.get(ug_sn_key, "")
+        ug_labels = [""]
+        ug_serials_set = {o.serial_number for o in options_ug67}
+        for o in options_ug67:
+            ug_labels.append(o.serial_number)
+        if selected_sn and selected_sn not in ug_serials_set:
+            ug_labels.append(selected_sn)
+
+        if not options_ug67 and not selected_sn:
+            st.info("Aún no hay ningún UG67 disponible en inventario.")
+        else:
+            ug_idx = ug_labels.index(selected_sn) if selected_sn in ug_labels else 0
+            ug_sn = st.selectbox("UG67 disponibles (SN)", ug_labels, index=ug_idx, key=ug_sn_key)
+            if ug_sn:
+                opt = next((o for o in options_ug67 if o.serial_number == ug_sn), None)
+                if opt is None:
+                    all_opts = inv_svc.asset_options_by_models(("ug67",), inv_df=inv_df)
+                    opt = next((o for o in all_opts if o.serial_number == ug_sn), None)
+                if opt:
+                    assoc = inv_svc.associations_for_root_asset(opt.inventory_id, inv_df=inv_df)
+                    with st.container(border=True):
+                        st.caption("**Asociaciones desde Inventario (solo lectura)**")
+                        if assoc.sim:
+                            st.caption(f"📶 SIM: **{assoc.sim.serial_number}**")
+                        else:
+                            st.warning("Sin SIM asociada en inventario. Ve a Inventario para vincularla.")
+                        if assoc.sensors:
+                            for child in assoc.sensors:
+                                st.caption(f"📊 {child.model.upper()}: **{child.serial_number}**")
+                        else:
+                            st.caption("Sin sensores hijos asociados.")
+                    sim_sn = assoc.sim.serial_number if assoc.sim else ""
+                    if sim_sn:
+                        gateway_part = f"ug67-{ug_sn}-{sim_sn}"
+                    else:
+                        gateway_part = f"ug67-{ug_sn}"
+                        st.warning(
+                            f"El UG67 **{ug_sn}** no tiene SIM en Inventario — se guardará sin SIM. "
+                            "Puedes vincularla más tarde editando ese activo en Inventario."
+                        )
+                    sensor_parts = [
+                        f"{c.model.lower()}-{c.serial_number}"
+                        for c in assoc.sensors
+                    ]
+                    compound = ",".join([gateway_part] + sensor_parts)
+
+    # ── Solenoide branch ─────────────────────────────────────────────────────
+    elif root_type == "solenoide":
+        existing_sol = _extract_solenoide_sn(value)
+        sol_sn_key = f"{prefix}_sensor_solenoide_sn"
+        if sol_sn_key not in st.session_state:
+            st.session_state[sol_sn_key] = existing_sol
+
+        options_sol = inv_svc.available_root_assets_for_history(("solenoide",), open_serials=open_serials, inv_df=inv_df)
+        selected_sn = st.session_state.get(sol_sn_key, "")
+        sol_labels = [""]
+        sol_serials_set = {o.serial_number for o in options_sol}
+        for o in options_sol:
+            sol_labels.append(o.serial_number)
+        if selected_sn and selected_sn not in sol_serials_set:
+            sol_labels.append(selected_sn)
+
+        if not options_sol and not selected_sn:
+            st.info("Aún no hay ninguna electroválvula solenoide disponible en inventario.")
+        else:
+            sol_idx = sol_labels.index(selected_sn) if selected_sn in sol_labels else 0
+            sol_sn = st.selectbox("Solenoide disponibles (SN)", sol_labels, index=sol_idx, key=sol_sn_key)
+            if sol_sn:
+                compound = f"solenoide-{sol_sn}"
+
+    st.session_state[key] = compound
+    return compound
 
 
 def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
@@ -1212,8 +1685,7 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         index = unique_options.index(value) if value in unique_options else 0
         return st.selectbox(label, unique_options, index=index, key=key)
     if header == "sensor_serial_number":
-        st.caption(SENSOR_SERIAL_NUMBER_FORMAT_HELP)
-        return st.text_area(label, value=value, key=key, height=90)
+        return _render_sensor_serial_field(value, prefix, key)
     if header == "cantidad_sensores":
         return st.text_input(label, value=str(count_sensor_assets(st.session_state.get(f"{prefix}_sensor_serial_number", value))), key=key, disabled=True)
     if header in SELECT_OPTIONS:
@@ -1231,13 +1703,31 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
     return st.text_input(label, value=value, key=key)
 
 
-def _validate_history_values(kind: str, values: dict[str, str]) -> str | None:
+def _validate_history_values(kind: str, values: dict[str, str], prefix: str = "") -> str | None:
     dates = [(label, values.get(column, "")) for label, column in DATE_COLUMNS_BY_KIND.get(kind, [])]
     date_error = validate_dd_mm_yyyy_fields(dates)
     if date_error:
         return date_error
     if kind == "sensores":
-        if not is_valid_sensor_serial_number(values.get("sensor_serial_number", "")):
+        ssn = values.get("sensor_serial_number", "").strip()
+        if not ssn:
+            # Try to give a context-aware error based on what was selected
+            if prefix:
+                is_uc501 = st.session_state.get(f"{prefix}_is_uc501")
+                uc_sn = str(st.session_state.get(f"{prefix}_sensor_uc501_sn", "") or "").strip()
+                ug67_sn = str(st.session_state.get(f"{prefix}_sensor_ug67_sn", "") or "").strip()
+                if is_uc501 is True and uc_sn:
+                    return (
+                        f"El UC501 **{uc_sn}** no tiene sonda y/o SIM configuradas en Inventario. "
+                        "Ve a Inventario, edita ese UC501 y vincula los componentes antes de guardar."
+                    )
+                if is_uc501 is False and ug67_sn:
+                    return (
+                        f"El UG67 **{ug67_sn}** no tiene SIM configurada en Inventario. "
+                        "Ve a Inventario, edita ese UG67 y vincula la SIM antes de guardar."
+                    )
+            return "Debes seleccionar un sensor (UC501, UG67 o Electroválvula solenoide) antes de guardar."
+        if not is_valid_sensor_serial_number(ssn):
             return "El sensor_serial_number no tiene un formato válido.\n\n" + SENSOR_SERIAL_NUMBER_FORMAT_HELP
         if values.get("red") == "otro" and not values.get("red_otro", "").strip():
             return "Si red = otro, debes completar el campo red_otro."

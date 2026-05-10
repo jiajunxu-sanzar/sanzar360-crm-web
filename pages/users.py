@@ -21,5 +21,5 @@ def render(_: pd.DataFrame) -> None:
             for user in users
         ]
     )
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
     st.info("Los usuarios se cargan desde la hoja `Usuarios CRM`.")

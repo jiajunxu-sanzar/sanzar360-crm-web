@@ -40,7 +40,7 @@ def _weekly_person_modal(persona: str, breakdown: pd.DataFrame) -> None:
         }
     )
     cols = ["Semana", "Batch email", "Seguimiento comercial", "Total"]
-    st.dataframe(show[cols], use_container_width=True, hide_index=True)
+    st.dataframe(show[cols], width="stretch", hide_index=True)
 
     long_df = bd.melt(
         id_vars=["semana_desde"],
@@ -61,7 +61,7 @@ def _weekly_person_modal(persona: str, breakdown: pd.DataFrame) -> None:
         labels={"count": "Acciones"},
         title="Por semana",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def render() -> None:
@@ -98,7 +98,7 @@ def render() -> None:
                     "total": "Total",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -125,7 +125,7 @@ def render() -> None:
             barmode="stack",
             yaxis={"categoryorder": "array", "categoryarray": order},
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     st.divider()
     st.subheader("Detalle por persona (todas las semanas del log)")
@@ -147,7 +147,7 @@ def render() -> None:
         st.write("")
         if st.button(
             "Ver detalle…",
-            use_container_width=True,
+            width="stretch",
             type="primary",
             disabled=not bool(elegida),
             key="actions_dashboard_open_modal",

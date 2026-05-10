@@ -12,6 +12,17 @@ DEFAULT_DESCRIPTION = (
 VAT_RATE = 0.21
 BASE_EUR = 360.0
 
+# Layout (pts, PDF bottom-left coords; reserve space so table/summary/footer never overlap).
+_INVOICE_PAGE_BOTTOM_MARGIN = 55.0
+_INVOICE_TABLE_HEADER_H = 28.0
+_INVOICE_ITEM_ROW_H = 36.0
+_INVOICE_GAP_TABLE_TO_SUMMARY = 24.0
+_INVOICE_SUMMARY_TOP_TO_FOOTER_TOP = 92.0  # clears TOTAL line + gap before "Condiciones:"
+_INVOICE_FOOTER_BELOW_TITLE = 290.0  # footer_top downward to lowest contact line
+# Distance from page top (points) to table *bottom* edge on continuation pages; must clear
+# the "(continua)" banner (drawn at height-48 / height-66) so the table header does not overlap.
+_CONTINUATION_TOP_Y = 120.0
+
 
 @dataclass(frozen=True)
 class InvoiceItem:
@@ -41,11 +52,16 @@ class InvoiceData:
         return round(base + vat, 2)
 
 
+def _invoice_summary_and_footer_fit_on_page(summary_top: float) -> bool:
+    footer_top = summary_top - _INVOICE_SUMMARY_TOP_TO_FOOTER_TOP
+    lowest = footer_top - _INVOICE_FOOTER_BELOW_TITLE
+    return lowest >= _INVOICE_PAGE_BOTTOM_MARGIN
+
+
 def generate_invoice_pdf(data: InvoiceData) -> bytes:
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
         from reportlab.pdfgen import canvas
     except ModuleNotFoundError:
         return _minimal_pdf_bytes(data)
@@ -60,19 +76,35 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
 
     left = 42.0
     right = width - 42.0
+    width_table = 510.0
+    row_h = _INVOICE_TABLE_HEADER_H
+    item_h = _INVOICE_ITEM_ROW_H
+    col_ref = 95.0
+    col_desc = 205.0
+    col_qty = 60.0
+    col_unit = 80.0
+    x_ref = left + col_ref
+    x_desc = x_ref + col_desc
+    x_qty = x_desc + col_qty
+    x_unit = x_qty + col_unit
 
-    # Header
+    # Header — logo inside a fixed box, aspect preserved, anchored top-left (no crop)
     logo_path = _resolve_logo_path()
-    if logo_path is not None:
+    ir = _logo_image_reader(logo_path) if logo_path is not None else None
+    if ir is not None:
         try:
+            box_w = 94.0
+            box_h = 74.0
+            top_gap = 24.0
+            y_box = height - top_gap - box_h
             pdf.drawImage(
-                str(logo_path),
+                ir,
                 left,
-                height - 160,
-                width=120,
-                height=120,
+                y_box,
+                width=box_w,
+                height=box_h,
                 preserveAspectRatio=True,
-                mask="auto",
+                anchor="nw",
             )
         except Exception:
             pass
@@ -84,12 +116,12 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
     pdf.drawRightString(right, height - 86, f"INVOICE IN-{data.invoice_number}")
     pdf.drawRightString(right, height - 108, f"Fecha: {data.issue_date.strftime('%d/%m/%Y')}")
 
-    y = height - 185
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.drawString(left, y, "Facutrar a:")
-    pdf.setFont("Helvetica", 10)
-    pdf.drawString(left + 88, y, (data.customer_name or "").strip())
-    y -= 22
+    y = height - 175
+    name_line = (data.customer_name or "").strip()
+    if name_line:
+        pdf.setFont("Helvetica", 11)
+        pdf.drawString(left, y, name_line)
+        y -= 22
     if data.customer_cif.strip():
         pdf.setFont("Helvetica-Bold", 10)
         pdf.drawString(left, y, "CIF:")
@@ -106,118 +138,161 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
     pdf.drawText(text)
     y -= 56
 
-    # Items table
-    table_top = y
-    width_table = 510.0
-    row_h = 28.0
-    col_ref = 95.0
-    col_desc = 205.0
-    col_qty = 60.0
-    col_unit = 80.0
-    col_amount = width_table - col_ref - col_desc - col_qty - col_unit
+    def stroke_table_columns(table_top_local: float) -> None:
+        pdf.setLineWidth(1)
+        pdf.line(left, table_top_local + row_h, left + width_table, table_top_local + row_h)
+        pdf.line(left, table_top_local, left, table_top_local + row_h)
+        pdf.line(left + width_table, table_top_local, left + width_table, table_top_local + row_h)
+        pdf.line(x_ref, table_top_local, x_ref, table_top_local + row_h)
+        pdf.line(x_desc, table_top_local, x_desc, table_top_local + row_h)
+        pdf.line(x_qty, table_top_local, x_qty, table_top_local + row_h)
+        pdf.line(x_unit, table_top_local, x_unit, table_top_local + row_h)
+        pdf.setFont("Helvetica-Bold", 9)
+        pdf.drawString(left + 4, table_top_local + 10, "Referencia")
+        pdf.drawString(x_ref + 4, table_top_local + 10, "Descripcion")
+        pdf.drawString(x_desc + 4, table_top_local + 10, "Cantidad")
+        pdf.drawString(x_qty + 4, table_top_local + 10, "P. unit.")
+        pdf.drawString(x_unit + 4, table_top_local + 10, "Importe")
 
-    x_ref = left + col_ref
-    x_desc = x_ref + col_desc
-    x_qty = x_desc + col_qty
-    x_unit = x_qty + col_unit
+    def continuation_table_anchor() -> float:
+        return height - _CONTINUATION_TOP_Y
 
-    pdf.setLineWidth(1)
-    # Draw header without bottom border to avoid double separator
-    pdf.line(left, table_top + row_h, left + width_table, table_top + row_h)  # top
-    pdf.line(left, table_top, left, table_top + row_h)  # left side
-    pdf.line(left + width_table, table_top, left + width_table, table_top + row_h)  # right side
-    pdf.line(x_ref, table_top, x_ref, table_top + row_h)
-    pdf.line(x_desc, table_top, x_desc, table_top + row_h)
-    pdf.line(x_qty, table_top, x_qty, table_top + row_h)
-    pdf.line(x_unit, table_top, x_unit, table_top + row_h)
-    pdf.setFont("Helvetica-Bold", 9)
-    pdf.drawString(left + 4, table_top + 10, "Referencia")
-    pdf.drawString(x_ref + 4, table_top + 10, "Descripcion")
-    pdf.drawString(x_desc + 4, table_top + 10, "Cantidad")
-    pdf.drawString(x_qty + 4, table_top + 10, "P. unit.")
-    pdf.drawString(x_unit + 4, table_top + 10, "Importe")
+    def start_continuation_table() -> float:
+        """New page + minimal banner + column headings. Returns initial item_bottom y for next row."""
+        pdf.showPage()
+        pdf.setFillColor(black)
+        pdf.setFont("Helvetica-Bold", 11)
+        pdf.drawRightString(right, height - 48, f"INVOICE IN-{data.invoice_number}")
+        pdf.setFont("Helvetica", 10)
+        pdf.drawRightString(right, height - 66, "(continua)")
+        t_top = continuation_table_anchor()
+        stroke_table_columns(t_top)
+        return t_top - item_h
 
-    item_h = 36.0
+    def draw_invoice_row_lines(item_bottom: float, item: InvoiceItem, line_amount: float) -> None:
+        qty = max(1, int(item.quantity))
+        up = max(0.0, float(item.unit_price_excl_vat))
+        pdf.setFont("Helvetica", 9)
+        pdf.rect(left, item_bottom, width_table, item_h, stroke=1, fill=0)
+        pdf.line(x_ref, item_bottom, x_ref, item_bottom + item_h)
+        pdf.line(x_desc, item_bottom, x_desc, item_bottom + item_h)
+        pdf.line(x_qty, item_bottom, x_qty, item_bottom + item_h)
+        pdf.line(x_unit, item_bottom, x_unit, item_bottom + item_h)
+        pdf.drawString(left + 4, item_bottom + 13, (item.reference or DEFAULT_REFERENCE).strip())
+        pdf.drawString(x_ref + 4, item_bottom + 13, (item.description or DEFAULT_DESCRIPTION).strip()[:45])
+        pdf.drawString(x_desc + 4, item_bottom + 13, str(qty))
+        pdf.drawRightString(x_unit - 4, item_bottom + 13, fmt_eur(up))
+        pdf.drawRightString(left + width_table - 4, item_bottom + 13, fmt_eur(line_amount))
+
+    def draw_summary_block(summary_basis_top: float, base_amt: float, vat_amt: float, total_amt: float) -> None:
+        pdf.setFont("Helvetica", 10)
+        pdf.drawRightString(right, summary_basis_top, f"Base imponible: {fmt_eur(base_amt)}")
+        pdf.drawRightString(right, summary_basis_top - 20, f"IVA ({int(data.vat_rate * 100)}%): {fmt_eur(vat_amt)}")
+        pdf.setFont("Helvetica-Bold", 12)
+        pdf.drawRightString(right, summary_basis_top - 44, f"TOTAL: {fmt_eur(total_amt)}")
+
+    def draw_footer_block(footer_y: float) -> None:
+        right_x = 330.0
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(left, footer_y, "Condiciones:")
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(left, footer_y - 24, "Moneda:")
+        pdf.drawString(left + 100, footer_y - 24, "EURO")
+        pdf.drawString(left, footer_y - 44, "Transporte:")
+        pdf.drawString(left + 100, footer_y - 44, "N/A")
+        pdf.drawString(left, footer_y - 64, "Seguro de transporte:")
+        pdf.drawString(left + 100, footer_y - 64, "N/A")
+        pdf.drawString(left, footer_y - 84, "Otros seguros")
+        pdf.drawString(left + 100, footer_y - 84, "Inc N/A luido")
+
+        pdf.drawString(right_x, footer_y - 24, "Compania")
+        pdf.drawString(right_x + 100, footer_y - 24, "Agroaerospace S.L.")
+        pdf.drawString(right_x, footer_y - 44, "CIF/ VAT")
+        pdf.drawString(right_x + 100, footer_y - 44, "ESB88360565")
+        pdf.setFont("Helvetica-Oblique", 10)
+        pdf.drawString(right_x, footer_y - 64, "Forma de pago:")
+        pdf.drawString(right_x + 100, footer_y - 64, "A la vista")
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(right_x, footer_y - 84, "Codigo cliente:")
+        pdf.drawString(right_x + 100, footer_y - 84, "N/A")
+
+        bank_y = footer_y - 118
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawString(left, bank_y, "Datos bancarios:")
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(left, bank_y - 24, "IBAN")
+        pdf.drawString(left + 100, bank_y - 24, "ES79 0049 1889 00 2010490242")
+        pdf.drawString(left, bank_y - 44, "BIC/CODIGO SWIFT.")
+        pdf.drawString(left + 100, bank_y - 44, "BSCHESMMXXX")
+        pdf.drawString(left, bank_y - 64, "BANK NAME:")
+        pdf.drawString(left + 100, bank_y - 64, "BANCO SANTANDER, S.A.")
+
+        contact_y = bank_y - 92
+        pdf.drawString(left, contact_y, "Si tiene alguna pregunta no dude en ponerse en contacto con nosotros.")
+        pdf.drawString(left, contact_y - 24, "Oficinas")
+        pdf.drawString(left + 100, contact_y - 24, "Parque Tecnologico, Av. Gregorio Peces Barba, 1. 28919. Leganes,")
+        pdf.drawString(left, contact_y - 42, "Centrales:")
+        pdf.drawString(left + 100, contact_y - 42, "Madrid. Spain")
+        pdf.drawString(left, contact_y - 60, "Telefono:")
+        pdf.drawString(left + 100, contact_y - 60, "+34 670 272 900")
+        pdf.drawString(left + 100, contact_y - 78, "+34 698 908 037")
+
+    # Items table — first page
+    table_top = float(y)
+    stroke_table_columns(table_top)
     item_top = table_top - item_h
-    pdf.setFont("Helvetica", 9)
+
     cleaned_items = data.items or [InvoiceItem(description=DEFAULT_DESCRIPTION, quantity=1, unit_price_excl_vat=BASE_EUR)]
+
+    idx = 0
     base_amount = 0.0
-    for item in cleaned_items:
-        quantity = max(1, int(item.quantity))
-        unit_price = max(0.0, float(item.unit_price_excl_vat))
-        line_amount = round(quantity * unit_price, 2)
+    while idx < len(cleaned_items):
+        item_row = cleaned_items[idx]
+        is_last = idx == len(cleaned_items) - 1
+        row_bottom_after = item_top - item_h
+
+        need_break = False
+        if item_top < _INVOICE_PAGE_BOTTOM_MARGIN:
+            need_break = True
+        elif is_last:
+            cand_summary = row_bottom_after - _INVOICE_GAP_TABLE_TO_SUMMARY
+            if not _invoice_summary_and_footer_fit_on_page(cand_summary):
+                need_break = True
+        elif row_bottom_after < _INVOICE_PAGE_BOTTOM_MARGIN:
+            need_break = True
+
+        if need_break:
+            item_top = start_continuation_table()
+            continue
+
+        qty = max(1, int(item_row.quantity))
+        unit_price = max(0.0, float(item_row.unit_price_excl_vat))
+        line_amount = round(qty * unit_price, 2)
         base_amount += line_amount
+        draw_invoice_row_lines(item_top, item_row, line_amount)
 
-        pdf.rect(left, item_top, width_table, item_h, stroke=1, fill=0)
-        pdf.line(x_ref, item_top, x_ref, item_top + item_h)
-        pdf.line(x_desc, item_top, x_desc, item_top + item_h)
-        pdf.line(x_qty, item_top, x_qty, item_top + item_h)
-        pdf.line(x_unit, item_top, x_unit, item_top + item_h)
-        pdf.drawString(left + 4, item_top + 13, (item.reference or DEFAULT_REFERENCE).strip())
-        pdf.drawString(x_ref + 4, item_top + 13, (item.description or DEFAULT_DESCRIPTION).strip()[:45])
-        pdf.drawString(x_desc + 4, item_top + 13, str(quantity))
-        pdf.drawRightString(x_unit - 4, item_top + 13, fmt_eur(unit_price))
-        pdf.drawRightString(left + width_table - 4, item_top + 13, fmt_eur(line_amount))
+        idx += 1
         item_top -= item_h
-    base_amount = round(base_amount, 2)
 
+    base_amount = round(base_amount, 2)
     vat_amount = round(base_amount * data.vat_rate, 2)
     total_amount = round(base_amount + vat_amount, 2)
-    summary_top = item_top - 24
-    pdf.setFont("Helvetica", 10)
-    pdf.drawRightString(right, summary_top, f"Base imponible: {fmt_eur(base_amount)}")
-    pdf.drawRightString(right, summary_top - 20, f"IVA ({int(data.vat_rate * 100)}%): {fmt_eur(vat_amount)}")
-    pdf.setFont("Helvetica-Bold", 12)
-    pdf.drawRightString(right, summary_top - 44, f"TOTAL: {fmt_eur(total_amount)}")
 
-    # Footer blocks
-    footer_top = min(max(summary_top - 36, 334.0), 354.0)
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.drawString(left, footer_top, "Condiciones:")
-    pdf.setFont("Helvetica", 10)
-    pdf.drawString(left, footer_top - 24, "Moneda:")
-    pdf.drawString(left + 100, footer_top - 24, "EURO")
-    pdf.drawString(left, footer_top - 44, "Transporte:")
-    pdf.drawString(left + 100, footer_top - 44, "N/A")
-    pdf.drawString(left, footer_top - 64, "Seguro de transporte:")
-    pdf.drawString(left + 100, footer_top - 64, "N/A")
-    pdf.drawString(left, footer_top - 84, "Otros seguros")
-    pdf.drawString(left + 100, footer_top - 84, "Inc N/A luido")
+    summary_top = item_top - _INVOICE_GAP_TABLE_TO_SUMMARY
+    if not _invoice_summary_and_footer_fit_on_page(summary_top):
+        pdf.showPage()
+        pdf.setFillColor(black)
+        pdf.setFont("Helvetica-Bold", 18)
+        pdf.drawRightString(right, height - 62, "INVOICE")
+        pdf.setFont("Helvetica", 11)
+        pdf.drawRightString(right, height - 86, f"INVOICE IN-{data.invoice_number}")
+        pdf.drawRightString(right, height - 108, f"Fecha: {data.issue_date.strftime('%d/%m/%Y')}")
+        summary_top = height - 200.0
 
-    right_x = 330.0
-    pdf.drawString(right_x, footer_top - 24, "Compania")
-    pdf.drawString(right_x + 100, footer_top - 24, "Agroaerospace S.L.")
-    pdf.drawString(right_x, footer_top - 44, "CIF/ VAT")
-    pdf.drawString(right_x + 100, footer_top - 44, "ESB88360565")
-    pdf.setFont("Helvetica-Oblique", 10)
-    pdf.drawString(right_x, footer_top - 64, "Forma de pago:")
-    pdf.drawString(right_x + 100, footer_top - 64, "A la vista")
-    pdf.setFont("Helvetica", 10)
-    pdf.drawString(right_x, footer_top - 84, "Codigo cliente:")
-    pdf.drawString(right_x + 100, footer_top - 84, "N/A")
+    draw_summary_block(summary_top, base_amount, vat_amount, total_amount)
+    footer_top = summary_top - _INVOICE_SUMMARY_TOP_TO_FOOTER_TOP
+    draw_footer_block(footer_top)
 
-    bank_top = footer_top - 118
-    pdf.setFont("Helvetica-Bold", 10)
-    pdf.drawString(left, bank_top, "Datos bancarios:")
-    pdf.setFont("Helvetica", 10)
-    pdf.drawString(left, bank_top - 24, "IBAN")
-    pdf.drawString(left + 100, bank_top - 24, "ES79 0049 1889 00 2010490242")
-    pdf.drawString(left, bank_top - 44, "BIC/CODIGO SWIFT.")
-    pdf.drawString(left + 100, bank_top - 44, "BSCHESMMXXX")
-    pdf.drawString(left, bank_top - 64, "BANK NAME:")
-    pdf.drawString(left + 100, bank_top - 64, "BANCO SANTANDER, S.A.")
-
-    contact_top = bank_top - 92
-    pdf.drawString(left, contact_top, "Si tiene alguna pregunta no dude en ponerse en contacto con nosotros.")
-    pdf.drawString(left, contact_top - 24, "Oficinas")
-    pdf.drawString(left + 100, contact_top - 24, "Parque Tecnologico, Av. Gregorio Peces Barba, 1. 28919. Leganes,")
-    pdf.drawString(left, contact_top - 42, "Centrales:")
-    pdf.drawString(left + 100, contact_top - 42, "Madrid. Spain")
-    pdf.drawString(left, contact_top - 60, "Telefono:")
-    pdf.drawString(left + 100, contact_top - 60, "+34 670 272 900")
-    pdf.drawString(left + 100, contact_top - 78, "+34 698 908 037")
-
-    pdf.showPage()
     pdf.save()
     return buffer.getvalue()
 
@@ -241,13 +316,64 @@ def _minimal_pdf_bytes(data: InvoiceData) -> bytes:
     return ("%PDF-1.4\n" + body + "\n%%EOF\n").encode("latin-1", errors="replace")
 
 
-def _resolve_logo_path() -> Path | None:
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[1] / "assets" / "branding" / "sanzar_logo.png",  # sanzar-crm-web/assets/branding
-        here.parents[2] / "sanzar-crm" / "assets" / "branding" / "sanzar_logo.png",  # sibling project
+_LOGO_FILENAMES = (
+    "SANZAR_LOGO VERDE.png",
+    "SANZAR_LOGO_VERDE.png",
+    "SANZAR LOGO VERDE.png",
+    "sanzar_logo_verde.png",
+    "sanzar_logo.png",
+)
+
+
+def _logo_search_directories() -> list[Path]:
+    here = Path(__file__).resolve().parents[1]
+    return [
+        here / "assets" / "branding",
+        here / "assets",
+        here,
+        here.parent / "sanzar-crm" / "assets" / "branding",
     ]
-    for path in candidates:
-        if path.exists() and path.is_file():
-            return path
+
+
+def _resolve_logo_path() -> Path | None:
+    for directory in _logo_search_directories():
+        if not directory.is_dir():
+            continue
+        for name in _LOGO_FILENAMES:
+            path = directory / name
+            if path.is_file():
+                return path
     return None
+
+
+def _logo_image_reader(logo_path: Path) -> ImageReader | None:
+    """RGB PNG via Pillow avoids mask/alpha glitches in ReportLab that can look 'cut off'."""
+    from reportlab.lib.utils import ImageReader
+
+    try:
+        from PIL import Image
+
+        im = Image.open(logo_path)
+        if im.mode == "P":
+            if "transparency" in im.info:
+                im = im.convert("RGBA")
+            else:
+                im = im.convert("RGBA")
+        elif im.mode not in ("RGB", "RGBA"):
+            im = im.convert("RGBA")
+        if im.mode == "RGBA":
+            white = Image.new("RGB", im.size, (255, 255, 255))
+            white.paste(im, mask=im.split()[3])
+            out = white
+        else:
+            out = im
+        buf = BytesIO()
+        out.save(buf, format="PNG")
+        buf.seek(0)
+        return ImageReader(buf)
+    except Exception:
+        pass
+    try:
+        return ImageReader(str(logo_path))
+    except Exception:
+        return None

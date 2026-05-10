@@ -69,14 +69,17 @@ _FECHA_PAGOS_ENTRY_RE = re.compile(r"^\d{2}/\d{2}/\d{4}\s*-\s*.+$")
 _CUENTA_USUARIO_RE = re.compile(r"^[^,\s]+@[^,\s]+\s*,\s*.+$")
 _UC501_ITEM_RE = re.compile(r"^uc501-[^,\s-]+-[^,\s-]+-[^,\s-]+$", re.IGNORECASE)
 _UG67_GATEWAY_RE = re.compile(r"^ug67-[^,\s-]+-[^,\s-]+$", re.IGNORECASE)
+_UG67_GATEWAY_NO_SIM_RE = re.compile(r"^ug67-[^,\s-]+$", re.IGNORECASE)
 _UG67_DEVICE_RE = re.compile(r"^(em500|em300|uc512)-[^,\s-]+$", re.IGNORECASE)
+_SOLENOIDE_RE = re.compile(r"^solenoide-[^,\s]+$", re.IGNORECASE)
 
 SENSOR_SERIAL_NUMBER_FORMAT_HELP = (
     "Formatos permitidos:\n"
     "- UC501: uc501-serial_uc501-serial_teros10-sim. Ejemplo: uc501-UC001-TE001-SIM001\n"
-    "- UG67: ug67-serial_gateway-sim, em500-serial, em300-serial, uc512-serial. "
-    "Ejemplo: ug67-UG001-SIM900, em500-EM50001, uc512-UC51201\n"
-    "- Nodo suelto: em500-EM50001, em300-EM30001 o uc512-UCDEM00341"
+    "- UG67 con SIM: ug67-serial_gateway-sim, em500-serial, ... Ejemplo: ug67-UG001-SIM900, em500-EM50001\n"
+    "- UG67 sin SIM: ug67-serial_gateway, em500-serial, ... Ejemplo: ug67-UG001, em500-EM50001\n"
+    "- Nodo suelto: em500-EM50001, em300-EM30001 o uc512-UCDEM00341\n"
+    "- Electroválvula solenoide: solenoide-SOL001"
 )
 
 
@@ -134,10 +137,23 @@ def is_valid_sensor_serial_number(value: str) -> bool:
             expecting_ug67_devices = True
             ug67_devices_count = 0
             continue
+        if _UG67_GATEWAY_NO_SIM_RE.match(item):
+            if expecting_ug67_devices and ug67_devices_count == 0:
+                return False
+            # UG67 without SIM: child devices are optional, not required
+            expecting_ug67_devices = False
+            ug67_devices_count = 0
+            continue
         if _UG67_DEVICE_RE.match(item):
             if not expecting_ug67_devices:
                 continue
             ug67_devices_count += 1
+            continue
+        if _SOLENOIDE_RE.match(item):
+            if expecting_ug67_devices and ug67_devices_count == 0:
+                return False
+            expecting_ug67_devices = False
+            ug67_devices_count = 0
             continue
         return False
     return not (expecting_ug67_devices and ug67_devices_count == 0)
@@ -164,9 +180,16 @@ def sensor_serial_number_summary_lines(value: str) -> list[str]:
             fields = item.split("-")
             if len(fields) == 3:
                 out.append(f"UG67 | Gateway SN: {fields[1]} | SIM: {fields[2]}")
+            elif len(fields) == 2:
+                out.append(f"UG67 | Gateway SN: {fields[1]} | Sin SIM")
             else:
                 out.append(f"UG67 | {item}")
             current_ug67 = item
+        elif low.startswith("solenoide-"):
+            parts_sol = item.split("-", 1)
+            sol_serial = parts_sol[1] if len(parts_sol) == 2 else item
+            out.append(f"Solenoide | SN: {sol_serial}")
+            current_ug67 = None
         elif current_ug67 is not None and "-" in item:
             asset_type, serial = item.split("-", 1)
             out.append(f"  - Nodo {asset_type.upper()}: {serial}")

@@ -15,18 +15,13 @@ from services.invoice_pdf_web import (
 )
 
 
-def render(df: pd.DataFrame) -> None:
+def render(_contacts_df: pd.DataFrame) -> None:
     st.title("Facturas")
-    if df.empty:
-        st.info("No hay contactos cargados.")
-        return
-    contacts = df.fillna("").astype(str)
-    selected = st.selectbox(
-        "Cliente",
-        contacts["contact_id"].tolist(),
-        format_func=lambda cid: contacts.loc[contacts["contact_id"] == cid, "nombre"].iloc[0],
+    customer_name = st.text_input(
+        "Nombre cliente (en la factura)",
+        value="",
+        help="Texto que aparecerá en el PDF. Rellénalo manualmente; no se enlaza con la lista de contactos.",
     )
-    contact = contacts[contacts["contact_id"] == selected].iloc[0].to_dict()
     invoice_number = st.text_input("INVOICE IN-", value="2026-001")
     issue_date = st.date_input("Fecha", value=date.today(), format="DD/MM/YYYY")
     customer_cif = st.text_input("CIF", value="")
@@ -69,7 +64,7 @@ def render(df: pd.DataFrame) -> None:
 
     data = InvoiceData(
         invoice_number=invoice_number,
-        customer_name=contact.get("nombre", ""),
+        customer_name=customer_name.strip(),
         customer_cif=customer_cif.strip(),
         issue_date=issue_date,
         items=items,

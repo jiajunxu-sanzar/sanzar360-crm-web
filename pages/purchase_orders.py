@@ -71,7 +71,7 @@ def render(_: pd.DataFrame) -> None:
         shipping_terms = table1_cols[3].text_input("SHIPPING TERMS", value=shipping_terms)
 
     st.markdown("#### ITEMS")
-    if st.button("+ Añadir item", use_container_width=False):
+    if st.button("+ Añadir item", width="content"):
         items = _po_items_state()
         items.append(
             {
@@ -168,5 +168,5 @@ def render(_: pd.DataFrame) -> None:
         data=pdf_bytes,
         file_name=f"purchase_order_{po_number or 'draft'}.pdf",
         mime="application/pdf",
-        use_container_width=True,
+        width="stretch",
     )

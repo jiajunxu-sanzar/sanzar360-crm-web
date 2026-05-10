@@ -5,6 +5,7 @@ import streamlit as st
 from config.settings import CONFIG
 from services.activity_log import ACTIVITY_HEADERS
 from services.history_service import HistoryService
+from services.inventory_service import InventoryService
 from services.sheets_service import SheetsService
 from services.users_service import load_users
 
@@ -19,19 +20,34 @@ def history_service() -> HistoryService:
     return HistoryService(sheets_service())
 
 
+@st.cache_resource
+def inventory_service() -> InventoryService:
+    return InventoryService(sheets_service())
+
+
 @st.cache_data(ttl=300, show_spinner=False)
-def load_contacts_cached(_version: int = 0):
+def load_contacts_cached(version: int = 0):
     return sheets_service().load_contacts_df()
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_history_rows_cached(kind: str, _version: int = 0):
+def load_history_rows_cached(kind: str, version: int = 0):
     return history_service().rows(kind)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_users_cached(_version: int = 0):
+def load_users_cached(version: int = 0):
     return load_users(sheets_service())
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_inventory_cached(version: int = 0):
+    return inventory_service().inventory_df()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_inventory_model_fields_cached(version: int = 0):
+    return inventory_service().model_fields_df()
 
 
 @st.cache_data(ttl=300, show_spinner=False)

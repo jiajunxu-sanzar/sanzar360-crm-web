@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.cache import clear_all_cache, load_contacts_cached, load_users_cached
+from app.cache import clear_all_cache, load_contacts_cached, load_users_cached, sheets_service
 from app.navigation import (
     ACCIONES_PAGE,
     PAGES_REQUIRING_CONTACTS,
@@ -15,10 +15,10 @@ from app.navigation import (
     unavailable_pages_for_role,
 )
 from app.telemetry import timed
-from app.state import init_state
+from app.state import init_state, pop_contacts_df_override
 from config.settings import CONFIG
 from models.contact import empty_contacts_dataframe
-from pages import actions_dashboard, alarms, asset_search, contacts, dashboard, email, invoices, map, pricing, purchase_orders, vacaciones, users
+from pages import actions_dashboard, alarms, asset_search, contacts, dashboard, email, inventory, invoices, map, pricing, purchase_orders, vacaciones, users
 from ui.theme import apply_theme
 
 
@@ -87,7 +87,7 @@ with st.sidebar:
                 key="_login_user_select",
             )
             password_input = st.text_input("Contraseña", type="password", key="_login_password_input")
-            submit_login = st.form_submit_button("Entrar", use_container_width=True)
+            submit_login = st.form_submit_button("Entrar", width="stretch")
 
         if submit_login:
             candidate = user_by_id.get(login_user_select)
@@ -145,7 +145,7 @@ with st.sidebar:
     if page != "Email":
         st.session_state.pop("_email_portal_unlocked_uid", None)
 
-    if st.button("Recargar datos", use_container_width=True):
+    if st.button("Recargar datos", width="stretch"):
         keep = {
             "_authenticated_user_id": str(st.session_state.get("_authenticated_user_id", "")),
             "auth_ok": bool(st.session_state.get("auth_ok", False)),
@@ -159,7 +159,7 @@ with st.sidebar:
         clear_all_cache()
         st.rerun()
 
-    if st.button("Cerrar sesión", use_container_width=True, type="secondary"):
+    if st.button("Cerrar sesión", width="stretch", type="secondary"):
         auth.logout()
         st.rerun()
 
@@ -171,7 +171,21 @@ if page in PAGES_REQUIRING_CONTACTS:
     try:
         with st.spinner("Cargando contactos…"):
             with timed("load_contacts_df", page=page):
-                contacts_df = load_contacts_cached(st.session_state.get("contacts_cache_version", 0))
+                override_df = pop_contacts_df_override()
+                if isinstance(override_df, pd.DataFrame):
+                    contacts_df = override_df
+                else:
+                    contacts_df = load_contacts_cached(st.session_state.get("contacts_cache_version", 0))
+                selected_contact_id = str(st.session_state.get("selected_contact_id", "") or "").strip()
+                if selected_contact_id and "contact_id" in contacts_df.columns:
+                    has_selected = not contacts_df[
+                        contacts_df["contact_id"].astype(str).str.strip() == selected_contact_id
+                    ].empty
+                    if not has_selected and not bool(st.session_state.get("_contacts_forced_reload_once", False)):
+                        st.session_state["_contacts_forced_reload_once"] = True
+                        contacts_df = sheets_service().load_contacts_df()
+                    else:
+                        st.session_state["_contacts_forced_reload_once"] = False
     except Exception as exc:
         st.error(f"No se pudieron cargar contactos: {exc}")
         st.stop()
@@ -204,6 +218,8 @@ elif page == "Mapa":
     map.render(contacts_df)
 elif page == "Email":
     email.render(contacts_df)
+elif page == "Inventario":
+    inventory.render(contacts_df)
 elif page == "Purchase Orders":
     purchase_orders.render(contacts_df)
 elif page == "Facturas":

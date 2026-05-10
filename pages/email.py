@@ -16,7 +16,7 @@ from app import auth
 from app.cache import sheets_service, load_users_cached
 from app.navigation import ROLE_SALES, normalize_role
 from app.smtp_profiles import SmtpResolved, resolve_smtp_detail
-from app.state import bump_contacts_cache
+from app.state import bump_contacts_cache, set_contacts_df_override
 from config.settings import (
     CONTACT_ESTADO_OPCIONES,
     PERSONA_COMERCIAL_OPCIONES,
@@ -75,7 +75,7 @@ def _render_filter_bar(df: pd.DataFrame) -> None:
         label_visibility="collapsed",
         placeholder="Nombre, correo, municipio, provincia...",
     )
-    if col_toggle.button("⏬", key="email_toggle_filters", use_container_width=True, help="Filtros"):
+    if col_toggle.button("⏬", key="email_toggle_filters", width="stretch", help="Filtros"):
         st.session_state[_KEY_FILTERS_OPEN] = not st.session_state[_KEY_FILTERS_OPEN]
         st.rerun()
 
@@ -148,10 +148,10 @@ def _render_contact_table(filtered: pd.DataFrame) -> None:
 
     # --- Select-all / deselect-all ---
     ca, cb = st.columns(2, gap="small")
-    if ca.button("Seleccionar todos", use_container_width=True, key="email_select_all"):
+    if ca.button("Seleccionar todos", width="stretch", key="email_select_all"):
         st.session_state[_KEY_SELECTED] = set(ids_with)
         st.rerun()
-    if cb.button("Deseleccionar todos", use_container_width=True, key="email_deselect_all"):
+    if cb.button("Deseleccionar todos", width="stretch", key="email_deselect_all"):
         st.session_state[_KEY_SELECTED] = set()
         st.rerun()
 
@@ -161,7 +161,7 @@ def _render_contact_table(filtered: pd.DataFrame) -> None:
     else:
         event = st.dataframe(
             _build_display_df(df_with),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=min(400, 36 + len(df_with) * 35),
             key="email_contact_table",
@@ -201,7 +201,7 @@ def _render_contact_table(filtered: pd.DataFrame) -> None:
         })
         st.dataframe(
             styled,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=min(220, 36 + len(df_without) * 35),
         )
@@ -263,7 +263,7 @@ def _render_template_editor(
     st.markdown("---")
     n = len(selected_ids)
     label = f"Enviar emails ({n})" if n else "Enviar emails"
-    if st.button(label, disabled=(bool(invalid) or n == 0), type="primary", use_container_width=True):
+    if st.button(label, disabled=(bool(invalid) or n == 0), type="primary", width="stretch"):
         with st.spinner("Enviando emails y actualizando seguimiento…"):
             _do_send(contacts, df_raw, selected_ids, subject, body, smtp_detail)
 
@@ -364,7 +364,7 @@ def _do_send(
         contact_vals = matches.iloc[0].fillna("").astype(str).to_dict()
         contact_vals.update(patch)
         try:
-            updated_df = save_contact_by_id(
+            updated_df, _verify = save_contact_by_id(
                 updated_df,
                 row_idx=row_idx,
                 contact_id=cid,
@@ -376,6 +376,7 @@ def _do_send(
             seg_errors.append(f"{cid}: {exc}")
 
     bump_contacts_cache()
+    set_contacts_df_override(updated_df)
     if ok:
         st.success(f"Seguimiento comercial actualizado en {ok} contacto(s).")
         actor = _email_actor_name()
@@ -419,7 +420,7 @@ def _render_email_password_gate() -> bool:
     )
     with st.form("email_portal_password", clear_on_submit=False):
         pw = st.text_input("Contraseña de Usuarios CRM", type="password", key="_email_portal_pw_input")
-        submitted = st.form_submit_button("Desbloquear envío de emails", use_container_width=True)
+        submitted = st.form_submit_button("Desbloquear envío de emails", width="stretch")
     if submitted:
         if pw == me.password:
             st.session_state[_EMAIL_PORTAL_UID_KEY] = uid

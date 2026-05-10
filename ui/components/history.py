@@ -81,7 +81,7 @@ def render_history_table(
         if selectable:
             event = st.dataframe(
                 df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
                 height=300,
                 key=tbl_key,

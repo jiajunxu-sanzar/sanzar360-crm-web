@@ -365,6 +365,14 @@ def parse_sensor_assets(sensor_serial_number: str) -> list[tuple[SensorAsset, st
                         (SensorAsset("sim", parts[2]), gateway_token),
                     ]
                 )
+            elif len(parts) == 2:
+                gateway_token = f"ug67-{parts[1]}"
+                current_gateway = gateway_token
+                assets.append((SensorAsset("ug67", parts[1]), gateway_token))
+        elif lower.startswith("solenoide-"):
+            serial = item.split("-", 1)[1].strip()
+            assets.append((SensorAsset("solenoide", serial), item))
+            current_gateway = ""
         elif "-" in item:
             asset_type, serial = item.split("-", 1)
             assets.append((SensorAsset(asset_type.lower(), serial), current_gateway or item))
@@ -628,6 +636,27 @@ class HistoryService:
         if end <= today + timedelta(days=31):
             return "caduca pronto"
         return "activa"
+
+    def open_asset_serials(self, exclude_historial_id: str = "") -> set[str]:
+        """Return lowercase serial numbers of all assets in open sensor history rows.
+
+        Open = ``estado_cierre_sensor`` is not "cerrado".
+        Pass ``exclude_historial_id`` to skip the row being edited (avoids
+        marking the current record's assets as unavailable).
+        """
+        open_serials: set[str] = set()
+        for row in self.rows("sensores"):
+            if exclude_historial_id and row.get("historial_sensor_id", "") == exclude_historial_id:
+                continue
+            estado = str(row.get("estado_cierre_sensor", "")).strip().lower()
+            if estado == "cerrado":
+                continue
+            ssn = str(row.get("sensor_serial_number", "")).strip()
+            if not ssn:
+                continue
+            for asset, _ in parse_sensor_assets(ssn):
+                open_serials.add(asset.serial.lower())
+        return open_serials
 
     def has_open_incidents(self, contact_id: str) -> bool:
         for row in self.rows_for_contact("incidencias", contact_id):

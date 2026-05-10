@@ -77,7 +77,7 @@ def render_work_inbox_row(item: WorkAlarmItem, *, row_index: int, category_label
         open_clicked = st.button(
             "Abrir ficha",
             key=f"alarm_inbox_open_{cat_slug}_{row_index}_{cid_safe}",
-            use_container_width=True,
+            width="stretch",
             type="primary",
         )
 

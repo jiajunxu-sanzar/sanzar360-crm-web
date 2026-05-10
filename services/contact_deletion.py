@@ -26,7 +26,10 @@ def delete_contact_and_related_data(sheets: SheetsService, contact_id: str) -> N
         raise ValueError("contact_id vacío")
 
     if not sheets.contact_id_exists_on_contacts_sheet(cid):
-        raise ValueError(f"No existe el contacto {cid!r} en la hoja de contactos.")
+        raise ValueError(
+            f"No existe el contacto {cid!r} en la hoja de contactos "
+            "(revisa espacios/formato de contact_id y que la columna sea 'contact_id')."
+        )
 
     for spec in HISTORY_SPECS.values():
         sheets.delete_rows_where_column_equals(spec.worksheet_name, "contact_id", cid)
@@ -39,6 +42,9 @@ def delete_contact_and_related_data(sheets: SheetsService, contact_id: str) -> N
         CONFIG.google_worksheet_name, "contact_id", cid
     )
     if removed < 1:
-        raise RuntimeError("No se pudo eliminar la fila del contacto (revisa la columna contact_id).")
+        raise RuntimeError(
+            "No se pudo eliminar la fila del contacto "
+            "(revisa que la columna se llame 'contact_id' y que el id no tenga espacios)."
+        )
 
     history_service().invalidate_all()

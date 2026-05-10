@@ -51,6 +51,8 @@ def build_contacts_map(
             continue
         lat, lon = coords
         points.append((lat, lon))
+        is_lost = str(row.get("estado", "")).strip().lower() == "perdido"
+        marker_color = "#dc2626" if is_lost else "#2f855a"
         popup = (
             f"<b>{row.get('nombre', '')}</b><br>"
             f"{row.get('municipio', '')} {row.get('provincia', '')}<br>"
@@ -61,8 +63,9 @@ def build_contacts_map(
         folium.CircleMarker(
             location=[lat, lon],
             radius=7,
-            color="#2f855a",
+            color=marker_color,
             fill=True,
+            fill_color=marker_color,
             fill_opacity=0.75,
             popup=folium.Popup(popup, max_width=320),
             tooltip=marker_token,

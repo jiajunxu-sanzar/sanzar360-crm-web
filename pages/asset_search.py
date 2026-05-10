@@ -46,7 +46,7 @@ def render(_: pd.DataFrame) -> None:
 
         event = st.dataframe(
             result_df,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=420,
             key="asset_search_table",
@@ -69,7 +69,7 @@ def render(_: pd.DataFrame) -> None:
                 f"Abrir ficha de {label}",
                 key="asset_search_open_contact",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
             ):
                 select_contact(contact_id)
                 st.rerun()
