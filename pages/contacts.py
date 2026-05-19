@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
+from app.navigation import page_menu_title
 from app.cache import clear_all_cache, history_service, inventory_service, load_inventory_cached, load_users_cached, sheets_service
 from app.state import (
     bump_contacts_cache,
@@ -259,7 +260,7 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
             _clear_contact_overlay_state(keep_contact_id=current_selected)
             st.session_state["_contacts_last_selected_id"] = current_selected
 
-        st.title("Contactos")
+        st.title(page_menu_title("Contactos"))
         if st.session_state.get(CONTACTS_SAVE_SUCCESS_KEY):
             st.success(str(st.session_state.pop(CONTACTS_SAVE_SUCCESS_KEY)))
         if st.session_state.get(CONTACTS_DELETE_SUCCESS_KEY):
@@ -1061,13 +1062,23 @@ def _extract_solenoide_sn(serial_value: str) -> str:
     return parts[1].strip() if len(parts) == 2 else ""
 
 
+def _extract_sim_sn(serial_value: str) -> str:
+    raw = (serial_value or "").strip()
+    if not raw.lower().startswith("sim-"):
+        return ""
+    parts = raw.split("-", 1)
+    return parts[1].strip() if len(parts) == 2 else ""
+
+
 def _infer_sensor_root_type(serial_value: str) -> str:
-    """Infer root asset type from existing sensor_serial_number. Returns 'uc501'|'ug67'|'solenoide'."""
+    """Infer root asset type from existing sensor_serial_number."""
     first = (serial_value or "").strip().split(",")[0].strip().lower()
     if first.startswith("ug67-"):
         return "ug67"
     if first.startswith("solenoide-"):
         return "solenoide"
+    if first.startswith("sim-"):
+        return "sim"
     return "uc501"
 
 
@@ -1087,6 +1098,10 @@ def _collect_all_serials_from_sensor_sn(sensor_serial_number: str) -> list[str]:
             elif len(parts) == 2:
                 serials.append(parts[1])
         elif lower.startswith("solenoide-"):
+            parts = item.split("-", 1)
+            if len(parts) == 2:
+                serials.append(parts[1])
+        elif lower.startswith("sim-"):
             parts = item.split("-", 1)
             if len(parts) == 2:
                 serials.append(parts[1])
@@ -1459,8 +1474,18 @@ def _submit_history_form(
         return False
 
 
+def _sim_eid_from_inv_df(inv_df: pd.DataFrame, inventory_id: str) -> str:
+    if inv_df.empty or not (inventory_id or "").strip():
+        return ""
+    iid = inventory_id.strip()
+    m = inv_df[inv_df["inventory_id"].astype(str).str.strip() == iid]
+    if m.empty:
+        return ""
+    return str(m.iloc[0].get("sim_eid_number", "") or "").strip()
+
+
 def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hist_id: str = "") -> str:
-    """Guided picker for sensor_serial_number: UC501, UG67, or Solenoide.
+    """Guided picker for sensor_serial_number: UC501, UG67, Solenoide or SIM individual.
 
     Must be rendered OUTSIDE any st.form so that widget interactions trigger
     reruns and the association panel updates immediately.
@@ -1498,14 +1523,18 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         key=is_uc501_key,
     )
 
-    # Step 2: if not UC501, choose between UG67 and solenoide
+    # Step 2: if not UC501, choose between UG67, solenoide or SIM individual
     if is_uc501:
         root_type = "uc501"
     else:
         root_type = st.radio(
             "Tipo de activo",
-            options=["ug67", "solenoide"],
-            format_func=lambda x: "UG67 (gateway)" if x == "ug67" else "Electroválvula solenoide",
+            options=["ug67", "solenoide", "sim"],
+            format_func=lambda x: {
+                "ug67": "UG67 (gateway)",
+                "solenoide": "Electroválvula solenoide",
+                "sim": "SIM individual",
+            }[x],
             horizontal=True,
             key=non_uc501_key,
         )
@@ -1550,7 +1579,11 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
                         else:
                             st.warning("Sin sonda asociada en inventario. Ve a Inventario para vincularla.")
                         if assoc.sim:
-                            st.caption(f"📶 SIM: **{assoc.sim.serial_number}**")
+                            eid = _sim_eid_from_inv_df(inv_df, assoc.sim.inventory_id)
+                            if eid:
+                                st.caption(f"📶 SIM: **{assoc.sim.serial_number}** · EID: **{eid}**")
+                            else:
+                                st.caption(f"📶 SIM: **{assoc.sim.serial_number}**")
                         else:
                             st.warning("Sin SIM asociada en inventario. Ve a Inventario para vincularla.")
                     probe_sn = assoc.probe.serial_number if assoc.probe else ""
@@ -1601,7 +1634,11 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
                     with st.container(border=True):
                         st.caption("**Asociaciones desde Inventario (solo lectura)**")
                         if assoc.sim:
-                            st.caption(f"📶 SIM: **{assoc.sim.serial_number}**")
+                            eid = _sim_eid_from_inv_df(inv_df, assoc.sim.inventory_id)
+                            if eid:
+                                st.caption(f"📶 SIM: **{assoc.sim.serial_number}** · EID: **{eid}**")
+                            else:
+                                st.caption(f"📶 SIM: **{assoc.sim.serial_number}**")
                         else:
                             st.warning("Sin SIM asociada en inventario. Ve a Inventario para vincularla.")
                         if assoc.sensors:
@@ -1647,6 +1684,41 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
             sol_sn = st.selectbox("Solenoide disponibles (SN)", sol_labels, index=sol_idx, key=sol_sn_key)
             if sol_sn:
                 compound = f"solenoide-{sol_sn}"
+
+    # ── SIM individual branch ────────────────────────────────────────────────
+    elif root_type == "sim":
+        existing_sim = _extract_sim_sn(value)
+        sim_sn_key = f"{prefix}_sensor_sim_sn"
+        if sim_sn_key not in st.session_state:
+            st.session_state[sim_sn_key] = existing_sim
+
+        options_sim = inv_svc.available_root_assets_for_history(("sim",), open_serials=open_serials, inv_df=inv_df)
+        selected_sn = st.session_state.get(sim_sn_key, "")
+        sim_labels = [""]
+        sim_serials_set = {o.serial_number for o in options_sim}
+        for o in options_sim:
+            sim_labels.append(o.serial_number)
+        if selected_sn and selected_sn not in sim_serials_set:
+            sim_labels.append(selected_sn)
+
+        if not options_sim and not selected_sn:
+            st.info("Aún no hay ninguna SIM disponible en inventario.")
+        else:
+            sim_idx = sim_labels.index(selected_sn) if selected_sn in sim_labels else 0
+            sim_sn = st.selectbox("SIM disponibles (SN)", sim_labels, index=sim_idx, key=sim_sn_key)
+            if sim_sn:
+                opt = next((o for o in options_sim if o.serial_number == sim_sn), None)
+                if opt is None:
+                    all_opts = inv_svc.asset_options_by_models(("sim",), inv_df=inv_df)
+                    opt = next((o for o in all_opts if o.serial_number == sim_sn), None)
+                with st.container(border=True):
+                    st.caption("**SIM seleccionada**")
+                    eid = _sim_eid_from_inv_df(inv_df, opt.inventory_id) if opt else ""
+                    if eid:
+                        st.caption(f"📶 SN: **{sim_sn}** · EID: **{eid}**")
+                    else:
+                        st.caption(f"📶 SN: **{sim_sn}**")
+                compound = f"sim-{sim_sn}"
 
     st.session_state[key] = compound
     return compound
@@ -1713,7 +1785,7 @@ def _validate_history_values(kind: str, values: dict[str, str], prefix: str = ""
                         f"El UG67 **{ug67_sn}** no tiene SIM configurada en Inventario. "
                         "Ve a Inventario, edita ese UG67 y vincula la SIM antes de guardar."
                     )
-            return "Debes seleccionar un sensor (UC501, UG67 o Electroválvula solenoide) antes de guardar."
+            return "Debes seleccionar un activo (UC501, UG67, Electroválvula solenoide o SIM individual) antes de guardar."
         if not is_valid_sensor_serial_number(ssn):
             return "El sensor_serial_number no tiene un formato válido.\n\n" + SENSOR_SERIAL_NUMBER_FORMAT_HELP
         if values.get("red") == "otro" and not values.get("red_otro", "").strip():

@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 
-def render_dataframe(df: pd.DataFrame, *, columns: list[str] | None = None, height: int = 360) -> None:
+def render_dataframe(df: pd.DataFrame, *, columns: list[str] | None = None, height: int = 420) -> None:
     if df.empty:
         st.info("No hay datos para mostrar.")
         return
@@ -20,7 +20,7 @@ def render_selectable_dataframe(
     *,
     columns: list[str] | None = None,
     key: str,
-    height: int = 360,
+    height: int = 420,
 ) -> int | None:
     """Renderiza una tabla Streamlit y devuelve la posición seleccionada en ``df``."""
     if df.empty:

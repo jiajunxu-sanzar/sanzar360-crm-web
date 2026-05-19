@@ -4,18 +4,25 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.cache import clear_all_cache, load_contacts_cached, load_users_cached, sheets_service
+from app.cache import load_contacts_cached, load_users_cached, sheets_service
 from app.navigation import (
     ACCIONES_PAGE,
     PAGES_REQUIRING_CONTACTS,
     ROLE_ADMIN,
     ROLES_WITH_ACCIONES_PAGE,
     normalize_role,
+    page_menu_title,
     pages_for_role,
     unavailable_pages_for_role,
 )
+from app.remote_sync import check_remote_changes, reset_remote_sync_state
 from app.telemetry import timed
-from app.state import init_state, pop_contacts_df_override
+from app.state import (
+    hard_refresh_preserving_auth,
+    init_state,
+    pop_contacts_df_override,
+    soft_reload_data,
+)
 from config.settings import CONFIG
 from models.contact import empty_contacts_dataframe
 from pages import (
@@ -29,7 +36,7 @@ from pages import (
     invoices,
     map,
     pricing,
-    purchase_orders,
+    compras,
     referidos,
     vacaciones,
     users,
@@ -137,14 +144,19 @@ with st.sidebar:
     if "nav_page" not in st.session_state or st.session_state.get("nav_page") not in available_pages:
         st.session_state["nav_page"] = active_page
 
-    page = st.radio("Navegación", available_pages, key="nav_page")
+    page = st.radio(
+        "Navegación",
+        available_pages,
+        key="nav_page",
+        format_func=page_menu_title,
+    )
     if blocked_pages:
         st.markdown(
             "<p class='sanzar-nav-blocked-label'>No disponible para tu rol</p>",
             unsafe_allow_html=True,
         )
         blocked_html = "".join(
-            f"<div class='sanzar-nav-blocked-item'>{p}</div>"
+            f"<div class='sanzar-nav-blocked-item'>{page_menu_title(p)}</div>"
             for p in blocked_pages
         )
         st.markdown(blocked_html, unsafe_allow_html=True)
@@ -159,18 +171,27 @@ with st.sidebar:
     if page != "Email":
         st.session_state.pop("_email_portal_unlocked_uid", None)
 
-    if st.button("Recargar datos", width="stretch"):
-        keep = {
-            "_authenticated_user_id": str(st.session_state.get("_authenticated_user_id", "")),
-            "auth_ok": bool(st.session_state.get("auth_ok", False)),
-            "login_error": "",
-        }
+    reload_col, reset_col = st.columns(2, gap="small")
+    if reload_col.button(
+        "🔄 Recargar datos",
+        width="stretch",
+        help="Vuelve a leer desde Google Sheets sin perder filtros ni selección.",
+    ):
+        soft_reload_data()
+        reset_remote_sync_state()
+        st.toast("Datos recargados", icon="✅")
+        st.rerun()
+
+    if reset_col.button(
+        "🧹 Reiniciar sesión",
+        width="stretch",
+        type="secondary",
+        help="Limpia toda la sesión (filtros, selección, diálogos) manteniendo el login.",
+    ):
         _close_all_overlays()
-        for key in list(st.session_state.keys()):
-            st.session_state.pop(key, None)
-        for key, value in keep.items():
-            st.session_state[key] = value
-        clear_all_cache()
+        hard_refresh_preserving_auth()
+        reset_remote_sync_state()
+        st.toast("Sesión reiniciada", icon="🧹")
         st.rerun()
 
     if st.button("Cerrar sesión", width="stretch", type="secondary"):
@@ -180,26 +201,55 @@ with st.sidebar:
     if not CONFIG.google_sheet_id:
         st.warning("Falta GOOGLE_SHEET_ID.")
 
+if check_remote_changes():
+    st.toast("Datos actualizados desde Excel", icon="🔄")
+
+_CONTACTS_SEEN_VERSION_KEY = "_contacts_seen_version"
+
+
+def _load_contacts_for_page(current_page: str) -> pd.DataFrame:
+    """Devuelve el DataFrame de contactos para la página actual.
+
+    Sólo muestra el spinner si la lectura va a tocar Google Sheets (cache miss
+    o invalidación). En cache hit la operación es instantánea y mostrar un
+    spinner produce un parpadeo innecesario que se percibe como lentitud.
+    """
+    override_df = pop_contacts_df_override()
+    if isinstance(override_df, pd.DataFrame):
+        return override_df
+
+    current_version = int(st.session_state.get("contacts_cache_version", 0))
+    last_seen = st.session_state.get(_CONTACTS_SEEN_VERSION_KEY)
+    is_cache_miss = last_seen != current_version
+
+    def _fetch() -> pd.DataFrame:
+        with timed("load_contacts_df", page=current_page, cache_miss=is_cache_miss):
+            return load_contacts_cached(current_version)
+
+    if is_cache_miss:
+        with st.spinner("Cargando contactos…"):
+            df = _fetch()
+    else:
+        df = _fetch()
+    st.session_state[_CONTACTS_SEEN_VERSION_KEY] = current_version
+    return df
+
+
 contacts_df: pd.DataFrame
 if page in PAGES_REQUIRING_CONTACTS:
     try:
-        with st.spinner("Cargando contactos…"):
-            with timed("load_contacts_df", page=page):
-                override_df = pop_contacts_df_override()
-                if isinstance(override_df, pd.DataFrame):
-                    contacts_df = override_df
-                else:
-                    contacts_df = load_contacts_cached(st.session_state.get("contacts_cache_version", 0))
-                selected_contact_id = str(st.session_state.get("selected_contact_id", "") or "").strip()
-                if selected_contact_id and "contact_id" in contacts_df.columns:
-                    has_selected = not contacts_df[
-                        contacts_df["contact_id"].astype(str).str.strip() == selected_contact_id
-                    ].empty
-                    if not has_selected and not bool(st.session_state.get("_contacts_forced_reload_once", False)):
-                        st.session_state["_contacts_forced_reload_once"] = True
-                        contacts_df = sheets_service().load_contacts_df()
-                    else:
-                        st.session_state["_contacts_forced_reload_once"] = False
+        contacts_df = _load_contacts_for_page(page)
+        selected_contact_id = str(st.session_state.get("selected_contact_id", "") or "").strip()
+        if selected_contact_id and "contact_id" in contacts_df.columns:
+            has_selected = not contacts_df[
+                contacts_df["contact_id"].astype(str).str.strip() == selected_contact_id
+            ].empty
+            if not has_selected and not bool(st.session_state.get("_contacts_forced_reload_once", False)):
+                st.session_state["_contacts_forced_reload_once"] = True
+                with st.spinner("Sincronizando contactos…"):
+                    contacts_df = sheets_service().load_contacts_df()
+            else:
+                st.session_state["_contacts_forced_reload_once"] = False
     except Exception as exc:
         st.error(f"No se pudieron cargar contactos: {exc}")
         st.stop()
@@ -234,8 +284,8 @@ elif page == "Email":
     email.render(contacts_df)
 elif page == "Inventario":
     inventory.render(contacts_df)
-elif page == "Purchase Orders":
-    purchase_orders.render(contacts_df)
+elif page == "Compras":
+    compras.render(contacts_df)
 elif page == "Facturas":
     invoices.render(contacts_df)
 elif page == "Pricing":

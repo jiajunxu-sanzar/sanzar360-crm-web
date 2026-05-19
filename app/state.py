@@ -1,11 +1,32 @@
 from __future__ import annotations
 
+from typing import Final
+
 import streamlit as st
 import pandas as pd
 
 CONTACTS_DF_OVERRIDE_KEY = "_contacts_df_override"
 CONTACTS_PENDING_CREATED_ID_KEY = "contacts.pending_created_contact_id"
 CONTACTS_WRITE_STATUS_KEY = "contacts.write_status"
+
+# ---------------------------------------------------------------------------
+# Cache version keys
+#
+# Every data loader that depends on Google Sheets reads a counter from
+# session_state (e.g. ``load_contacts_cached(version)``). Bumping the counter
+# invalidates Streamlit's ``@st.cache_data`` entry for that loader on the next
+# call. Keeping the list centralized lets us invalidate all data caches at
+# once when the remote spreadsheet changes, without spreading the literal
+# strings around the codebase.
+# ---------------------------------------------------------------------------
+DATA_CACHE_VERSION_KEYS: Final[tuple[str, ...]] = (
+    "contacts_cache_version",
+    "history_cache_version",
+    "inventory_cache_version",
+    "compras_cache_version",
+    "users_cache_version",
+    "vacations_cache_version",
+)
 
 
 DEFAULT_STATE = {
@@ -15,6 +36,7 @@ DEFAULT_STATE = {
     "contacts_cache_version": 0,
     "history_cache_version": 0,
     "inventory_cache_version": 0,
+    "compras_cache_version": 0,
     "alarm_category": "Embudo",
     "asset_search_query": "",
     # Auth keys — managed exclusively via app.auth, never as widget keys.
@@ -52,6 +74,34 @@ def bump_contacts_cache() -> None:
 
 def bump_inventory_cache() -> None:
     st.session_state.inventory_cache_version = int(st.session_state.get("inventory_cache_version", 0)) + 1
+
+
+def bump_compras_cache() -> None:
+    st.session_state.compras_cache_version = int(st.session_state.get("compras_cache_version", 0)) + 1
+
+
+def bump_all_data_caches() -> None:
+    """Increment every data-cache version key in :data:`DATA_CACHE_VERSION_KEYS`.
+
+    Use this when *all* sheets-backed data should be considered stale (e.g.
+    after detecting a remote change in the spreadsheet or after the user asks
+    for a soft reload).
+    """
+    for key in DATA_CACHE_VERSION_KEYS:
+        st.session_state[key] = int(st.session_state.get(key, 0)) + 1
+
+
+def soft_reload_data() -> None:
+    """Clear data caches without touching UI state.
+
+    Unlike :func:`hard_refresh_preserving_auth`, this preserves filters,
+    selections, active page, dialog flags and any other session keys: it only
+    invalidates the cached data layer so the next read goes back to Sheets.
+    """
+    from app.cache import clear_all_cache
+
+    clear_all_cache()
+    bump_all_data_caches()
 
 
 def set_contacts_df_override(df: object) -> None:

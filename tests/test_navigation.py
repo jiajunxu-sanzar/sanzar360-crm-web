@@ -3,6 +3,11 @@ import pytest
 from app import navigation
 
 
+def test_page_menu_title_matches_menu_labels() -> None:
+    for p in navigation.PAGES:
+        assert navigation.page_menu_title(p) == navigation.PAGE_MENU_LABELS[p]
+
+
 def test_pages_subset_hierarchy() -> None:
     admin = frozenset(navigation.pages_for_role("admin"))
     agro = frozenset(navigation.pages_for_role("agro_team"))
@@ -45,6 +50,13 @@ def test_agro_team_does_not_see_users_tab() -> None:
 def test_unknown_role_maps_to_minimal_employee_tabs() -> None:
     pages = navigation.pages_for_role("soporte_tecnico_nuevo")
     assert pages == navigation.EMPLOYEE_ALLOWED_PAGES
+    assert "Compras" in pages
+
+
+def test_employee_sees_compras_not_purchase_orders_legacy_name() -> None:
+    emp = navigation.pages_for_role(navigation.ROLE_EMPLOYEE)
+    assert "Compras" in emp
+    assert "Purchase Orders" not in navigation.PAGES
 
 
 def test_referidos_visible_to_commercial_roles_not_employee() -> None:

@@ -72,6 +72,7 @@ _UG67_GATEWAY_RE = re.compile(r"^ug67-[^,\s-]+-[^,\s-]+$", re.IGNORECASE)
 _UG67_GATEWAY_NO_SIM_RE = re.compile(r"^ug67-[^,\s-]+$", re.IGNORECASE)
 _UG67_DEVICE_RE = re.compile(r"^(em500|em300|uc512)-[^,\s-]+$", re.IGNORECASE)
 _SOLENOIDE_RE = re.compile(r"^solenoide-[^,\s]+$", re.IGNORECASE)
+_SIM_STANDALONE_RE = re.compile(r"^sim-[^,\s]+$", re.IGNORECASE)
 
 SENSOR_SERIAL_NUMBER_FORMAT_HELP = (
     "Formatos permitidos:\n"
@@ -79,7 +80,8 @@ SENSOR_SERIAL_NUMBER_FORMAT_HELP = (
     "- UG67 con SIM: ug67-serial_gateway-sim, em500-serial, ... Ejemplo: ug67-UG001-SIM900, em500-EM50001\n"
     "- UG67 sin SIM: ug67-serial_gateway, em500-serial, ... Ejemplo: ug67-UG001, em500-EM50001\n"
     "- Nodo suelto: em500-EM50001, em300-EM30001 o uc512-UCDEM00341\n"
-    "- Electroválvula solenoide: solenoide-SOL001"
+    "- Electroválvula solenoide: solenoide-SOL001\n"
+    "- SIM individual: sim-SERIAL. Ejemplo: sim-SIM001"
 )
 
 
@@ -155,6 +157,12 @@ def is_valid_sensor_serial_number(value: str) -> bool:
             expecting_ug67_devices = False
             ug67_devices_count = 0
             continue
+        if _SIM_STANDALONE_RE.match(item):
+            if expecting_ug67_devices and ug67_devices_count == 0:
+                return False
+            expecting_ug67_devices = False
+            ug67_devices_count = 0
+            continue
         return False
     return not (expecting_ug67_devices and ug67_devices_count == 0)
 
@@ -189,6 +197,11 @@ def sensor_serial_number_summary_lines(value: str) -> list[str]:
             parts_sol = item.split("-", 1)
             sol_serial = parts_sol[1] if len(parts_sol) == 2 else item
             out.append(f"Solenoide | SN: {sol_serial}")
+            current_ug67 = None
+        elif low.startswith("sim-"):
+            parts_sim = item.split("-", 1)
+            sim_serial = parts_sim[1] if len(parts_sim) == 2 else item
+            out.append(f"SIM individual | SN: {sim_serial}")
             current_ug67 = None
         elif current_ug67 is not None and "-" in item:
             asset_type, serial = item.split("-", 1)

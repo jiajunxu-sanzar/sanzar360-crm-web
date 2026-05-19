@@ -7,6 +7,7 @@ import plotly.express as px
 import streamlit as st
 
 from app.cache import load_activity_log_cached
+from app.navigation import page_menu_title
 from app.telemetry import timed
 from services.actions_dashboard_stats import (
     COUNTED_ACTION_TYPES,
@@ -65,7 +66,7 @@ def _weekly_person_modal(persona: str, breakdown: pd.DataFrame) -> None:
 
 
 def render() -> None:
-    st.title("Acciones")
+    st.title(page_menu_title("Acciones"))
     st.caption(
         "Acciones contabilizadas desde el log de Google Sheets: tipos "
         + ", ".join(f"**{t}**" for t in sorted(COUNTED_ACTION_TYPES))
@@ -73,7 +74,7 @@ def render() -> None:
     )
 
     with timed("actions_dashboard.render"):
-        df = load_activity_log_cached()
+        df = load_activity_log_cached(st.session_state.get("history_cache_version", 0))
         summary = summarize_actions_current_week(df)
 
     ws, we = summary.week_start, summary.week_end

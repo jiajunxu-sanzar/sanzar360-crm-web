@@ -59,20 +59,25 @@ def generate_purchase_order_pdf(data: PurchaseOrderData) -> bytes:
     width, height = A4
     x0 = 15 * mm
     x1 = width - 15 * mm
-    y = height - 16 * mm
+    header_h = 26 * mm
+    y = height - 10 * mm
 
     pdf.setFillColor(light_green)
-    pdf.rect(x0, y - 16 * mm, x1 - x0, 16 * mm, fill=1, stroke=0)
+    pdf.rect(x0, y - header_h, x1 - x0, header_h, fill=1, stroke=0)
     logo_path = _resolve_logo_path()
     logo_drawn = False
+    logo_w = 0.0
     if logo_path is not None:
         try:
+            logo_w, logo_h = _logo_contain_size(logo_path, max_width=24 * mm, max_height=22 * mm)
+            logo_x = x1 - logo_w - 3 * mm
+            logo_y = y - header_h + (header_h - logo_h) / 2
             pdf.drawImage(
                 str(logo_path),
-                x1 - 34 * mm,
-                y - 13.5 * mm,
-                width=28 * mm,
-                height=12 * mm,
+                logo_x,
+                logo_y,
+                width=logo_w,
+                height=logo_h,
                 preserveAspectRatio=True,
                 mask="auto",
             )
@@ -81,12 +86,12 @@ def generate_purchase_order_pdf(data: PurchaseOrderData) -> bytes:
             pass
     pdf.setFillColor(dark_green)
     pdf.setFont("Helvetica-Bold", 18)
-    pdf.drawString(x0 + 4 * mm, y - 9 * mm, "PURCHASE ORDER")
+    pdf.drawString(x0 + 4 * mm, y - header_h + 8 * mm, "PURCHASE ORDER")
     pdf.setFont("Helvetica-Bold", 10)
-    right_text_x = x1 - (38 * mm if logo_drawn else 4 * mm)
-    pdf.drawRightString(right_text_x, y - 6 * mm, f"DATE: {data.po_date}")
-    pdf.drawRightString(right_text_x, y - 11.5 * mm, f"PO#: {data.po_number}")
-    y -= 23 * mm
+    right_text_x = (x1 - logo_w - 6 * mm) if logo_drawn else (x1 - 4 * mm)
+    pdf.drawRightString(right_text_x, y - 8 * mm, f"DATE: {data.po_date}")
+    pdf.drawRightString(right_text_x, y - 13 * mm, f"PO#: {data.po_number}")
+    y -= header_h + 4 * mm
 
     pdf.setFillColor(black)
     pdf.setFont("Helvetica-Bold", 10)
@@ -103,7 +108,7 @@ def generate_purchase_order_pdf(data: PurchaseOrderData) -> bytes:
         y -= 4.5 * mm
         pdf.drawString(x0, y, line)
 
-    blocks_top_y = y
+    blocks_top_y = y - 8 * mm
     gap = 4 * mm
     block_w = (x1 - x0 - gap) / 2
     block_h = 34 * mm
@@ -288,11 +293,29 @@ def _minimal_pdf_bytes(data: PurchaseOrderData) -> bytes:
     return ("%PDF-1.4\n" + body + "\n%%EOF\n").encode("latin-1", errors="replace")
 
 
+def _logo_contain_size(path: Path, *, max_width: float, max_height: float) -> tuple[float, float]:
+    """Scale logo to fit inside max box preserving aspect ratio (no cropping)."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            iw, ih = im.size
+    except Exception:
+        return max_width, max_height
+    if iw <= 0 or ih <= 0:
+        return max_width, max_height
+    scale = min(max_width / iw, max_height / ih)
+    return iw * scale, ih * scale
+
+
 def _resolve_logo_path() -> Path | None:
     here = Path(__file__).resolve()
+    branding = here.parents[1] / "assets" / "branding"
     candidates = [
-        here.parents[1] / "assets" / "branding" / "sanzar_logo.png",  # sanzar-crm-web/assets/branding
-        here.parents[2] / "sanzar-crm" / "assets" / "branding" / "sanzar_logo.png",  # sibling project
+        branding / "SANZAR_LOGO VERDE.png",
+        branding / "sanzar_logo.png",
+        here.parents[2] / "sanzar-crm" / "assets" / "branding" / "SANZAR_LOGO VERDE.png",
+        here.parents[2] / "sanzar-crm" / "assets" / "branding" / "sanzar_logo.png",
     ]
     for path in candidates:
         if path.exists() and path.is_file():

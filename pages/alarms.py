@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import history_service
+from app.navigation import page_menu_title
 from app.state import select_contact
 from services.estado_stagnation_alarms import stagnation_alarms
 from services.history_service import HistoryService
@@ -370,7 +371,7 @@ def _campaigns_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[Work
 
 
 def render(contacts_df: pd.DataFrame) -> None:
-    st.title("Centro de alarmas")
+    st.title(page_menu_title("Centro de alarmas"))
     st.caption("Bandeja de trabajo: prioridad, plazos y siguiente acción sobre la ficha del contacto")
 
     try:

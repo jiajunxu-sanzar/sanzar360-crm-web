@@ -29,6 +29,7 @@ class AssociationChild:
     inventory_id: str
     model: str
     serial_number: str
+    sim_eid_number: str = ""
 
 
 @dataclass
@@ -93,11 +94,13 @@ def build_inventory_association_map(
         children: list[AssociationChild] = []
         if sim_id:
             sim_row = by_id.get(sim_id)
+            eid = str(sim_row.get("sim_eid_number", "") or "").strip() if sim_row else ""
             children.append(AssociationChild(
                 role="sim",
                 inventory_id=sim_id,
                 model=sim_row.get("model", "") if sim_row else "???",
                 serial_number=sim_row.get("serial_number", sim_id[:8]) if sim_row else sim_id[:8],
+                sim_eid_number=eid,
             ))
         if probe_id:
             probe_row = by_id.get(probe_id)
@@ -127,11 +130,13 @@ def build_inventory_association_map(
         children = []
         if sim_id:
             sim_row = by_id.get(sim_id)
+            eid = str(sim_row.get("sim_eid_number", "") or "").strip() if sim_row else ""
             children.append(AssociationChild(
                 role="sim",
                 inventory_id=sim_id,
                 model=sim_row.get("model", "") if sim_row else "???",
                 serial_number=sim_row.get("serial_number", sim_id[:8]) if sim_row else sim_id[:8],
+                sim_eid_number=eid,
             ))
         # sensors that declare this UG67 as their gateway
         for child_row in df.to_dict("records"):
@@ -295,7 +300,7 @@ def _group_matches_query(group: AssociationGroup, query: str) -> bool:
         return True
     candidates = [group.serial_number, group.model, group.inventory_id]
     for child in group.children:
-        candidates.extend([child.serial_number, child.model, child.inventory_id])
+        candidates.extend([child.serial_number, child.model, child.inventory_id, child.sim_eid_number])
     return any(q in c.lower() for c in candidates)
 
 
@@ -438,9 +443,13 @@ def render_sn_viewer_dialog(
                                 for c in conflicts
                             )
                             flag = " ⚠️" if child_conflict else ""
+                            eid_part = ""
+                            if child.role == "sim" and child.sim_eid_number:
+                                eid_part = f" · EID `{child.sim_eid_number}`"
                             st.markdown(
                                 f"&nbsp;&nbsp;{child_icon} **{child_label}** · "
                                 f"`{child.serial_number or child.inventory_id[:8]}`"
+                                f"{eid_part}"
                                 f" _(modelo: {child.model})_{flag}"
                             )
 

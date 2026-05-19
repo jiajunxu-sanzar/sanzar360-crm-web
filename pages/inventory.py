@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import history_service, inventory_service, load_inventory_cached, load_inventory_model_fields_cached
+from app.navigation import page_menu_title
 from app.state import bump_inventory_cache
 from config.settings import INVENTORY_HEADERS, INVENTORY_MODEL_FIELD_HEADERS
 from services.inventory_service import normalize_model_name
@@ -14,7 +15,7 @@ from ui.components.sn_association_viewer import render_sn_viewer_dialog
 
 DEFAULT_MODEL_FIELDS: dict[str, list[str]] = {
     "uc501": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "configured", "associated_sim_inventory_id", "associated_probe_inventory_id", "proforma_invoice_url", "payment_receipt_url"],
-    "sim": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "proforma_invoice_url", "payment_receipt_url"],
+    "sim": ["serial_number", "sim_eid_number", "brand", "supplier", "logistics_status", "location_type", "proforma_invoice_url", "payment_receipt_url"],
     "teros10": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "proforma_invoice_url", "payment_receipt_url"],
     "teros12": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "proforma_invoice_url", "payment_receipt_url"],
     "uc512": ["serial_number", "eui", "brand", "supplier", "logistics_status", "location_type", "configured", "proforma_invoice_url", "payment_receipt_url"],
@@ -25,6 +26,7 @@ DEFAULT_MODEL_FIELDS: dict[str, list[str]] = {
 }
 
 FIELD_LABELS = {key: key.replace("_", " ").capitalize() for key in INVENTORY_HEADERS}
+FIELD_LABELS["sim_eid_number"] = "SIM EID number"
 FIELD_TYPE_DEFAULTS = {
     "acquisition_date": "date",
     "loan_end_date": "date",
@@ -56,6 +58,28 @@ INVENTORY_CREATE_DRAFT_ID_KEY = "inventory_create_draft_id"
 
 def _normalize_model_name(model: str) -> str:
     return normalize_model_name(model)
+
+
+def _row_contains_query(df: pd.DataFrame, query: str) -> pd.Series:
+    """Máscara booleana vectorizada: filas donde alguna celda contiene ``query``.
+
+    Evita ``df.apply(axis=1)`` (Python-level por fila) usando ``str.contains``
+    columna a columna. Para un buscador case-insensitive con miles de filas
+    esto reduce el tiempo de filtrado en uno o dos órdenes de magnitud.
+
+    Si ``query`` está vacía o ``df`` no tiene filas se devuelve una máscara
+    que selecciona todo (semántica idéntica al filtro anterior).
+    """
+    if df.empty:
+        return pd.Series([], dtype=bool, index=df.index)
+    q = (query or "").strip().lower()
+    if not q:
+        return pd.Series(True, index=df.index)
+    text = df.fillna("").astype(str)
+    mask = pd.Series(False, index=df.index)
+    for column in text.columns:
+        mask = mask | text[column].str.lower().str.contains(q, regex=False, na=False)
+    return mask
 
 
 def _is_quota_error(exc: Exception) -> bool:
@@ -112,20 +136,52 @@ def _inventory_options_by_model(inv_df: pd.DataFrame, model: str) -> list[tuple[
     return opts
 
 
-def _render_dynamic_field(field_key: str, values: dict[str, str], *, key_prefix: str) -> None:
-    key = f"{key_prefix}_{field_key}"
+UG67_SERIAL_NUMBER_QUOTES_HELP = "Poner el serial_number entre comillas."
+
+
+def _field_label(field_key: str, *, model: str = "", mode: str = "create") -> str:
     label = FIELD_LABELS.get(field_key, field_key)
+    if (
+        field_key == "serial_number"
+        and mode == "create"
+        and _normalize_model_name(model) == "ug67"
+    ):
+        return f"{label} *"
+    return label
+
+
+def _field_help(field_key: str, *, model: str = "", mode: str = "create") -> str | None:
+    if (
+        field_key == "serial_number"
+        and mode == "create"
+        and _normalize_model_name(model) == "ug67"
+    ):
+        return UG67_SERIAL_NUMBER_QUOTES_HELP
+    return None
+
+
+def _render_dynamic_field(
+    field_key: str,
+    values: dict[str, str],
+    *,
+    key_prefix: str,
+    model: str = "",
+    mode: str = "create",
+) -> None:
+    key = f"{key_prefix}_{field_key}"
+    label = _field_label(field_key, model=model, mode=mode)
+    help_text = _field_help(field_key, model=model, mode=mode)
     current = str(values.get(field_key, "") or "")
     field_type = FIELD_TYPE_DEFAULTS.get(field_key, "text")
     if field_key in FIELD_OPTIONS:
         opts = [""] + FIELD_OPTIONS[field_key]
         idx = opts.index(current) if current in opts else 0
-        values[field_key] = st.selectbox(label, opts, index=idx, key=key)
+        values[field_key] = st.selectbox(label, opts, index=idx, key=key, help=help_text)
     elif field_type == "bool":
         checked = current.strip().upper() == "TRUE"
-        values[field_key] = "TRUE" if st.checkbox(label, value=checked, key=key) else "FALSE"
+        values[field_key] = "TRUE" if st.checkbox(label, value=checked, key=key, help=help_text) else "FALSE"
     else:
-        values[field_key] = st.text_input(label, value=current, key=key)
+        values[field_key] = st.text_input(label, value=current, key=key, help=help_text)
 
 
 def _model_field_keys(model: str, model_fields_df: pd.DataFrame) -> list[str]:
@@ -290,7 +346,7 @@ def _render_inventory_form_dialog(
         for fk in editable_keys:
             if fk in {"associated_sim_inventory_id", "associated_probe_inventory_id"}:
                 continue
-            _render_dynamic_field(fk, values, key_prefix=prefix)
+            _render_dynamic_field(fk, values, key_prefix=prefix, model=model, mode=mode)
         c1, c2 = st.columns(2)
         save_label = "Guardar cambios" if mode == "edit" else "Guardar inventario"
         save = c1.form_submit_button(save_label, type="primary", width="stretch")
@@ -523,7 +579,7 @@ def _inventory_edit_dialog() -> None:
 
 
 def render(_: pd.DataFrame) -> None:
-    st.title("Inventario")
+    st.title(page_menu_title("Inventario"))
     try:
         _seed_model_catalog_if_empty()
         inv_df = load_inventory_cached(st.session_state.get("inventory_cache_version", 0))
@@ -534,7 +590,7 @@ def render(_: pd.DataFrame) -> None:
         raise
 
     col1, col2, col3 = st.columns([0.55, 0.22, 0.23])
-    query = col1.text_input("Buscar inventario", key="inventory_query", placeholder="SN, modelo, proveedor, ubicacion...")
+    query = col1.text_input("Buscar inventario", key="inventory_query", placeholder="SN, EID SIM, modelo, proveedor, ubicacion...")
     with col2:
         st.text("")
         if st.button("🔗 Ver asociados SN", key="inventory_btn_sn_viewer", width="stretch"):
@@ -549,9 +605,7 @@ def render(_: pd.DataFrame) -> None:
 
     filtered = inv_df.copy()
     if not filtered.empty and (query or "").strip():
-        q = query.strip().lower()
-        mask = filtered.apply(lambda row: any(q in str(v).lower() for v in row.values), axis=1)
-        filtered = filtered[mask]
+        filtered = filtered[_row_contains_query(filtered, query)]
     if st.session_state.get(INVENTORY_SELECTION_MESSAGE_KEY):
         st.info(str(st.session_state.pop(INVENTORY_SELECTION_MESSAGE_KEY)))
     if st.session_state.get(INVENTORY_SUCCESS_MESSAGE_KEY):

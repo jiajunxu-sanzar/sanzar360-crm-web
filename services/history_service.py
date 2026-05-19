@@ -373,6 +373,10 @@ def parse_sensor_assets(sensor_serial_number: str) -> list[tuple[SensorAsset, st
             serial = item.split("-", 1)[1].strip()
             assets.append((SensorAsset("solenoide", serial), item))
             current_gateway = ""
+        elif lower.startswith("sim-"):
+            serial = item.split("-", 1)[1].strip()
+            assets.append((SensorAsset("sim", serial), item))
+            current_gateway = ""
         elif "-" in item:
             asset_type, serial = item.split("-", 1)
             assets.append((SensorAsset(asset_type.lower(), serial), current_gateway or item))

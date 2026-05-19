@@ -4,13 +4,14 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app.navigation import page_menu_title
 from app.telemetry import timed
 from services.dashboard_stats import funnel_counts, kpi_summary, value_counts
 from ui.components.cards import metric_card
 
 
 def render(df: pd.DataFrame) -> None:
-    st.title("Dashboard")
+    st.title(page_menu_title("Dashboard"))
     with timed("dashboard.render"):
         metrics = kpi_summary(df)
     cols = st.columns(4)

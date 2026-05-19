@@ -12,6 +12,7 @@ from services.inventory_service import InventoryService, RootAssetAssociations
 from services.sheet_date_format import is_valid_sensor_serial_number, sensor_serial_number_summary_lines
 from pages.contacts import (
     _collect_all_serials_from_sensor_sn,
+    _extract_sim_sn,
     _extract_solenoide_sn,
     _extract_ug67_bundle,
     _infer_sensor_root_type,
@@ -98,6 +99,28 @@ def test_solenoide_format_is_invalid_without_serial() -> None:
     assert is_valid_sensor_serial_number("solenoide-") is False
 
 
+def test_sim_standalone_format_is_valid() -> None:
+    assert is_valid_sensor_serial_number("sim-SIM001") is True
+
+
+def test_sim_standalone_format_is_invalid_without_serial() -> None:
+    assert is_valid_sensor_serial_number("sim-") is False
+
+
+def test_sim_standalone_parse_sensor_assets() -> None:
+    assets = parse_sensor_assets("sim-SIM001")
+    assert len(assets) == 1
+    asset, _ = assets[0]
+    assert asset.asset_type == "sim"
+    assert asset.serial == "SIM001"
+
+
+def test_sim_standalone_summary_lines() -> None:
+    lines = sensor_serial_number_summary_lines("sim-SIM001")
+    assert any("SIM001" in line for line in lines)
+    assert any("SIM individual" in line for line in lines)
+
+
 def test_solenoide_parse_sensor_assets() -> None:
     assets = parse_sensor_assets("solenoide-SOL001")
     assert len(assets) == 1
@@ -128,6 +151,10 @@ def test_infer_sensor_root_type_solenoide() -> None:
     assert _infer_sensor_root_type("solenoide-SOL001") == "solenoide"
 
 
+def test_infer_sensor_root_type_sim() -> None:
+    assert _infer_sensor_root_type("sim-SIM001") == "sim"
+
+
 def test_infer_sensor_root_type_empty_defaults_to_uc501() -> None:
     assert _infer_sensor_root_type("") == "uc501"
 
@@ -150,6 +177,14 @@ def test_extract_solenoide_sn() -> None:
 
 def test_extract_solenoide_sn_empty() -> None:
     assert _extract_solenoide_sn("") == ""
+
+
+def test_extract_sim_sn() -> None:
+    assert _extract_sim_sn("sim-SIM001") == "SIM001"
+
+
+def test_extract_sim_sn_empty() -> None:
+    assert _extract_sim_sn("") == ""
 
 
 def test_collect_all_serials_uc501() -> None:

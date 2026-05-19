@@ -1,11 +1,32 @@
 from __future__ import annotations
 
 import pandas as pd
-import streamlit as st
 
-if not hasattr(st, "dialog"):
-    st.dialog = lambda *_args, **_kwargs: (lambda fn: fn)  # type: ignore[attr-defined]
-from pages.inventory import _editable_field_keys, _inventory_row_by_id, _model_field_keys, _reconcile_selected_inventory_id
+from pages.inventory import (
+    UG67_SERIAL_NUMBER_QUOTES_HELP,
+    _editable_field_keys,
+    _field_help,
+    _field_label,
+    _inventory_row_by_id,
+    _model_field_keys,
+    _reconcile_selected_inventory_id,
+    _row_contains_query,
+)
+
+
+def test_ug67_create_serial_number_shows_quotes_hint() -> None:
+    assert _field_label("serial_number", model="ug67", mode="create") == "Serial number *"
+    assert _field_help("serial_number", model="ug67", mode="create") == UG67_SERIAL_NUMBER_QUOTES_HELP
+
+
+def test_ug67_edit_serial_number_has_no_quotes_hint() -> None:
+    assert _field_label("serial_number", model="ug67", mode="edit") == "Serial number"
+    assert _field_help("serial_number", model="ug67", mode="edit") is None
+
+
+def test_other_models_serial_number_has_no_quotes_hint() -> None:
+    assert _field_label("serial_number", model="uc501", mode="create") == "Serial number"
+    assert _field_help("serial_number", model="uc501", mode="create") is None
 
 
 def test_model_field_keys_sorts_order_index_as_numeric() -> None:
@@ -41,3 +62,35 @@ def test_inventory_row_by_id_finds_exact_row() -> None:
 def test_reconcile_selected_inventory_id_clears_non_visible() -> None:
     assert _reconcile_selected_inventory_id("inv-2", {"inv-1", "inv-3"}) == ""
     assert _reconcile_selected_inventory_id("inv-2", {"inv-2", "inv-3"}) == "inv-2"
+
+
+def _sample_inv_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"inventory_id": "a1", "model": "sim", "serial_number": "SIM-01", "sim_eid_number": "8988"},
+            {"inventory_id": "a2", "model": "teros10", "serial_number": "TE-01", "sim_eid_number": ""},
+            {"inventory_id": "a3", "model": "uc501", "serial_number": "UC-7", "sim_eid_number": ""},
+        ]
+    )
+
+
+def test_row_contains_query_empty_query_keeps_all_rows() -> None:
+    df = _sample_inv_df()
+    mask = _row_contains_query(df, "")
+    assert mask.tolist() == [True, True, True]
+
+
+def test_row_contains_query_matches_any_column_case_insensitive() -> None:
+    df = _sample_inv_df()
+    by_model = _row_contains_query(df, "teros")
+    assert by_model.tolist() == [False, True, False]
+    by_sn = _row_contains_query(df, "uc-7")
+    assert by_sn.tolist() == [False, False, True]
+    by_eid_partial = _row_contains_query(df, "8988")
+    assert by_eid_partial.tolist() == [True, False, False]
+
+
+def test_row_contains_query_returns_empty_mask_for_empty_df() -> None:
+    mask = _row_contains_query(pd.DataFrame(columns=["model", "serial_number"]), "anything")
+    assert mask.empty
+    assert mask.dtype == bool

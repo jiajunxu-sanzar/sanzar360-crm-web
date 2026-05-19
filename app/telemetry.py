@@ -20,9 +20,25 @@ class TelemetryEvent:
 
 
 def _events_buffer() -> list[dict[str, Any]]:
-    if "telemetry_events" not in st.session_state:
+    """Buffer de eventos de telemetría dentro de ``session_state``.
+
+    Si el ``session_state`` no persiste (p. ej. ejecución fuera del runtime
+    de Streamlit, como en algunos tests unitarios) devolvemos una lista
+    efímera en vez de propagar un ``KeyError``: la telemetría es accesoria,
+    no debe romper la lógica de negocio.
+    """
+    try:
+        buffer = st.session_state["telemetry_events"]
+        if isinstance(buffer, list):
+            return buffer
+    except (KeyError, AttributeError):
+        pass
+
+    try:
         st.session_state["telemetry_events"] = []
-    return st.session_state["telemetry_events"]
+        return st.session_state["telemetry_events"]
+    except Exception:
+        return []
 
 
 def track_event(name: str, duration_ms: int, success: bool, **metadata: Any) -> None:

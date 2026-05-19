@@ -154,6 +154,7 @@ INVENTORY_HEADERS: tuple[str, ...] = (
     "location_contact_id",
     "location_detail",
     "serial_number",
+    "sim_eid_number",
     "eui",
     "configured",
     "gateway_config_name",
@@ -178,6 +179,42 @@ INVENTORY_MODEL_FIELD_HEADERS: tuple[str, ...] = (
     "help_text",
     "order_index",
     "active",
+    "created_at",
+    "updated_at",
+)
+
+COMPRAS_WORKSHEET_NAME = "Compras"
+COMPRAS_ESTADOS: tuple[str, ...] = (
+    "comparando",
+    "pendiente",
+    "en_transito",
+    "recibida",
+    "cancelada",
+)
+COMPRAS_ESTADOS_PENDIENTES: frozenset[str] = frozenset({"comparando", "pendiente", "en_transito"})
+COMPRAS_HEADERS: tuple[str, ...] = (
+    "compra_id",
+    "referencia",
+    "descripcion",
+    "proveedor",
+    "proveedor_contacto",
+    "proveedor_direccion",
+    "proveedor_telefono",
+    "proveedor_email",
+    "estado",
+    "fecha_solicitud",
+    "fecha_pedido",
+    "fecha_recepcion",
+    "importe_total",
+    "moneda",
+    "proforma_invoice_url",
+    "pis_comparativas_carpeta_url",
+    "payment_receipt_url",
+    "po_lineas_json",
+    "ship_to",
+    "po_notas",
+    "responsable",
+    "notas",
     "created_at",
     "updated_at",
 )

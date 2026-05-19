@@ -11,6 +11,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from app.navigation import page_menu_title
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -62,7 +64,7 @@ def render(_: pd.DataFrame) -> None:
 
     # --- Header row: title + mode badge + swap icon ---
     h_left, h_mid, h_right = st.columns([0.72, 0.2, 0.08])
-    h_left.title("Pricing")
+    h_left.title(page_menu_title("Pricing"))
     badge_class = "sanzar-badge-proveedor" if is_provider else "sanzar-badge-cliente"
     badge_label = "PROVEEDOR" if is_provider else "CLIENTE"
     h_mid.markdown(

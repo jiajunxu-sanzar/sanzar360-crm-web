@@ -14,7 +14,7 @@ import streamlit as st
 
 from app import auth
 from app.cache import sheets_service, load_users_cached
-from app.navigation import ROLE_SALES, normalize_role
+from app.navigation import ROLE_SALES, normalize_role, page_menu_title
 from app.smtp_profiles import SmtpResolved, resolve_smtp_detail
 from app.state import bump_contacts_cache, set_contacts_df_override
 from config.settings import (
@@ -163,7 +163,7 @@ def _render_contact_table(filtered: pd.DataFrame) -> None:
             _build_display_df(df_with),
             width="stretch",
             hide_index=True,
-            height=min(400, 36 + len(df_with) * 35),
+            height=min(420, 36 + len(df_with) * 35),
             key="email_contact_table",
             on_select="rerun",
             selection_mode="multi-row",
@@ -432,7 +432,7 @@ def _render_email_password_gate() -> bool:
 
 
 def render(df: pd.DataFrame) -> None:
-    st.title("Email")
+    st.title(page_menu_title("Email"))
     if df.empty:
         st.info("No hay contactos cargados.")
         return

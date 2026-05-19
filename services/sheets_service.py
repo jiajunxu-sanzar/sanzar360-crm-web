@@ -7,6 +7,8 @@ from typing import Any, Callable, TypeVar
 
 import gspread
 import pandas as pd
+import requests
+from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.service_account import Credentials
 
 from app.secrets import service_account_info
@@ -20,18 +22,26 @@ _T = TypeVar("_T")
 _RETRY_WAITS_S = (1.5, 3.5, 7.0)
 
 
+_TRANSIENT_HTTP_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+
 def _is_transient_error(exc: BaseException) -> bool:
     """Return True for errors that are safe to retry (network / quota / server)."""
     if isinstance(exc, (ConnectionError, ConnectionResetError, OSError, TimeoutError, BrokenPipeError)):
         return True
     if isinstance(exc, gspread.exceptions.APIError):
         code = getattr(getattr(exc, "response", None), "status_code", 0)
-        return int(code or 0) in {429, 500, 502, 503, 504}
+        return int(code or 0) in _TRANSIENT_HTTP_STATUSES
+    if isinstance(exc, requests.exceptions.HTTPError):
+        code = getattr(getattr(exc, "response", None), "status_code", 0)
+        return int(code or 0) in _TRANSIENT_HTTP_STATUSES
     # requests.exceptions.ConnectionError and ProtocolError share the OSError base,
     # but some builds may not. Guard by checking the qualified name.
     qname = f"{type(exc).__module__}.{type(exc).__qualname__}"
     return qname in {
         "requests.exceptions.ConnectionError",
+        "requests.exceptions.Timeout",
+        "requests.exceptions.ReadTimeout",
         "urllib3.exceptions.ProtocolError",
         "urllib3.exceptions.MaxRetryError",
         "urllib3.exceptions.NewConnectionError",
@@ -91,6 +101,35 @@ class SheetsService:
 
     def client(self) -> gspread.Client:
         return gspread.authorize(self._credentials())
+
+    def get_modified_time(self) -> str:
+        """ISO timestamp del último ``modifiedTime`` del spreadsheet en Drive.
+
+        Usa la API REST de Drive v3 con las credenciales del servicio existente.
+        Llamada barata (no consume cuota de Sheets) usada por el poll de
+        ``app.remote_sync`` para invalidar cachés cuando el Excel cambia.
+        """
+        file_id = self.config.google_sheet_id
+        if not file_id:
+            raise RuntimeError("GOOGLE_SHEET_ID no está configurado.")
+
+        def _call() -> str:
+            creds = self._credentials()
+            if not getattr(creds, "valid", False):
+                creds.refresh(GoogleAuthRequest())
+            url = f"https://www.googleapis.com/drive/v3/files/{file_id}"
+            resp = requests.get(
+                url,
+                headers={"Authorization": f"Bearer {creds.token}"},
+                params={"fields": "modifiedTime", "supportsAllDrives": "true"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            payload = resp.json() or {}
+            return str(payload.get("modifiedTime", "") or "")
+
+        with timed("sheets.get_modified_time"):
+            return self._with_retry(_call)
 
     def spreadsheet(self):
         if self._spreadsheet is None:

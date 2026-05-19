@@ -8,7 +8,9 @@ Jerarquía de pestañas (inclusión):
 - ``employee`` (y cualquier rol desconocido): subconjunto mínimo declarado explícitamente.
 
 Para cambiar quién ve qué, edita solo las constantes de este módulo; el orden
-del menú sigue siempre ``PAGES`` (canonical).
+del menú sigue siempre ``PAGES`` (canonical). Las etiquetas visibles del radio
+(incl. emojis) están en ``PAGE_MENU_LABELS``; ``page_menu_title()`` devuelve
+ese texto para cabeceras de página y el sidebar.
 """
 
 from __future__ import annotations
@@ -26,11 +28,35 @@ PAGES: Final[tuple[str, ...]] = (
     "Mapa",
     "Email",
     "Inventario",
-    "Purchase Orders",
+    "Compras",
     "Facturas",
     "Pricing",
     "Referidos",
 )
+
+# Texto del menú lateral (emojis sólo visuales; ``PAGES`` sigue siendo la clave interna).
+PAGE_MENU_LABELS: Final[dict[str, str]] = {
+    "Dashboard": "📊 Dashboard",
+    "Acciones": "⚡ Acciones",
+    "Centro de alarmas": "🚨 Centro de alarmas",
+    "Contactos": "👥 Contactos",
+    "Usuarios": "🔐 Usuarios",
+    "Vacaciones": "🏖️ Vacaciones",
+    "Buscador sensores/SIM": "🔎 Buscador sensores/SIM",
+    "Mapa": "🗺️ Mapa",
+    "Email": "✉️ Email",
+    "Inventario": "📦 Inventario",
+    "Compras": "🛒 Compras",
+    "Facturas": "🧾 Facturas",
+    "Pricing": "💰 Pricing",
+    "Referidos": "🤝 Referidos",
+}
+
+
+def page_menu_title(canonical_page: str) -> str:
+    """Misma etiqueta que el menú lateral (emoji + nombre) para una clave de ``PAGES``."""
+    return PAGE_MENU_LABELS[canonical_page]
+
 
 _PAGES_SET: Final[frozenset[str]] = frozenset(PAGES)
 
@@ -64,7 +90,7 @@ _PAGES_EXCLUSIVE_TO_ADMIN: Final[frozenset[str]] = frozenset({"Usuarios"})
 AGRO_TEAM_DENIED_PAGES: Final[frozenset[str]] = _PAGES_EXCLUSIVE_TO_ADMIN | frozenset({"Email"})
 
 _EMPLOYEE_TAB_KEYS: Final[frozenset[str]] = frozenset(
-    {"Vacaciones", "Purchase Orders", "Facturas"}
+    {"Vacaciones", "Compras", "Facturas"}
 )
 EMPLOYEE_ALLOWED_PAGES: Final[tuple[str, ...]] = tuple(p for p in PAGES if p in _EMPLOYEE_TAB_KEYS)
 
@@ -111,6 +137,8 @@ def _assert_navigation_contract() -> None:
         raise AssertionError("La pestaña Email debe estar en sales.")
     if not emp.issubset(sales_pages):
         raise AssertionError("Las pestañas de employee deben ser visibles también para sales.")
+    if frozenset(PAGE_MENU_LABELS.keys()) != _PAGES_SET:
+        raise AssertionError("PAGE_MENU_LABELS keys must match PAGES exactly")
 
 
 def pages_for_role(role: str) -> tuple[str, ...]:
