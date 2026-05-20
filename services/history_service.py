@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 
 from app.telemetry import timed
-from services.sheet_date_format import is_valid_sensor_serial_number
+from services.sheet_date_format import is_valid_sensor_serial_number, normalize_sensor_serial_number
 from services.sheets_service import SheetsService
 
 HistoryKind = str
@@ -337,6 +337,7 @@ def validate_projectiotid_assignments(
 
 
 def parse_sensor_assets(sensor_serial_number: str) -> list[tuple[SensorAsset, str]]:
+    sensor_serial_number = normalize_sensor_serial_number(sensor_serial_number)
     if not is_valid_sensor_serial_number(sensor_serial_number):
         return []
     assets: list[tuple[SensorAsset, str]] = []
@@ -493,7 +494,7 @@ class HistoryService:
         if kind == "sensores":
             row["cantidad_sensores"] = str(count_sensor_assets(row.get("sensor_serial_number", "")))
         if kind == "campanas":
-            row["dias_campana"] = row.get("dias_campana") or self._campaign_days(row)
+            row["dias_campana"] = self._campaign_days(row)
         self._sheets_service.append_worksheet_row(spec.worksheet_name, list(spec.headers), row)
         df = pd.concat([self._frames[kind], pd.DataFrame([row])], ignore_index=True)
         self._frames[kind] = self._normalize_dataframe(df, spec)

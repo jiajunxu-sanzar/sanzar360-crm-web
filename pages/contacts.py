@@ -36,6 +36,7 @@ from config.settings import (
 from services.activity_log import append_activity
 from services.history_service import (
     HISTORY_SPECS,
+    HistoryService,
     ProjectIotAssignment,
     count_sensor_assets,
     parse_projectiotid_assignments,
@@ -49,6 +50,7 @@ from services.sheet_date_format import (
     SENSOR_SERIAL_NUMBER_FORMAT_HELP,
     is_valid_dd_mm_yyyy,
     is_valid_sensor_serial_number,
+    normalize_sensor_serial_number,
     validate_contact_date_fields,
     validate_dd_mm_yyyy_fields,
 )
@@ -1077,6 +1079,7 @@ def _extract_ug67_bundle(serial_value: str) -> tuple[str, str]:
     first = raw.split(",")[0].strip()
     if not first.lower().startswith("ug67-"):
         return "", ""
+    first = normalize_sensor_serial_number(first)
     parts = first.split("-")
     if len(parts) == 3:
         return parts[1].strip(), parts[2].strip()
@@ -1116,7 +1119,7 @@ def _infer_sensor_root_type(serial_value: str) -> str:
 def _collect_all_serials_from_sensor_sn(sensor_serial_number: str) -> list[str]:
     """Extract every individual serial number from a canonical sensor_serial_number string."""
     serials: list[str] = []
-    for item in [p.strip() for p in (sensor_serial_number or "").split(",") if p.strip()]:
+    for item in [p.strip() for p in normalize_sensor_serial_number(sensor_serial_number).split(",") if p.strip()]:
         lower = item.lower()
         if lower.startswith("uc501-"):
             parts = item.split("-")
@@ -1491,6 +1494,8 @@ def _submit_history_form(
                     st.error("No se puede guardar porque hay solape temporal:\n\n" + "\n".join(lines))
                     return False
                 values["cantidad_sensores"] = str(count_sensor_assets(values.get("sensor_serial_number", "")))
+            if kind == "campanas":
+                values["dias_campana"] = HistoryService._campaign_days(values)
             if existing:
                 history_service().update_row(kind, values[spec.id_column], values)
             else:
@@ -1774,6 +1779,16 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         return _render_sensor_serial_field(value, prefix, key)
     if header == "cantidad_sensores":
         return st.text_input(label, value=str(count_sensor_assets(st.session_state.get(f"{prefix}_sensor_serial_number", value))), key=key, disabled=True)
+    if kind == "campanas" and header == "dias_campana":
+        computed = HistoryService._campaign_days(
+            {
+                "fecha_campana_inicio": str(st.session_state.get(f"{prefix}_fecha_campana_inicio", "")),
+                "fecha_campana_fin": str(st.session_state.get(f"{prefix}_fecha_campana_fin", "")),
+            }
+        )
+        display = computed if computed else value
+        st.caption("Se calcula automáticamente: fecha fin campaña − fecha inicio campaña.")
+        return st.text_input("Días campaña", value=display, key=key, disabled=True)
     if header in SELECT_OPTIONS:
         options = [""] + SELECT_OPTIONS[header]
         selected_value = value

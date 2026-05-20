@@ -74,6 +74,31 @@ _UG67_DEVICE_RE = re.compile(r"^(em500|em300|uc512)-[^,\s-]+$", re.IGNORECASE)
 _SOLENOIDE_RE = re.compile(r"^solenoide-[^,\s]+$", re.IGNORECASE)
 _SIM_STANDALONE_RE = re.compile(r"^sim-[^,\s]+$", re.IGNORECASE)
 
+
+def _strip_wrapping_quotes(token: str) -> str:
+    """Remove optional surrounding single/double quotes from a serial token."""
+    value = (token or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1].strip()
+    return value
+
+
+def normalize_sensor_serial_number(value: str) -> str:
+    """Canonicalize sensor_serial_number (e.g. UG67 SN with or without quotes)."""
+    value = (value or "").strip()
+    if not value:
+        return value
+    normalized: list[str] = []
+    for item in [part.strip() for part in value.split(",") if part.strip()]:
+        if "-" not in item:
+            normalized.append(item)
+            continue
+        segments = item.split("-")
+        segments = [segments[0]] + [_strip_wrapping_quotes(part) for part in segments[1:]]
+        normalized.append("-".join(segments))
+    return ",".join(normalized)
+
+
 SENSOR_SERIAL_NUMBER_FORMAT_HELP = (
     "Formatos permitidos:\n"
     "- UC501: uc501-serial_uc501-serial_teros10-sim. Ejemplo: uc501-UC001-TE001-SIM001\n"
@@ -118,7 +143,7 @@ def is_valid_cuenta_usuario(value: str) -> bool:
 
 
 def is_valid_sensor_serial_number(value: str) -> bool:
-    value = (value or "").strip()
+    value = normalize_sensor_serial_number(value)
     if not value:
         return True
     parts = [part.strip() for part in value.split(",") if part.strip()]
@@ -136,7 +161,8 @@ def is_valid_sensor_serial_number(value: str) -> bool:
         if _UG67_GATEWAY_RE.match(item):
             if expecting_ug67_devices and ug67_devices_count == 0:
                 return False
-            expecting_ug67_devices = True
+            # UG67+SIM: child nodes (em500, etc.) are optional, same as UG67 without SIM.
+            expecting_ug67_devices = False
             ug67_devices_count = 0
             continue
         if _UG67_GATEWAY_NO_SIM_RE.match(item):
@@ -168,7 +194,7 @@ def is_valid_sensor_serial_number(value: str) -> bool:
 
 
 def sensor_serial_number_summary_lines(value: str) -> list[str]:
-    value = (value or "").strip()
+    value = normalize_sensor_serial_number(value)
     if not value:
         return []
     out: list[str] = []
