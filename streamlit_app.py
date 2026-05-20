@@ -73,6 +73,7 @@ def _close_all_overlays() -> None:
             key.startswith("show_history_")
             or key.startswith("contact_delete_open_")
             or key.startswith("hist_table_select_")
+            or key.startswith("hist_table_version_")
         ):
             st.session_state.pop(key, None)
 

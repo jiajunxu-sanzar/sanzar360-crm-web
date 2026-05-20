@@ -57,6 +57,7 @@ from ui.components.customer_timeline import render_contact_timeline_block
 from ui.components.contact_detail_header import render_contact_detail_header
 from ui import modal_state
 from ui.components.history import (
+    clear_history_table_selection,
     render_history_summary,
     render_history_table,
 )
@@ -201,14 +202,40 @@ def _find_similar_contact_names(df: pd.DataFrame, new_name: str) -> tuple[bool, 
 
 
 def _clear_history_selection(contact_id: str, kind: str) -> None:
-    """Remove the persisted dataframe-widget selection for (contact, kind).
+    clear_history_table_selection(contact_id, kind)
 
-    Without this, st.dataframe keeps the highlighted row across reruns and
-    _handle_history_table_secondary_open keeps showing "Editar fila seleccionada"
-    even after the modal has been dismissed.
-    """
-    key = f"hist_table_select_{contact_id}_{kind}"
-    st.session_state.pop(key, None)
+
+def _clear_sensor_picker_state(prefix: str) -> None:
+    for suffix in (
+        "_is_uc501",
+        "_non_uc501_type",
+        "_sensor_uc501_sn",
+        "_sensor_ug67_sn",
+        "_sensor_solenoide_sn",
+        "_sensor_sim_sn",
+        "_sensor_serial_number",
+        "_id_historial",
+    ):
+        st.session_state.pop(f"{prefix}{suffix}", None)
+
+
+def _on_dismiss_history_edit() -> None:
+    m = modal_state.get_active_modal()
+    if m and m.get("type") == "edit_history":
+        kind = m["kind"]
+        contact_id = m["contact_id"]
+        if kind == "sensores":
+            _clear_sensor_picker_state(f"{kind}_{m['row_id']}")
+        modal_state.close_modal()
+        _clear_history_selection(contact_id, kind)
+
+
+def _on_dismiss_history_add() -> None:
+    m = modal_state.get_active_modal()
+    if m and m.get("type") == "add_history":
+        if m.get("kind") == "sensores":
+            _clear_sensor_picker_state("sensores_new")
+        modal_state.close_modal()
 
 
 def _clear_contact_overlay_state(*, keep_contact_id: str = "") -> None:
@@ -220,7 +247,7 @@ def _clear_contact_overlay_state(*, keep_contact_id: str = "") -> None:
             if keep_contact_id and key.endswith(f"_{keep_contact_id}"):
                 continue
             st.session_state.pop(key, None)
-        if key.startswith("hist_table_select_"):
+        if key.startswith("hist_table_select_") or key.startswith("hist_table_version_"):
             st.session_state.pop(key, None)
     target_id = str(st.session_state.get(CONTACTS_DELETE_TARGET_ID_KEY, "") or "")
     if target_id and target_id != str(keep_contact_id or ""):
@@ -903,7 +930,7 @@ def _maybe_render_edit_history_modal(contact: dict[str, str]) -> None:
     _edit_history_dialog(kind, contact, row)
 
 
-@st.dialog("Nuevo histórico")
+@st.dialog("Nuevo histórico", on_dismiss=_on_dismiss_history_add)
 def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
     spec = HISTORY_SPECS[kind]
     st.markdown(f"### {spec.title}")
@@ -927,6 +954,8 @@ def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
 
     if cancel:
         _clear_modal_flags()
+        if kind == "sensores":
+            _clear_sensor_picker_state("sensores_new")
         st.rerun()
 
     if confirm:
@@ -935,7 +964,7 @@ def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
             st.rerun()
 
 
-@st.dialog("Editar histórico")
+@st.dialog("Editar histórico", on_dismiss=_on_dismiss_history_edit)
 def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]) -> None:
     spec = HISTORY_SPECS[kind]
     contact_id = contact.get("contact_id", "")
@@ -965,6 +994,8 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
         delete = action_cols[2].form_submit_button("Borrar", width="stretch")
 
     if cancel:
+        if kind == "sensores":
+            _clear_sensor_picker_state(f"{kind}_{row.get(spec.id_column, '')}")
         _clear_modal_flags()
         _clear_history_selection(contact_id, kind)
         st.rerun()
@@ -1545,13 +1576,11 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
     if root_type == "uc501":
         existing_uc, _, _ = _extract_uc501_bundle(value)
         uc_sn_key = f"{prefix}_sensor_uc501_sn"
-        if uc_sn_key not in st.session_state:
-            st.session_state[uc_sn_key] = existing_uc
 
         options_uc501 = inv_svc.available_root_assets_for_history(("uc501",), open_serials=open_serials, inv_df=inv_df)
         # Always include the currently-selected serial even if it's technically in open_serials
         # (happens when editing a record that has this UC501 open for another contact)
-        selected_sn = st.session_state.get(uc_sn_key, "")
+        selected_sn = str(st.session_state.get(uc_sn_key, existing_uc) or "")
         uc_labels = [""]
         uc_serials_set = {o.serial_number for o in options_uc501}
         for o in options_uc501:
@@ -1562,8 +1591,9 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         if not options_uc501 and not selected_sn:
             st.info("Aún no hay ningún UC501 disponible en inventario.")
         else:
-            uc_idx = uc_labels.index(selected_sn) if selected_sn in uc_labels else 0
-            uc_sn = st.selectbox("UC501 disponibles (SN)", uc_labels, index=uc_idx, key=uc_sn_key)
+            if uc_sn_key not in st.session_state:
+                st.session_state[uc_sn_key] = selected_sn if selected_sn in uc_labels else (uc_labels[0] if uc_labels else "")
+            uc_sn = st.selectbox("UC501 disponibles (SN)", options=uc_labels, key=uc_sn_key)
             if uc_sn:
                 opt = next((o for o in options_uc501 if o.serial_number == uc_sn), None)
                 if opt is None:
@@ -1607,11 +1637,9 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
     elif root_type == "ug67":
         existing_ug, _ = _extract_ug67_bundle(value)
         ug_sn_key = f"{prefix}_sensor_ug67_sn"
-        if ug_sn_key not in st.session_state:
-            st.session_state[ug_sn_key] = existing_ug
 
         options_ug67 = inv_svc.available_root_assets_for_history(("ug67",), open_serials=open_serials, inv_df=inv_df)
-        selected_sn = st.session_state.get(ug_sn_key, "")
+        selected_sn = str(st.session_state.get(ug_sn_key, existing_ug) or "")
         ug_labels = [""]
         ug_serials_set = {o.serial_number for o in options_ug67}
         for o in options_ug67:
@@ -1622,8 +1650,9 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         if not options_ug67 and not selected_sn:
             st.info("Aún no hay ningún UG67 disponible en inventario.")
         else:
-            ug_idx = ug_labels.index(selected_sn) if selected_sn in ug_labels else 0
-            ug_sn = st.selectbox("UG67 disponibles (SN)", ug_labels, index=ug_idx, key=ug_sn_key)
+            if ug_sn_key not in st.session_state:
+                st.session_state[ug_sn_key] = selected_sn if selected_sn in ug_labels else (ug_labels[0] if ug_labels else "")
+            ug_sn = st.selectbox("UG67 disponibles (SN)", options=ug_labels, key=ug_sn_key)
             if ug_sn:
                 opt = next((o for o in options_ug67 if o.serial_number == ug_sn), None)
                 if opt is None:
@@ -1665,11 +1694,9 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
     elif root_type == "solenoide":
         existing_sol = _extract_solenoide_sn(value)
         sol_sn_key = f"{prefix}_sensor_solenoide_sn"
-        if sol_sn_key not in st.session_state:
-            st.session_state[sol_sn_key] = existing_sol
 
         options_sol = inv_svc.available_root_assets_for_history(("solenoide",), open_serials=open_serials, inv_df=inv_df)
-        selected_sn = st.session_state.get(sol_sn_key, "")
+        selected_sn = str(st.session_state.get(sol_sn_key, existing_sol) or "")
         sol_labels = [""]
         sol_serials_set = {o.serial_number for o in options_sol}
         for o in options_sol:
@@ -1680,8 +1707,9 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         if not options_sol and not selected_sn:
             st.info("Aún no hay ninguna electroválvula solenoide disponible en inventario.")
         else:
-            sol_idx = sol_labels.index(selected_sn) if selected_sn in sol_labels else 0
-            sol_sn = st.selectbox("Solenoide disponibles (SN)", sol_labels, index=sol_idx, key=sol_sn_key)
+            if sol_sn_key not in st.session_state:
+                st.session_state[sol_sn_key] = selected_sn if selected_sn in sol_labels else (sol_labels[0] if sol_labels else "")
+            sol_sn = st.selectbox("Solenoide disponibles (SN)", options=sol_labels, key=sol_sn_key)
             if sol_sn:
                 compound = f"solenoide-{sol_sn}"
 
@@ -1689,11 +1717,9 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
     elif root_type == "sim":
         existing_sim = _extract_sim_sn(value)
         sim_sn_key = f"{prefix}_sensor_sim_sn"
-        if sim_sn_key not in st.session_state:
-            st.session_state[sim_sn_key] = existing_sim
 
         options_sim = inv_svc.available_root_assets_for_history(("sim",), open_serials=open_serials, inv_df=inv_df)
-        selected_sn = st.session_state.get(sim_sn_key, "")
+        selected_sn = str(st.session_state.get(sim_sn_key, existing_sim) or "")
         sim_labels = [""]
         sim_serials_set = {o.serial_number for o in options_sim}
         for o in options_sim:
@@ -1704,8 +1730,9 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         if not options_sim and not selected_sn:
             st.info("Aún no hay ninguna SIM disponible en inventario.")
         else:
-            sim_idx = sim_labels.index(selected_sn) if selected_sn in sim_labels else 0
-            sim_sn = st.selectbox("SIM disponibles (SN)", sim_labels, index=sim_idx, key=sim_sn_key)
+            if sim_sn_key not in st.session_state:
+                st.session_state[sim_sn_key] = selected_sn if selected_sn in sim_labels else (sim_labels[0] if sim_labels else "")
+            sim_sn = st.selectbox("SIM disponibles (SN)", options=sim_labels, key=sim_sn_key)
             if sim_sn:
                 opt = next((o for o in options_sim if o.serial_number == sim_sn), None)
                 if opt is None:
