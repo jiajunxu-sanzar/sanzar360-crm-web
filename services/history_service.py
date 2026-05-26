@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 
 from app.telemetry import timed
+from services.inventory_service import normalize_inventory_serial_for_match
 from services.sheet_date_format import is_valid_sensor_serial_number, normalize_sensor_serial_number
 from services.sheets_service import SheetsService
 
@@ -409,6 +410,19 @@ def parse_sensor_asset_occurrences(rows: list[dict[str, str]]) -> list[SensorAss
     return occurrences
 
 
+def sensor_serials_from_sensor_serial_number(sensor_serial_number: str) -> list[str]:
+    """Return normalized serial values represented by a sensor history string."""
+    seen: set[str] = set()
+    serials: list[str] = []
+    for asset, _ in parse_sensor_assets(sensor_serial_number):
+        normalized = normalize_inventory_serial_for_match(asset.serial)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        serials.append(asset.serial)
+    return serials
+
+
 class HistoryService:
     def __init__(self, sheets_service: SheetsService) -> None:
         self._sheets_service = sheets_service
@@ -662,6 +676,57 @@ class HistoryService:
             for asset, _ in parse_sensor_assets(ssn):
                 open_serials.add(asset.serial.lower())
         return open_serials
+
+    def open_sensor_assignment_rows_for_serials(
+        self,
+        serials: list[str],
+        *,
+        exclude_historial_sensor_id: str = "",
+        exclude_contact_id: str = "",
+    ) -> dict[str, dict[str, str]]:
+        """Return current open sensor-history owners for the requested serials.
+
+        Keys are normalized with the same rules inventory uses for serial
+        matching, so quoted and unquoted serial values are equivalent.
+        """
+        wanted = {
+            serial
+            for serial in (normalize_inventory_serial_for_match(s) for s in serials)
+            if serial
+        }
+        if not wanted:
+            return {}
+
+        candidate_rows: list[tuple[date, date, dict[str, str], set[str]]] = []
+        for row in self.rows("sensores"):
+            if exclude_historial_sensor_id and row.get("historial_sensor_id", "") == exclude_historial_sensor_id:
+                continue
+            if exclude_contact_id and str(row.get("contact_id", "") or "").strip() == exclude_contact_id:
+                continue
+            estado = str(row.get("estado_cierre_sensor", "")).strip().lower()
+            if estado == "cerrado":
+                continue
+            row_serials = {
+                normalize_inventory_serial_for_match(asset.serial)
+                for asset, _ in parse_sensor_assets(str(row.get("sensor_serial_number", "") or ""))
+            }
+            matched = wanted & {s for s in row_serials if s}
+            if not matched:
+                continue
+            candidate_rows.append(
+                (
+                    _parse_date(row.get("fecha_inicio", "")) or date.min,
+                    _parse_date(row.get("updated_at", "")) or date.min,
+                    row,
+                    matched,
+                )
+            )
+
+        assignments: dict[str, dict[str, str]] = {}
+        for _, _, row, matched in sorted(candidate_rows, key=lambda item: (item[0], item[1]), reverse=True):
+            for serial in matched:
+                assignments.setdefault(serial, row)
+        return assignments
 
     def has_open_incidents(self, contact_id: str) -> bool:
         for row in self.rows_for_contact("incidencias", contact_id):

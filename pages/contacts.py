@@ -41,6 +41,7 @@ from services.history_service import (
     count_sensor_assets,
     parse_projectiotid_assignments,
     sensor_association_tokens,
+    sensor_serials_from_sensor_serial_number,
     serialize_projectiotid_assignments,
     validate_projectiotid_assignments,
 )
@@ -111,6 +112,7 @@ CONTACTS_SAVE_SUCCESS_KEY = "contacts.save_success_message"
 CONTACTS_DELETE_SUCCESS_KEY = "contacts.delete_success_message"
 CONTACTS_DELETE_TARGET_ID_KEY = "contacts.delete_target_id"
 CONTACTS_DELETE_TARGET_NAME_KEY = "contacts.delete_target_name"
+HISTORY_DELETE_CONFIRM_PREFIX = "history_delete_confirm"
 
 
 def _clear_modal_flags() -> None:
@@ -221,13 +223,21 @@ def _clear_sensor_picker_state(prefix: str) -> None:
         st.session_state.pop(f"{prefix}{suffix}", None)
 
 
+def _history_delete_confirm_key(kind: str, row_id: str) -> str:
+    safe_kind = "".join(c if c.isalnum() else "_" for c in kind)
+    safe_row_id = "".join(c if c.isalnum() else "_" for c in row_id)
+    return f"{HISTORY_DELETE_CONFIRM_PREFIX}_{safe_kind}_{safe_row_id}"
+
+
 def _on_dismiss_history_edit() -> None:
     m = modal_state.get_active_modal()
     if m and m.get("type") == "edit_history":
         kind = m["kind"]
         contact_id = m["contact_id"]
         if kind == "sensores":
-            _clear_sensor_picker_state(f"{kind}_{m['row_id']}")
+            row_id = str(m["row_id"])
+            _clear_sensor_picker_state(f"{kind}_{row_id}")
+            st.session_state.pop(_history_delete_confirm_key(kind, row_id), None)
         modal_state.close_modal()
         _clear_history_selection(contact_id, kind)
 
@@ -966,19 +976,53 @@ def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
             st.rerun()
 
 
+def _delete_history_row_and_sync_inventory(kind: str, row: dict[str, str]) -> None:
+    spec = HISTORY_SPECS[kind]
+    affected_serials: list[str] = []
+    if kind == "sensores":
+        affected_serials = _serials_from_sensor_history_strings([str(row.get("sensor_serial_number", "") or "")])
+    history_service().delete_row(kind, str(row.get(spec.id_column, "")))
+    if kind == "sensores":
+        _reconcile_inventory_locations_for_sensor_serials(affected_serials, default_location_type="por_definir")
+
+
 @st.dialog("Editar histórico", on_dismiss=_on_dismiss_history_edit)
 def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]) -> None:
     spec = HISTORY_SPECS[kind]
     contact_id = contact.get("contact_id", "")
+    row_id = str(row.get(spec.id_column, "") or "")
     st.markdown(f"### {spec.title}")
     st.caption("Edita la fila seleccionada. Puedes guardar, cancelar o borrar.")
+
+    delete_confirm_key = _history_delete_confirm_key(kind, row_id)
+    if kind == "sensores" and bool(st.session_state.get(delete_confirm_key, False)):
+        st.warning(
+            "¿Seguro que quieres borrar este histórico sensor? Se eliminará la fila del histórico "
+            "y se recalculará la ubicación en Inventario para los seriales afectados."
+        )
+        c_confirm, c_cancel = st.columns(2)
+        if c_confirm.button("Confirmar borrado", type="primary", width="stretch", key=f"{delete_confirm_key}_yes"):
+            try:
+                _delete_history_row_and_sync_inventory(kind, row)
+                bump_history_cache()
+                st.success("Histórico eliminado correctamente.")
+                st.session_state.pop(delete_confirm_key, None)
+                _clear_modal_flags()
+                _clear_history_selection(contact_id, kind)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"No se pudo eliminar el histórico: {exc}")
+        if c_cancel.button("Cancelar", width="stretch", key=f"{delete_confirm_key}_no"):
+            st.session_state.pop(delete_confirm_key, None)
+            st.rerun()
+        return
 
     # For sensores, render the sensor picker OUTSIDE the form — reruns work
     # inside @st.dialog for non-form widgets.
     excluded: frozenset[str] = frozenset()
     if kind == "sensores":
         excluded = frozenset({"sensor_serial_number"})
-        hist_id = str(row.get(spec.id_column, "") or "")
+        hist_id = row_id
         prefix = f"{kind}_{hist_id}"
         st.markdown("**Sensor**")
         _render_sensor_serial_field(
@@ -997,14 +1041,19 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
 
     if cancel:
         if kind == "sensores":
-            _clear_sensor_picker_state(f"{kind}_{row.get(spec.id_column, '')}")
+            _clear_sensor_picker_state(f"{kind}_{row_id}")
+            st.session_state.pop(delete_confirm_key, None)
         _clear_modal_flags()
         _clear_history_selection(contact_id, kind)
         st.rerun()
 
     if delete:
+        if kind == "sensores":
+            st.session_state[delete_confirm_key] = True
+            st.rerun()
+            return
         try:
-            history_service().delete_row(kind, str(row.get(spec.id_column, "")))
+            _delete_history_row_and_sync_inventory(kind, row)
             bump_history_cache()
             st.success("Histórico eliminado correctamente.")
             _clear_modal_flags()
@@ -1144,25 +1193,56 @@ def _collect_all_serials_from_sensor_sn(sensor_serial_number: str) -> list[str]:
     return [s.strip() for s in serials if s.strip()]
 
 
-def _sync_inventory_from_sensor_history(values: dict[str, str], *, close_target_location: str = "") -> None:
-    ssn = str(values.get("sensor_serial_number", "") or "").strip()
-    serials = _collect_all_serials_from_sensor_sn(ssn)
+def _serials_from_sensor_history_strings(sensor_serial_numbers: list[str]) -> list[str]:
+    seen: set[str] = set()
+    serials: list[str] = []
+    for sensor_serial_number in sensor_serial_numbers:
+        for serial in sensor_serials_from_sensor_serial_number(sensor_serial_number):
+            key = serial.strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            serials.append(serial)
+    return serials
+
+
+def _reconcile_inventory_locations_for_sensor_serials(
+    serials: list[str],
+    *,
+    default_location_type: str = "por_definir",
+) -> None:
+    if not serials:
+        return
+    assignments = history_service().open_sensor_assignment_rows_for_serials(serials)
+    inventory_service().reconcile_locations_for_serials(
+        serials,
+        assignments,
+        default_location_type=default_location_type,
+    )
+    bump_inventory_cache()
+
+
+def _sync_inventory_from_sensor_history(
+    values: dict[str, str],
+    *,
+    close_target_location: str = "",
+    previous_sensor_serial_number: str = "",
+) -> None:
+    serials = _serials_from_sensor_history_strings(
+        [
+            str(values.get("sensor_serial_number", "") or ""),
+            previous_sensor_serial_number,
+        ]
+    )
     if not serials:
         return
     estado_cierre = str(values.get("estado_cierre_sensor", "")).strip().lower()
-    svc = inventory_service()
     if estado_cierre == "cerrado":
         target = (close_target_location or "por_definir").strip().lower()
-        location_type = "oficina" if target == "oficina" else "por_definir"
-        svc.set_location_for_serials(serials, location_type=location_type, location_contact_id="", location_detail="")
+        default_location_type = "oficina" if target == "oficina" else "por_definir"
     else:
-        svc.set_location_for_serials(
-            serials,
-            location_type="cliente",
-            location_contact_id=str(values.get("contact_id", "")),
-            location_detail=str(values.get("nombre_cliente", "")),
-        )
-    bump_inventory_cache()
+        default_location_type = "por_definir"
+    _reconcile_inventory_locations_for_sensor_serials(serials, default_location_type=default_location_type)
 
 
 def _render_next_action_strip(df: pd.DataFrame) -> None:
@@ -1464,6 +1544,9 @@ def _submit_history_form(
 ) -> bool:
     spec = HISTORY_SPECS[kind]
     prefix = f"{kind}_{existing.get(spec.id_column) if existing else 'new'}"
+    previous_sensor_serial_number = ""
+    if kind == "sensores" and existing:
+        previous_sensor_serial_number = str(existing.get("sensor_serial_number", "") or "")
     values: dict[str, str] = {}
     values["contact_id"] = str(base.get("contact_id", ""))
     values["nombre_cliente"] = str(base.get("nombre", base.get("nombre_cliente", "")))
@@ -1501,7 +1584,11 @@ def _submit_history_form(
             else:
                 history_service().add_row(kind, values)
             if kind == "sensores":
-                _sync_inventory_from_sensor_history(values, close_target_location=close_target_location)
+                _sync_inventory_from_sensor_history(
+                    values,
+                    close_target_location=close_target_location,
+                    previous_sensor_serial_number=previous_sensor_serial_number,
+                )
         bump_history_cache()
         st.success("Histórico guardado correctamente.")
         return True

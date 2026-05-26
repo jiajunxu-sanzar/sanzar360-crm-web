@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from services.history_service import SensorAssetOccurrence
-from services.inventory_service import normalize_model_name
+from services.inventory_service import normalize_inventory_serial_for_match, normalize_model_name
 
 
 # ---------------------------------------------------------------------------
@@ -298,10 +298,17 @@ def _group_matches_query(group: AssociationGroup, query: str) -> bool:
     q = query.strip().lower()
     if not q:
         return True
-    candidates = [group.serial_number, group.model, group.inventory_id]
+    normalized_q = normalize_inventory_serial_for_match(query)
+    candidates = [group.serial_number, group.model, group.inventory_id, group.location_detail, group.location_type]
     for child in group.children:
         candidates.extend([child.serial_number, child.model, child.inventory_id, child.sim_eid_number])
-    return any(q in c.lower() for c in candidates)
+    for candidate in candidates:
+        candidate_lower = candidate.lower()
+        if q in candidate_lower:
+            return True
+        if normalized_q and normalized_q in normalize_inventory_serial_for_match(candidate):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------

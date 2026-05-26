@@ -20,10 +20,17 @@ DEFAULT_MODEL_FIELDS: dict[str, list[str]] = {
     "teros12": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "proforma_invoice_url", "payment_receipt_url"],
     "uc512": ["serial_number", "eui", "brand", "supplier", "logistics_status", "location_type", "configured", "proforma_invoice_url", "payment_receipt_url"],
     "em300": ["serial_number", "eui", "brand", "supplier", "logistics_status", "location_type", "configured", "proforma_invoice_url", "payment_receipt_url"],
-    "em500": ["serial_number", "eui", "brand", "supplier", "logistics_status", "location_type", "gateway_config_name", "ui_password", "proforma_invoice_url", "payment_receipt_url"],
+    "em500": ["serial_number", "eui", "brand", "supplier", "logistics_status", "location_type", "associated_gateway_inventory_id", "proforma_invoice_url", "payment_receipt_url"],
     "ug67": ["serial_number", "eui", "brand", "supplier", "logistics_status", "location_type", "configured", "ui_password", "proforma_invoice_url", "payment_receipt_url"],
     "solenoide": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "proforma_invoice_url", "payment_receipt_url"],
 }
+HIDDEN_MODEL_FIELDS: dict[str, set[str]] = {
+    "em500": {"gateway_config_name", "ui_password"},
+}
+REQUIRED_MODEL_FIELDS: dict[str, list[str]] = {
+    "em500": ["associated_gateway_inventory_id"],
+}
+READONLY_EDIT_FIELDS = {"location_type", "location_contact_id"}
 
 FIELD_LABELS = {key: key.replace("_", " ").capitalize() for key in INVENTORY_HEADERS}
 FIELD_LABELS["sim_eid_number"] = "SIM EID number"
@@ -189,11 +196,19 @@ def _model_field_keys(model: str, model_fields_df: pd.DataFrame) -> list[str]:
     wanted = _normalize_model_name(model)
     rows = df[(df["model"].apply(_normalize_model_name) == wanted) & (df["active"].str.upper() != "FALSE")]
     if rows.empty:
-        return DEFAULT_MODEL_FIELDS.get(model.lower(), ["serial_number", "brand", "supplier"])
-    rows = rows.assign(
-        _order_num=pd.to_numeric(rows["order_index"], errors="coerce")
-    ).sort_values(["_order_num", "order_index"], na_position="last")
-    return [str(x).strip() for x in rows["field_key"].tolist() if str(x).strip() in INVENTORY_HEADERS]
+        keys = list(DEFAULT_MODEL_FIELDS.get(model.lower(), ["serial_number", "brand", "supplier"]))
+    else:
+        rows = rows.assign(
+            _order_num=pd.to_numeric(rows["order_index"], errors="coerce")
+        ).sort_values(["_order_num", "order_index"], na_position="last")
+        keys = [str(x).strip() for x in rows["field_key"].tolist() if str(x).strip() in INVENTORY_HEADERS]
+    hidden_keys = HIDDEN_MODEL_FIELDS.get(wanted, set())
+    if hidden_keys:
+        keys = [fk for fk in keys if fk not in hidden_keys]
+    for required_key in REQUIRED_MODEL_FIELDS.get(wanted, []):
+        if required_key in INVENTORY_HEADERS and required_key not in hidden_keys and required_key not in keys:
+            keys.append(required_key)
+    return keys
 
 
 def _close_inventory_new_dialog() -> None:
@@ -209,6 +224,12 @@ def _close_inventory_edit_dialog() -> None:
 
 def _editable_field_keys(field_keys: list[str]) -> list[str]:
     return [fk for fk in field_keys if fk not in {"inventory_id", "created_at", "updated_at"}]
+
+
+def _form_field_keys(field_keys: list[str], *, mode: str) -> list[str]:
+    if mode != "edit":
+        return field_keys
+    return [fk for fk in field_keys if fk not in READONLY_EDIT_FIELDS]
 
 
 def _inventory_row_by_id(inv_df: pd.DataFrame, inventory_id: str) -> dict[str, str] | None:
@@ -306,6 +327,31 @@ def _render_association_fields(
             else:
                 st.info("Aún no hay ninguna Teros 12 en inventario.")
 
+    if "associated_gateway_inventory_id" in field_keys:
+        current_item_id = str(values.get("inventory_id", "") or "").strip()
+        gateway_options = [
+            (inv_id, option_label)
+            for inv_id, option_label in _inventory_options_by_model(inv_df, "ug67")
+            if inv_id != current_item_id
+        ]
+        option_values = [""] + [inv_id for inv_id, _ in gateway_options]
+        label_map = {"": "Sin asociar", **{inv_id: option_label for inv_id, option_label in gateway_options}}
+        current = str(st.session_state.get(f"{key_prefix}_associated_gateway_inventory_id", values.get("associated_gateway_inventory_id", "")) or "")
+        if current and current not in option_values:
+            st.warning("El gateway asociado previamente ya no está disponible como UG67.")
+            current = ""
+        idx = option_values.index(current) if current in option_values else 0
+        values["associated_gateway_inventory_id"] = st.selectbox(
+            "Gateway UG67 asociado",
+            option_values,
+            index=idx,
+            key=f"{key_prefix}_associated_gateway_inventory_id",
+            format_func=lambda x: label_map.get(x, x),
+            disabled=disabled,
+        )
+        if not gateway_options:
+            st.info("Aún no hay ningún UG67 en inventario.")
+
 
 def _render_inventory_form_dialog(
     model: str,
@@ -336,15 +382,16 @@ def _render_inventory_form_dialog(
     safe_prefix = "".join(c if c.isalnum() else "_" for c in model)[:40]
     prefix = f"invdlg_{mode}_{safe_prefix}_{values.get('inventory_id', '')[:8]}"
     editable_keys = _editable_field_keys(field_keys)
-    _render_association_fields(values, editable_keys, inv_df, key_prefix=prefix)
+    form_keys = _form_field_keys(editable_keys, mode=mode)
+    _render_association_fields(values, form_keys, inv_df, key_prefix=prefix)
 
     with st.form(f"inventory_dialog_form_{prefix}"):
         if mode == "edit":
             st.caption(f"Editando inventario **{values.get('inventory_id', '')}** del modelo **{values.get('model', model)}**.")
         else:
             st.caption(f"Completa los datos del modelo **{model}**.")
-        for fk in editable_keys:
-            if fk in {"associated_sim_inventory_id", "associated_probe_inventory_id"}:
+        for fk in form_keys:
+            if fk in {"associated_sim_inventory_id", "associated_probe_inventory_id", "associated_gateway_inventory_id"}:
                 continue
             _render_dynamic_field(fk, values, key_prefix=prefix, model=model, mode=mode)
         c1, c2 = st.columns(2)

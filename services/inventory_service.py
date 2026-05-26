@@ -27,6 +27,14 @@ def normalize_field_key(value: str) -> str:
     return str(value or "").strip().lower()
 
 
+def normalize_inventory_serial_for_match(value: str) -> str:
+    """Normalize inventory serials for comparisons without changing stored values."""
+    serial = str(value or "").strip()
+    if len(serial) >= 2 and serial[0] == serial[-1] and serial[0] in "\"'":
+        serial = serial[1:-1].strip()
+    return serial.lower()
+
+
 @dataclass(frozen=True)
 class InventoryAssetOption:
     inventory_id: str
@@ -212,7 +220,11 @@ class InventoryService:
         if df.empty:
             return []
         wanted = {normalize_model_name(m) for m in models}
-        blocked = {s.lower() for s in (open_serials or set())}
+        blocked = {
+            serial
+            for serial in (normalize_inventory_serial_for_match(s) for s in (open_serials or set()))
+            if serial
+        }
         out: list[InventoryAssetOption] = []
         for row in df.fillna("").astype(str).to_dict("records"):
             model = str(row.get("model", "")).strip()
@@ -224,7 +236,7 @@ class InventoryService:
                 continue
             if str(row.get("location_type", "")).strip().lower() == "cliente":
                 continue
-            if serial.lower() in blocked:
+            if normalize_inventory_serial_for_match(serial) in blocked:
                 continue
             out.append(InventoryAssetOption(
                 inventory_id=inv_id,
@@ -298,7 +310,11 @@ class InventoryService:
         location_contact_id: str = "",
         location_detail: str = "",
     ) -> None:
-        wanted = {s.strip().lower() for s in serials if s.strip()}
+        wanted = {
+            serial
+            for serial in (normalize_inventory_serial_for_match(s) for s in serials)
+            if serial
+        }
         if not wanted:
             return
         df = self.inventory_df()
@@ -306,7 +322,7 @@ class InventoryService:
             return
         changed = False
         for idx, row in df.iterrows():
-            serial = str(row.get("serial_number", "")).strip().lower()
+            serial = normalize_inventory_serial_for_match(row.get("serial_number", ""))
             if serial not in wanted:
                 continue
             df.at[idx, "location_type"] = location_type
@@ -314,6 +330,65 @@ class InventoryService:
             df.at[idx, "location_detail"] = location_detail
             df.at[idx, "updated_at"] = _today()
             changed = True
+        if changed:
+            self._sheets.write_worksheet_df(INVENTORY_WORKSHEET_NAME, df, list(INVENTORY_HEADERS))
+
+    def reconcile_locations_for_serials(
+        self,
+        serials: list[str],
+        open_assignments_by_serial: dict[str, dict[str, str]],
+        *,
+        default_location_type: str = "por_definir",
+    ) -> None:
+        """Recalculate inventory location for affected serials from open histories.
+
+        ``open_assignments_by_serial`` is keyed by normalized serial and contains
+        the open sensor-history row that currently owns that serial. Serial values
+        are normalized for matching, but stored serial numbers are left untouched.
+        """
+        wanted = {
+            serial
+            for serial in (normalize_inventory_serial_for_match(s) for s in serials)
+            if serial
+        }
+        if not wanted:
+            return
+        normalized_assignments = {
+            normalize_inventory_serial_for_match(serial): row
+            for serial, row in open_assignments_by_serial.items()
+            if normalize_inventory_serial_for_match(serial)
+        }
+        fallback_location = (default_location_type or "por_definir").strip().lower()
+        if fallback_location not in {"oficina", "por_definir"}:
+            fallback_location = "por_definir"
+
+        df = self.inventory_df()
+        if df.empty:
+            return
+        changed = False
+        for idx, row in df.iterrows():
+            serial = normalize_inventory_serial_for_match(row.get("serial_number", ""))
+            if serial not in wanted:
+                continue
+            assignment = normalized_assignments.get(serial)
+            if assignment:
+                new_location_type = "cliente"
+                new_contact_id = str(assignment.get("contact_id", "") or "")
+                new_detail = str(assignment.get("nombre_cliente", "") or "")
+            else:
+                new_location_type = fallback_location
+                new_contact_id = ""
+                new_detail = ""
+            if (
+                str(df.at[idx, "location_type"] or "") != new_location_type
+                or str(df.at[idx, "location_contact_id"] or "") != new_contact_id
+                or str(df.at[idx, "location_detail"] or "") != new_detail
+            ):
+                df.at[idx, "location_type"] = new_location_type
+                df.at[idx, "location_contact_id"] = new_contact_id
+                df.at[idx, "location_detail"] = new_detail
+                df.at[idx, "updated_at"] = _today()
+                changed = True
         if changed:
             self._sheets.write_worksheet_df(INVENTORY_WORKSHEET_NAME, df, list(INVENTORY_HEADERS))
 
@@ -354,7 +429,7 @@ class InventoryService:
     ) -> list[str]:
         """Return a list of human-readable conflict messages.
 
-        Checks whether the SIM or probe being associated are already linked to
+        Checks whether one-to-one assets being associated are already linked to
         a different inventory item.  An empty list means the values are clean.
 
         ``values`` must include ``inventory_id`` (the item being saved) plus any
@@ -398,7 +473,7 @@ class InventoryService:
 
         messages.extend(_conflicts_for("associated_sim_inventory_id", sim_id, "SIM"))
         messages.extend(_conflicts_for("associated_probe_inventory_id", probe_id, "sonda"))
-        messages.extend(_conflicts_for("associated_gateway_inventory_id", gw_id, "gateway"))
+        inventory_ids = set(filled.get("inventory_id", pd.Series(dtype=str)).str.strip().tolist())
 
         # Verify referenced IDs exist in inventory
         for field, ref_id, label in [
@@ -406,10 +481,17 @@ class InventoryService:
             ("associated_probe_inventory_id", probe_id, "sonda"),
             ("associated_gateway_inventory_id", gw_id, "gateway"),
         ]:
-            if ref_id and ref_id not in set(filled.get("inventory_id", pd.Series(dtype=str)).str.strip().tolist()):
+            if ref_id and ref_id not in inventory_ids:
                 messages.append(
                     f"El ID de {label} '{ref_id}' no existe en inventario. "
                     "Verifica que el activo asociado esté dado de alta."
+                )
+
+        if gw_id and gw_id in inventory_ids:
+            gateway_row = filled[filled.get("inventory_id", pd.Series(dtype=str)).str.strip() == gw_id].iloc[0]
+            if normalize_model_name(str(gateway_row.get("model", "") or "")) != "ug67":
+                messages.append(
+                    f"El gateway asociado '{self._serial_for_id(gw_id, filled)}' debe ser un UG67."
                 )
 
         return messages

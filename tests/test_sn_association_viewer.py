@@ -12,6 +12,7 @@ from ui.components.sn_association_viewer import (
     AssociationGroup,
     IntegrityConflict,
     _filter_occurrences,
+    _group_matches_query,
     build_inventory_association_map,
 )
 from services.history_service import SensorAsset, SensorAssetOccurrence
@@ -146,6 +147,28 @@ def test_ug67_group_with_sim_and_sensors() -> None:
     assert "sim" in roles
     assert roles.count("sensor") == 2
     assert conflicts == []
+
+
+def test_group_matches_query_normalizes_quoted_serials_and_location_detail() -> None:
+    group = AssociationGroup(
+        role="ug67",
+        inventory_id="ug-1",
+        model="ug67",
+        serial_number='"6222E3615254"',
+        location_type="cliente",
+        location_detail="Primaram",
+        children=[
+            AssociationChild(
+                role="sensor",
+                inventory_id="em-1",
+                model="em500",
+                serial_number='"6126E51316512025"',
+            ),
+        ],
+    )
+    assert _group_matches_query(group, "6222E3615254")
+    assert _group_matches_query(group, "6126E51316512025")
+    assert _group_matches_query(group, "primaram")
 
 
 # ===========================================================================

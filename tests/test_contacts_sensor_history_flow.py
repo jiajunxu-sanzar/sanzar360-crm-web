@@ -358,6 +358,44 @@ def test_open_asset_serials_solenoide_open() -> None:
     assert "sol001" in open_set
 
 
+def test_open_sensor_assignment_rows_for_serials_uses_open_remaining_owner() -> None:
+    sensor_rows = [
+        _sensor_row(
+            historial_sensor_id="old",
+            contact_id="cid-old",
+            nombre_cliente="Old",
+            fecha_inicio="01/01/2025",
+            sensor_serial_number='ug67-"6222E3615254"-SIM900',
+            estado_cierre_sensor="abierto",
+            updated_at="01/01/2025",
+        ),
+        _sensor_row(
+            historial_sensor_id="new",
+            contact_id="cid-new",
+            nombre_cliente="New",
+            fecha_inicio="01/02/2025",
+            sensor_serial_number="ug67-6222E3615254-SIM900",
+            estado_cierre_sensor="abierto",
+            updated_at="01/02/2025",
+        ),
+        _sensor_row(
+            historial_sensor_id="closed",
+            contact_id="cid-closed",
+            nombre_cliente="Closed",
+            fecha_inicio="01/03/2025",
+            sensor_serial_number="ug67-6222E3615254-SIM900",
+            estado_cierre_sensor="cerrado",
+            updated_at="01/03/2025",
+        ),
+    ]
+    sheets = FakeSheets(sensor_rows=sensor_rows)
+    hist = HistoryService(sheets)
+    assignments = hist.open_sensor_assignment_rows_for_serials(["6222E3615254"], exclude_historial_sensor_id="old")
+    owner = assignments["6222e3615254"]
+    assert owner["historial_sensor_id"] == "new"
+    assert owner["contact_id"] == "cid-new"
+
+
 # ===========================================================================
 # 6. _collect_all_serials + inventory sync (unit-level)
 # ===========================================================================

@@ -3,7 +3,12 @@ from __future__ import annotations
 import pandas as pd
 
 from config.settings import INVENTORY_HEADERS, INVENTORY_MODEL_FIELD_HEADERS, INVENTORY_MODEL_FIELDS_WORKSHEET_NAME, INVENTORY_WORKSHEET_NAME
-from services.inventory_service import InventoryService, normalize_field_key, normalize_model_name
+from services.inventory_service import (
+    InventoryService,
+    normalize_field_key,
+    normalize_inventory_serial_for_match,
+    normalize_model_name,
+)
 
 
 class FakeSheets:
@@ -57,6 +62,8 @@ def test_normalize_helpers() -> None:
     assert normalize_model_name(" Teros-10 ") == "teros10"
     assert normalize_model_name("Teros 10") == "teros10"
     assert normalize_field_key(" Associated_SIM_Inventory_ID ") == "associated_sim_inventory_id"
+    assert normalize_inventory_serial_for_match('"6222E3615254 "') == "6222e3615254"
+    assert normalize_inventory_serial_for_match("6222E3615254") == "6222e3615254"
 
 
 def test_asset_options_by_models_handles_model_variants() -> None:
@@ -202,3 +209,141 @@ def test_delete_inventory_by_id_uses_injected_df_without_extra_reads() -> None:
     after_reads = sheets.read_calls
     assert deleted is True
     assert after_reads == before_reads
+
+
+def test_check_association_gateway_allows_multiple_sensors_same_ug67() -> None:
+    sheets = FakeSheets()
+    svc = InventoryService(sheets)
+    sheets.frames[INVENTORY_WORKSHEET_NAME] = pd.DataFrame(
+        [
+            _row_with_headers(inventory_id="ug-1", model="ug67", serial_number="UG-A"),
+            _row_with_headers(
+                inventory_id="em-1",
+                model="em500",
+                serial_number="EM-A",
+                associated_gateway_inventory_id="ug-1",
+            ),
+        ]
+    )
+    conflicts = svc.check_association_conflicts(
+        _row_with_headers(
+            inventory_id="em-2",
+            model="em500",
+            serial_number="EM-B",
+            associated_gateway_inventory_id="ug-1",
+        )
+    )
+    assert conflicts == []
+
+
+def test_check_association_gateway_must_be_ug67() -> None:
+    sheets = FakeSheets()
+    svc = InventoryService(sheets)
+    sheets.frames[INVENTORY_WORKSHEET_NAME] = pd.DataFrame(
+        [
+            _row_with_headers(inventory_id="uc-1", model="uc501", serial_number="UC-A"),
+        ]
+    )
+    conflicts = svc.check_association_conflicts(
+        _row_with_headers(
+            inventory_id="em-1",
+            model="em500",
+            serial_number="EM-A",
+            associated_gateway_inventory_id="uc-1",
+        )
+    )
+    assert len(conflicts) == 1
+    assert "debe ser un UG67" in conflicts[0]
+
+
+def test_set_location_for_serials_matches_quoted_inventory_serial() -> None:
+    sheets = FakeSheets()
+    svc = InventoryService(sheets)
+    sheets.frames[INVENTORY_WORKSHEET_NAME] = pd.DataFrame(
+        [
+            _row_with_headers(
+                inventory_id="ug-1",
+                model="ug67",
+                serial_number='"6222E3615254"',
+                location_type="oficina",
+            ),
+        ]
+    )
+    svc.set_location_for_serials(
+        ["6222E3615254"],
+        location_type="cliente",
+        location_contact_id="cid-primaram",
+        location_detail="Primaram",
+    )
+    row = sheets.frames[INVENTORY_WORKSHEET_NAME].iloc[0]
+    assert row["location_type"] == "cliente"
+    assert row["location_contact_id"] == "cid-primaram"
+    assert row["location_detail"] == "Primaram"
+
+
+def test_available_root_assets_blocks_quoted_serial_when_open_serial_unquoted() -> None:
+    sheets = FakeSheets()
+    svc = InventoryService(sheets)
+    sheets.frames[INVENTORY_WORKSHEET_NAME] = pd.DataFrame(
+        [
+            _row_with_headers(
+                inventory_id="ug-1",
+                model="ug67",
+                serial_number='"6222E3615254"',
+                location_type="oficina",
+            ),
+        ]
+    )
+    options = svc.available_root_assets_for_history(
+        ("ug67",),
+        open_serials={"6222e3615254"},
+        inv_df=sheets.frames[INVENTORY_WORKSHEET_NAME],
+    )
+    assert options == []
+
+
+def test_reconcile_locations_releases_serial_without_open_assignment() -> None:
+    sheets = FakeSheets()
+    svc = InventoryService(sheets)
+    sheets.frames[INVENTORY_WORKSHEET_NAME] = pd.DataFrame(
+        [
+            _row_with_headers(
+                inventory_id="ug-1",
+                model="ug67",
+                serial_number='"6222E3615254"',
+                location_type="cliente",
+                location_contact_id="cid-old",
+                location_detail="Old Client",
+            ),
+        ]
+    )
+    svc.reconcile_locations_for_serials(["6222E3615254"], {}, default_location_type="por_definir")
+    row = sheets.frames[INVENTORY_WORKSHEET_NAME].iloc[0]
+    assert row["location_type"] == "por_definir"
+    assert row["location_contact_id"] == ""
+    assert row["location_detail"] == ""
+
+
+def test_reconcile_locations_preserves_remaining_open_assignment() -> None:
+    sheets = FakeSheets()
+    svc = InventoryService(sheets)
+    sheets.frames[INVENTORY_WORKSHEET_NAME] = pd.DataFrame(
+        [
+            _row_with_headers(
+                inventory_id="ug-1",
+                model="ug67",
+                serial_number='"6222E3615254"',
+                location_type="cliente",
+                location_contact_id="cid-old",
+                location_detail="Old Client",
+            ),
+        ]
+    )
+    svc.reconcile_locations_for_serials(
+        ["6222E3615254"],
+        {"6222e3615254": {"contact_id": "cid-new", "nombre_cliente": "New Client"}},
+    )
+    row = sheets.frames[INVENTORY_WORKSHEET_NAME].iloc[0]
+    assert row["location_type"] == "cliente"
+    assert row["location_contact_id"] == "cid-new"
+    assert row["location_detail"] == "New Client"

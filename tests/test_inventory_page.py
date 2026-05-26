@@ -7,6 +7,7 @@ from pages.inventory import (
     _editable_field_keys,
     _field_help,
     _field_label,
+    _form_field_keys,
     _inventory_row_by_id,
     _model_field_keys,
     _reconcile_selected_inventory_id,
@@ -41,9 +42,39 @@ def test_model_field_keys_sorts_order_index_as_numeric() -> None:
     assert result[:3] == ["supplier", "serial_number", "brand"]
 
 
+def test_model_field_keys_adds_em500_gateway_when_catalog_missing() -> None:
+    model_fields_df = pd.DataFrame(
+        [
+            {"model": "em500", "field_key": "serial_number", "order_index": "1", "active": "TRUE"},
+            {"model": "em500", "field_key": "brand", "order_index": "2", "active": "TRUE"},
+        ]
+    )
+    result = _model_field_keys("em500", model_fields_df)
+    assert "associated_gateway_inventory_id" in result
+
+
+def test_model_field_keys_hides_unused_em500_fields() -> None:
+    model_fields_df = pd.DataFrame(
+        [
+            {"model": "em500", "field_key": "serial_number", "order_index": "1", "active": "TRUE"},
+            {"model": "em500", "field_key": "gateway_config_name", "order_index": "2", "active": "TRUE"},
+            {"model": "em500", "field_key": "ui_password", "order_index": "3", "active": "TRUE"},
+        ]
+    )
+    result = _model_field_keys("em500", model_fields_df)
+    assert "gateway_config_name" not in result
+    assert "ui_password" not in result
+
+
 def test_editable_field_keys_excludes_audit_fields() -> None:
     out = _editable_field_keys(["inventory_id", "model", "serial_number", "created_at", "updated_at"])
     assert out == ["model", "serial_number"]
+
+
+def test_form_field_keys_hides_location_fields_only_in_edit_mode() -> None:
+    fields = ["serial_number", "location_type", "location_contact_id", "brand"]
+    assert _form_field_keys(fields, mode="create") == fields
+    assert _form_field_keys(fields, mode="edit") == ["serial_number", "brand"]
 
 
 def test_inventory_row_by_id_finds_exact_row() -> None:
