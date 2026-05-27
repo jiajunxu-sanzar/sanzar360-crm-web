@@ -68,6 +68,7 @@ def validate_dd_mm_yyyy_fields(labels_and_values: list[tuple[str, str]]) -> str 
 _FECHA_PAGOS_ENTRY_RE = re.compile(r"^\d{2}/\d{2}/\d{4}\s*-\s*.+$")
 _CUENTA_USUARIO_RE = re.compile(r"^[^,\s]+@[^,\s]+\s*,\s*.+$")
 _UC501_ITEM_RE = re.compile(r"^uc501-[^,\s-]+-[^,\s-]+-[^,\s-]+$", re.IGNORECASE)
+_UC501_GATEWAY_ONLY_RE = re.compile(r"^uc501-[^,\s-]+$", re.IGNORECASE)
 _UG67_GATEWAY_RE = re.compile(r"^ug67-[^,\s-]+-[^,\s-]+$", re.IGNORECASE)
 _UG67_GATEWAY_NO_SIM_RE = re.compile(r"^ug67-[^,\s-]+$", re.IGNORECASE)
 _UG67_DEVICE_RE = re.compile(r"^(em500|em300|uc512)-[^,\s-]+$", re.IGNORECASE)
@@ -101,7 +102,8 @@ def normalize_sensor_serial_number(value: str) -> str:
 
 SENSOR_SERIAL_NUMBER_FORMAT_HELP = (
     "Formatos permitidos:\n"
-    "- UC501: uc501-serial_uc501-serial_teros10-sim. Ejemplo: uc501-UC001-TE001-SIM001\n"
+    "- UC501 completo: uc501-serial_uc501-serial_teros10-sim. Ejemplo: uc501-UC001-TE001-SIM001\n"
+    "- UC501 solo gateway (sin sonda/SIM en inventario): uc501-serial_uc501\n"
     "- UG67 con SIM: ug67-serial_gateway-sim, em500-serial, ... Ejemplo: ug67-UG001-SIM900, em500-EM50001\n"
     "- UG67 sin SIM: ug67-serial_gateway, em500-serial, ... Ejemplo: ug67-UG001, em500-EM50001\n"
     "- Nodo suelto: em500-EM50001, em300-EM30001 o uc512-UCDEM00341\n"
@@ -158,6 +160,12 @@ def is_valid_sensor_serial_number(value: str) -> bool:
             expecting_ug67_devices = False
             ug67_devices_count = 0
             continue
+        if _UC501_GATEWAY_ONLY_RE.match(item):
+            if expecting_ug67_devices and ug67_devices_count == 0:
+                return False
+            expecting_ug67_devices = False
+            ug67_devices_count = 0
+            continue
         if _UG67_GATEWAY_RE.match(item):
             if expecting_ug67_devices and ug67_devices_count == 0:
                 return False
@@ -207,6 +215,8 @@ def sensor_serial_number_summary_lines(value: str) -> list[str]:
                 out.append(
                     f"UC501 | UC501 SN: {fields[1]} | Teros10 SN: {fields[2]} | SIM: {fields[3]}"
                 )
+            elif len(fields) == 2:
+                out.append(f"UC501 | UC501 SN: {fields[1]} | Sin sonda/SIM en historial")
             else:
                 out.append(f"UC501 | {item}")
             current_ug67 = None

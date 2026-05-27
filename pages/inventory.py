@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import history_service, inventory_service, load_inventory_cached, load_inventory_model_fields_cached
+from services.inventory_export import build_association_map_pdf_bytes
 from app.navigation import page_menu_title
 from app.state import bump_inventory_cache
 from config.settings import INVENTORY_HEADERS, INVENTORY_MODEL_FIELD_HEADERS
@@ -636,7 +637,7 @@ def render(_: pd.DataFrame) -> None:
             return
         raise
 
-    col1, col2, col3 = st.columns([0.55, 0.22, 0.23])
+    col1, col2, col3, col4 = st.columns([0.42, 0.2, 0.2, 0.18])
     query = col1.text_input("Buscar inventario", key="inventory_query", placeholder="SN, EID SIM, modelo, proveedor, ubicacion...")
     with col2:
         st.text("")
@@ -644,6 +645,17 @@ def render(_: pd.DataFrame) -> None:
             st.session_state[INVENTORY_SN_VIEWER_OPEN_KEY] = True
             st.rerun()
     with col3:
+        st.text("")
+        pdf_content, pdf_name = build_association_map_pdf_bytes(inv_df)
+        st.download_button(
+            "📄 Exportar PDF (mapa)",
+            data=pdf_content,
+            file_name=pdf_name,
+            mime="application/pdf",
+            key="inventory_btn_export_pdf_association",
+            width="stretch",
+        )
+    with col4:
         st.text("")
         if st.button("+ Nuevo inventario", key="inventory_btn_new", width="stretch", type="primary"):
             st.session_state[INVENTORY_NEW_DIALOG_OPEN_KEY] = True

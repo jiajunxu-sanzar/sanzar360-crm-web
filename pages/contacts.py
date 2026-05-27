@@ -47,6 +47,7 @@ from services.history_service import (
 )
 from services.contact_deletion import delete_contact_and_related_data
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
+from services.inventory_service import InventoryAssetOption, normalize_inventory_serial_for_match
 from services.sheet_date_format import (
     SENSOR_SERIAL_NUMBER_FORMAT_HELP,
     is_valid_dd_mm_yyyy,
@@ -215,6 +216,7 @@ def _clear_sensor_picker_state(prefix: str) -> None:
         "_non_uc501_type",
         "_sensor_uc501_sn",
         "_sensor_ug67_sn",
+        "_sensor_em500_sn",
         "_sensor_solenoide_sn",
         "_sensor_sim_sn",
         "_sensor_serial_number",
@@ -227,6 +229,11 @@ def _history_delete_confirm_key(kind: str, row_id: str) -> str:
     safe_kind = "".join(c if c.isalnum() else "_" for c in kind)
     safe_row_id = "".join(c if c.isalnum() else "_" for c in row_id)
     return f"{HISTORY_DELETE_CONFIRM_PREFIX}_{safe_kind}_{safe_row_id}"
+
+
+def _sensor_close_pending_values_key(row_id: str) -> str:
+    safe_row_id = "".join(c if c.isalnum() else "_" for c in row_id)
+    return f"sensor_close_pending_values_{safe_row_id}"
 
 
 def _on_dismiss_history_edit() -> None:
@@ -248,6 +255,26 @@ def _on_dismiss_history_add() -> None:
         if m.get("kind") == "sensores":
             _clear_sensor_picker_state("sensores_new")
         modal_state.close_modal()
+
+
+def _on_dismiss_sensor_close_location() -> None:
+    m = modal_state.get_active_modal()
+    if not m or m.get("type") != "sensor_close_location":
+        return
+    kind = str(m.get("kind", ""))
+    contact_id = str(m.get("contact_id", ""))
+    row_id = str(m.get("row_id", ""))
+    if kind == "sensores" and row_id:
+        _clear_sensor_picker_state(f"{kind}_{row_id}")
+        st.session_state.pop(_sensor_close_pending_values_key(row_id), None)
+    modal_state.close_modal()
+    if contact_id and kind:
+        _clear_history_selection(contact_id, kind)
+
+
+def _is_sensor_history_open(row: dict[str, str]) -> bool:
+    """Match HistoryService: open when estado is not explicitly cerrado."""
+    return str(row.get("estado_cierre_sensor", "")).strip().lower() != "cerrado"
 
 
 def _clear_contact_overlay_state(*, keep_contact_id: str = "") -> None:
@@ -910,8 +937,28 @@ def _render_operativa_cards(contact: dict[str, str]) -> None:
             )
             _handle_history_table_secondary_open(kind, rows, contact, selected_pos)
 
+    _maybe_render_sensor_close_location_modal(contact)
     _maybe_render_add_history_modal(contact)
     _maybe_render_edit_history_modal(contact)
+
+
+def _maybe_render_sensor_close_location_modal(contact: dict[str, str]) -> None:
+    m = modal_state.get_active_modal()
+    if not m or m.get("type") != "sensor_close_location":
+        return
+    contact_id = contact.get("contact_id", "")
+    if m.get("contact_id") != contact_id:
+        return
+    kind = m["kind"]
+    row_id = m["row_id"]
+    spec = HISTORY_SPECS.get(kind)
+    if spec is None:
+        return
+    rows = history_service().rows_for_contact(kind, contact_id)
+    row = next((item for item in rows if str(item.get(spec.id_column, "")) == row_id), None)
+    if row is None:
+        return
+    _sensor_close_location_dialog(kind, contact, row)
 
 
 def _maybe_render_add_history_modal(contact: dict[str, str]) -> None:
@@ -927,6 +974,7 @@ def _maybe_render_edit_history_modal(contact: dict[str, str]) -> None:
     m = modal_state.get_active_modal()
     if not m or m.get("type") != "edit_history":
         return
+    # sensor_close_location replaces edit_history until save/cancel
     contact_id = contact.get("contact_id", "")
     if m.get("contact_id") != contact_id:
         return
@@ -1043,6 +1091,7 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
         if kind == "sensores":
             _clear_sensor_picker_state(f"{kind}_{row_id}")
             st.session_state.pop(delete_confirm_key, None)
+            st.session_state.pop(_sensor_close_pending_values_key(row_id), None)
         _clear_modal_flags()
         _clear_history_selection(contact_id, kind)
         st.rerun()
@@ -1063,10 +1112,18 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
             st.error(f"No se pudo eliminar el histórico: {exc}")
 
     if confirm:
-        was_open = str(row.get("estado_cierre_sensor", "")).strip().lower() == "abierto"
+        was_open = _is_sensor_history_open(row)
         now_closed = str(st.session_state.get(f"{kind}_{row.get(spec.id_column, '')}_estado_cierre_sensor", "")).strip().lower() == "cerrado"
         if kind == "sensores" and was_open and now_closed:
-            _sensor_close_location_dialog(kind, contact, row)
+            prefix = f"{kind}_{row_id}"
+            pending_values: dict[str, str] = {}
+            for header in spec.headers:
+                if header in {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}:
+                    continue
+                pending_values[header] = str(st.session_state.get(f"{prefix}_{header}", ""))
+            st.session_state[_sensor_close_pending_values_key(row_id)] = pending_values
+            modal_state.open_sensor_close_location_modal(kind, contact_id, row_id)
+            st.rerun()
             return
         if _submit_history_form(kind, contact, row):
             _clear_modal_flags()
@@ -1074,22 +1131,36 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
             st.rerun()
 
 
-@st.dialog("Ubicación al cerrar histórico sensor")
+@st.dialog("Ubicación al cerrar histórico sensor", on_dismiss=_on_dismiss_sensor_close_location)
 def _sensor_close_location_dialog(kind: str, contact: dict[str, str], row: dict[str, str]) -> None:
-    st.markdown("¿Dónde quieres indicar que está este sensor?")
-    choice = st.radio(
-        "Destino",
-        ("oficina", "por definir"),
-        horizontal=True,
-        key=f"sensor_close_target_{row.get('historial_sensor_id', '')}",
+    spec = HISTORY_SPECS[kind]
+    row_id = str(row.get(spec.id_column, "") or "")
+    contact_id = str(contact.get("contact_id", "") or "")
+    pending_values = st.session_state.get(_sensor_close_pending_values_key(row_id), None)
+    st.markdown("**Cierre de histórico sensor**")
+    st.caption(
+        "En inventario, los activos pasarán a **por definir** (no están asignados al cliente "
+        "de este histórico). Si el equipo vuelve a almacén u oficina, regístralo con el "
+        "**contacto Oficina** como cualquier otro cliente — aquí no se usa la ubicación «oficina» del inventario."
     )
     c1, c2 = st.columns(2)
     if c1.button("Guardar cierre", type="primary", width="stretch"):
-        if _submit_history_form(kind, contact, row, close_target_location=choice):
+        if _submit_history_form(
+            kind,
+            contact,
+            row,
+            close_target_location="por_definir",
+            prefilled_values=pending_values,
+        ):
+            if kind == "sensores":
+                _clear_sensor_picker_state(f"{kind}_{row_id}")
+                st.session_state.pop(_sensor_close_pending_values_key(row_id), None)
             _clear_modal_flags()
-            _clear_history_selection(str(contact.get("contact_id", "")), kind)
+            _clear_history_selection(contact_id, kind)
             st.rerun()
-    if c2.button("Cancelar", width="stretch"):
+    if c2.button("Volver a editar", width="stretch"):
+        st.session_state.pop(_sensor_close_pending_values_key(row_id), None)
+        modal_state.open_edit_history_modal(kind, contact_id, row_id)
         st.rerun()
 
 
@@ -1110,10 +1181,13 @@ def _extract_uc501_bundle(serial_value: str) -> tuple[str, str, str]:
     first = raw.split(",")[0].strip()
     if not first.lower().startswith("uc501-"):
         return "", "", ""
+    first = normalize_sensor_serial_number(first)
     parts = first.split("-")
-    if len(parts) != 4:
-        return "", "", ""
-    return parts[1].strip(), parts[3].strip(), parts[2].strip()  # uc501_sn, sim_sn, probe_sn
+    if len(parts) == 4:
+        return parts[1].strip(), parts[3].strip(), parts[2].strip()  # uc501_sn, sim_sn, probe_sn
+    if len(parts) == 2:
+        return parts[1].strip(), "", ""
+    return "", "", ""
 
 
 def _extract_ug67_bundle(serial_value: str) -> tuple[str, str]:
@@ -1153,11 +1227,68 @@ def _extract_sim_sn(serial_value: str) -> str:
     return parts[1].strip() if len(parts) == 2 else ""
 
 
+def _extract_em500_sn(serial_value: str) -> str:
+    raw = (serial_value or "").strip()
+    if not raw.lower().startswith("em500-"):
+        return ""
+    parts = raw.split("-", 1)
+    return parts[1].strip() if len(parts) == 2 else ""
+
+
+def _find_inventory_option_by_serial(
+    options: list[InventoryAssetOption],
+    serial: str,
+) -> InventoryAssetOption | None:
+    """Match inventory rows by serial, ignoring wrapping quotes and case."""
+    target = normalize_inventory_serial_for_match(serial)
+    if not target:
+        return None
+    for opt in options:
+        if normalize_inventory_serial_for_match(opt.serial_number) == target:
+            return opt
+    return None
+
+
+def _serial_in_labels(serial: str, labels: list[str]) -> bool:
+    target = normalize_inventory_serial_for_match(serial)
+    if not target:
+        return serial in labels
+    return any(
+        normalize_inventory_serial_for_match(label) == target
+        for label in labels
+        if label
+    )
+
+
+def _normalized_serial_set(options: list[InventoryAssetOption]) -> set[str]:
+    return {
+        normalize_inventory_serial_for_match(o.serial_number)
+        for o in options
+        if normalize_inventory_serial_for_match(o.serial_number)
+    }
+
+
+def _resolve_inventory_option(
+    inv_svc,
+    models: tuple[str, ...],
+    serial: str,
+    available_options: list[InventoryAssetOption],
+    inv_df: pd.DataFrame,
+) -> InventoryAssetOption | None:
+    opt = _find_inventory_option_by_serial(available_options, serial)
+    if opt is not None:
+        return opt
+    all_opts = inv_svc.asset_options_by_models(models, inv_df=inv_df)
+    return _find_inventory_option_by_serial(all_opts, serial)
+
+
 def _infer_sensor_root_type(serial_value: str) -> str:
     """Infer root asset type from existing sensor_serial_number."""
     first = (serial_value or "").strip().split(",")[0].strip().lower()
     if first.startswith("ug67-"):
         return "ug67"
+    if first.startswith("em500-"):
+        return "em500"
     if first.startswith("solenoide-"):
         return "solenoide"
     if first.startswith("sim-"):
@@ -1174,6 +1305,8 @@ def _collect_all_serials_from_sensor_sn(sensor_serial_number: str) -> list[str]:
             parts = item.split("-")
             if len(parts) == 4:
                 serials.extend([parts[1], parts[2], parts[3]])
+            elif len(parts) == 2:
+                serials.append(parts[1])
         elif lower.startswith("ug67-"):
             parts = item.split("-")
             if len(parts) == 3:
@@ -1541,6 +1674,7 @@ def _submit_history_form(
     existing: dict[str, str] | None,
     *,
     close_target_location: str = "",
+    prefilled_values: dict[str, str] | None = None,
 ) -> bool:
     spec = HISTORY_SPECS[kind]
     prefix = f"{kind}_{existing.get(spec.id_column) if existing else 'new'}"
@@ -1555,7 +1689,10 @@ def _submit_history_form(
     for header in spec.headers:
         if header in {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}:
             continue
-        values[header] = str(st.session_state.get(f"{prefix}_{header}", ""))
+        if prefilled_values is not None:
+            values[header] = str(prefilled_values.get(header, ""))
+        else:
+            values[header] = str(st.session_state.get(f"{prefix}_{header}", ""))
 
     error = _validate_history_values(kind, values, prefix=prefix)
     if error:
@@ -1646,15 +1783,16 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         key=is_uc501_key,
     )
 
-    # Step 2: if not UC501, choose between UG67, solenoide or SIM individual
+    # Step 2: if not UC501, choose between UG67, EM500, solenoide or SIM individual
     if is_uc501:
         root_type = "uc501"
     else:
         root_type = st.radio(
             "Tipo de activo",
-            options=["ug67", "solenoide", "sim"],
+            options=["ug67", "em500", "solenoide", "sim"],
             format_func=lambda x: {
                 "ug67": "UG67 (gateway)",
+                "em500": "EM500 (nodo suelto)",
                 "solenoide": "Electroválvula solenoide",
                 "sim": "SIM individual",
             }[x],
@@ -1674,24 +1812,22 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         # (happens when editing a record that has this UC501 open for another contact)
         selected_sn = str(st.session_state.get(uc_sn_key, existing_uc) or "")
         uc_labels = [""]
-        uc_serials_set = {o.serial_number for o in options_uc501}
+        uc_serials_set = _normalized_serial_set(options_uc501)
         for o in options_uc501:
             uc_labels.append(o.serial_number)
-        if selected_sn and selected_sn not in uc_serials_set:
+        if selected_sn and normalize_inventory_serial_for_match(selected_sn) not in uc_serials_set:
             uc_labels.append(selected_sn)  # keep editing selection visible
 
         if not options_uc501 and not selected_sn:
             st.info("Aún no hay ningún UC501 disponible en inventario.")
         else:
             if uc_sn_key not in st.session_state:
-                st.session_state[uc_sn_key] = selected_sn if selected_sn in uc_labels else (uc_labels[0] if uc_labels else "")
+                st.session_state[uc_sn_key] = selected_sn if _serial_in_labels(selected_sn, uc_labels) else (uc_labels[0] if uc_labels else "")
             uc_sn = st.selectbox("UC501 disponibles (SN)", options=uc_labels, key=uc_sn_key)
             if uc_sn:
-                opt = next((o for o in options_uc501 if o.serial_number == uc_sn), None)
-                if opt is None:
-                    # Editing mode: find in full inventory
-                    all_opts = inv_svc.asset_options_by_models(("uc501",), inv_df=inv_df)
-                    opt = next((o for o in all_opts if o.serial_number == uc_sn), None)
+                opt = _resolve_inventory_option(
+                    inv_svc, ("uc501",), uc_sn, options_uc501, inv_df
+                )
                 if opt:
                     assoc = inv_svc.associations_for_root_asset(opt.inventory_id, inv_df=inv_df)
                     with st.container(border=True):
@@ -1712,17 +1848,24 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
                     sim_sn = assoc.sim.serial_number if assoc.sim else ""
                     if probe_sn and sim_sn:
                         compound = f"uc501-{uc_sn}-{probe_sn}-{sim_sn}"
+                    elif not probe_sn and not sim_sn:
+                        compound = f"uc501-{uc_sn}"
+                        st.warning(
+                            f"El UC501 **{uc_sn}** no tiene sonda (Teros 10/12) ni SIM configurada "
+                            "en Inventario. Puedes guardar el histórico solo con el serial del UC501; "
+                            "vincula componentes en Inventario cuando los tengas."
+                        )
                     else:
-                        compound = ""
+                        compound = f"uc501-{uc_sn}"
                         _missing = []
                         if not probe_sn:
                             _missing.append("sonda (Teros 10/12)")
                         if not sim_sn:
                             _missing.append("SIM")
-                        st.error(
-                            f"No se puede guardar: el UC501 **{uc_sn}** no tiene "
-                            f"**{' ni '.join(_missing)}** configurada en Inventario. "
-                            "Ve a Inventario → edita ese UC501 y vincula los componentes antes de crear el historial."
+                        st.warning(
+                            f"El UC501 **{uc_sn}** no tiene **{' ni '.join(_missing)}** configurada en Inventario. "
+                            "Puedes guardar el histórico solo con el serial del UC501; "
+                            "vincula los componentes en Inventario cuando los tengas."
                         )
 
     # ── UG67 branch ──────────────────────────────────────────────────────────
@@ -1733,23 +1876,22 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         options_ug67 = inv_svc.available_root_assets_for_history(("ug67",), open_serials=open_serials, inv_df=inv_df)
         selected_sn = str(st.session_state.get(ug_sn_key, existing_ug) or "")
         ug_labels = [""]
-        ug_serials_set = {o.serial_number for o in options_ug67}
+        ug_serials_set = _normalized_serial_set(options_ug67)
         for o in options_ug67:
             ug_labels.append(o.serial_number)
-        if selected_sn and selected_sn not in ug_serials_set:
+        if selected_sn and normalize_inventory_serial_for_match(selected_sn) not in ug_serials_set:
             ug_labels.append(selected_sn)
 
         if not options_ug67 and not selected_sn:
             st.info("Aún no hay ningún UG67 disponible en inventario.")
         else:
             if ug_sn_key not in st.session_state:
-                st.session_state[ug_sn_key] = selected_sn if selected_sn in ug_labels else (ug_labels[0] if ug_labels else "")
+                st.session_state[ug_sn_key] = selected_sn if _serial_in_labels(selected_sn, ug_labels) else (ug_labels[0] if ug_labels else "")
             ug_sn = st.selectbox("UG67 disponibles (SN)", options=ug_labels, key=ug_sn_key)
             if ug_sn:
-                opt = next((o for o in options_ug67 if o.serial_number == ug_sn), None)
-                if opt is None:
-                    all_opts = inv_svc.asset_options_by_models(("ug67",), inv_df=inv_df)
-                    opt = next((o for o in all_opts if o.serial_number == ug_sn), None)
+                opt = _resolve_inventory_option(
+                    inv_svc, ("ug67",), ug_sn, options_ug67, inv_df
+                )
                 if opt:
                     assoc = inv_svc.associations_for_root_asset(opt.inventory_id, inv_df=inv_df)
                     with st.container(border=True):
@@ -1782,6 +1924,29 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
                     ]
                     compound = ",".join([gateway_part] + sensor_parts)
 
+    # ── EM500 standalone branch ─────────────────────────────────────────────
+    elif root_type == "em500":
+        existing_em500 = _extract_em500_sn(value)
+        em500_sn_key = f"{prefix}_sensor_em500_sn"
+
+        options_em500 = inv_svc.available_root_assets_for_history(("em500",), open_serials=open_serials, inv_df=inv_df)
+        selected_sn = str(st.session_state.get(em500_sn_key, existing_em500) or "")
+        em500_labels = [""]
+        em500_serials_set = _normalized_serial_set(options_em500)
+        for o in options_em500:
+            em500_labels.append(o.serial_number)
+        if selected_sn and normalize_inventory_serial_for_match(selected_sn) not in em500_serials_set:
+            em500_labels.append(selected_sn)
+
+        if not options_em500 and not selected_sn:
+            st.info("Aún no hay ningún EM500 disponible en inventario.")
+        else:
+            if em500_sn_key not in st.session_state:
+                st.session_state[em500_sn_key] = selected_sn if _serial_in_labels(selected_sn, em500_labels) else (em500_labels[0] if em500_labels else "")
+            em500_sn = st.selectbox("EM500 disponibles (SN)", options=em500_labels, key=em500_sn_key)
+            if em500_sn:
+                compound = f"em500-{em500_sn}"
+
     # ── Solenoide branch ─────────────────────────────────────────────────────
     elif root_type == "solenoide":
         existing_sol = _extract_solenoide_sn(value)
@@ -1790,17 +1955,17 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         options_sol = inv_svc.available_root_assets_for_history(("solenoide",), open_serials=open_serials, inv_df=inv_df)
         selected_sn = str(st.session_state.get(sol_sn_key, existing_sol) or "")
         sol_labels = [""]
-        sol_serials_set = {o.serial_number for o in options_sol}
+        sol_serials_set = _normalized_serial_set(options_sol)
         for o in options_sol:
             sol_labels.append(o.serial_number)
-        if selected_sn and selected_sn not in sol_serials_set:
+        if selected_sn and normalize_inventory_serial_for_match(selected_sn) not in sol_serials_set:
             sol_labels.append(selected_sn)
 
         if not options_sol and not selected_sn:
             st.info("Aún no hay ninguna electroválvula solenoide disponible en inventario.")
         else:
             if sol_sn_key not in st.session_state:
-                st.session_state[sol_sn_key] = selected_sn if selected_sn in sol_labels else (sol_labels[0] if sol_labels else "")
+                st.session_state[sol_sn_key] = selected_sn if _serial_in_labels(selected_sn, sol_labels) else (sol_labels[0] if sol_labels else "")
             sol_sn = st.selectbox("Solenoide disponibles (SN)", options=sol_labels, key=sol_sn_key)
             if sol_sn:
                 compound = f"solenoide-{sol_sn}"
@@ -1813,23 +1978,22 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         options_sim = inv_svc.available_root_assets_for_history(("sim",), open_serials=open_serials, inv_df=inv_df)
         selected_sn = str(st.session_state.get(sim_sn_key, existing_sim) or "")
         sim_labels = [""]
-        sim_serials_set = {o.serial_number for o in options_sim}
+        sim_serials_set = _normalized_serial_set(options_sim)
         for o in options_sim:
             sim_labels.append(o.serial_number)
-        if selected_sn and selected_sn not in sim_serials_set:
+        if selected_sn and normalize_inventory_serial_for_match(selected_sn) not in sim_serials_set:
             sim_labels.append(selected_sn)
 
         if not options_sim and not selected_sn:
             st.info("Aún no hay ninguna SIM disponible en inventario.")
         else:
             if sim_sn_key not in st.session_state:
-                st.session_state[sim_sn_key] = selected_sn if selected_sn in sim_labels else (sim_labels[0] if sim_labels else "")
+                st.session_state[sim_sn_key] = selected_sn if _serial_in_labels(selected_sn, sim_labels) else (sim_labels[0] if sim_labels else "")
             sim_sn = st.selectbox("SIM disponibles (SN)", options=sim_labels, key=sim_sn_key)
             if sim_sn:
-                opt = next((o for o in options_sim if o.serial_number == sim_sn), None)
-                if opt is None:
-                    all_opts = inv_svc.asset_options_by_models(("sim",), inv_df=inv_df)
-                    opt = next((o for o in all_opts if o.serial_number == sim_sn), None)
+                opt = _resolve_inventory_option(
+                    inv_svc, ("sim",), sim_sn, options_sim, inv_df
+                )
                 with st.container(border=True):
                     st.caption("**SIM seleccionada**")
                     eid = _sim_eid_from_inv_df(inv_df, opt.inventory_id) if opt else ""
@@ -1839,6 +2003,8 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
                         st.caption(f"📶 SN: **{sim_sn}**")
                 compound = f"sim-{sim_sn}"
 
+    if compound:
+        compound = normalize_sensor_serial_number(compound)
     st.session_state[key] = compound
     return compound
 
@@ -1904,17 +2070,43 @@ def _validate_history_values(kind: str, values: dict[str, str], prefix: str = ""
                 is_uc501 = st.session_state.get(f"{prefix}_is_uc501")
                 uc_sn = str(st.session_state.get(f"{prefix}_sensor_uc501_sn", "") or "").strip()
                 ug67_sn = str(st.session_state.get(f"{prefix}_sensor_ug67_sn", "") or "").strip()
+                em500_sn = str(st.session_state.get(f"{prefix}_sensor_em500_sn", "") or "").strip()
                 if is_uc501 is True and uc_sn:
                     return (
                         f"El UC501 **{uc_sn}** no tiene sonda y/o SIM configuradas en Inventario. "
                         "Ve a Inventario, edita ese UC501 y vincula los componentes antes de guardar."
                     )
-                if is_uc501 is False and ug67_sn:
+                if is_uc501 is False and st.session_state.get(f"{prefix}_non_uc501_type") == "em500" and em500_sn:
                     return (
-                        f"El UG67 **{ug67_sn}** no tiene SIM configurada en Inventario. "
-                        "Ve a Inventario, edita ese UG67 y vincula la SIM antes de guardar."
+                        f"No se pudo generar el sensor_serial_number para el EM500 **{em500_sn}**. "
+                        "Vuelve a seleccionarlo en el formulario antes de guardar."
                     )
-            return "Debes seleccionar un activo (UC501, UG67, Electroválvula solenoide o SIM individual) antes de guardar."
+                if is_uc501 is False and ug67_sn:
+                    inv_df = load_inventory_cached(st.session_state.get("inventory_cache_version", 0))
+                    inv_svc = inventory_service()
+                    ug_opt = _resolve_inventory_option(
+                        inv_svc,
+                        ("ug67",),
+                        ug67_sn,
+                        inv_svc.available_root_assets_for_history(("ug67",), inv_df=inv_df),
+                        inv_df,
+                    )
+                    if ug_opt is None:
+                        return (
+                            f"No se encontró el UG67 **{ug67_sn}** en Inventario "
+                            "(revisa que el serial en la hoja coincida, con o sin comillas)."
+                        )
+                    assoc = inv_svc.associations_for_root_asset(ug_opt.inventory_id, inv_df=inv_df)
+                    if not assoc.sim:
+                        return (
+                            f"El UG67 **{ug67_sn}** no tiene SIM configurada en Inventario. "
+                            "Ve a Inventario, edita ese UG67 y vincula la SIM antes de guardar."
+                        )
+                    return (
+                        f"No se pudo generar el sensor_serial_number para el UG67 **{ug67_sn}**. "
+                        "Vuelve a seleccionarlo en el formulario antes de guardar."
+                    )
+            return "Debes seleccionar un activo (UC501, UG67, EM500, Electroválvula solenoide o SIM individual) antes de guardar."
         if not is_valid_sensor_serial_number(ssn):
             return "El sensor_serial_number no tiene un formato válido.\n\n" + SENSOR_SERIAL_NUMBER_FORMAT_HELP
         if values.get("red") == "otro" and not values.get("red_otro", "").strip():

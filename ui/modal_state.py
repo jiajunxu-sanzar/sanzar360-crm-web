@@ -10,6 +10,7 @@ describing what is open:
 
     {"type": "edit_history", "kind": str, "contact_id": str, "row_id": str}
     {"type": "add_history",  "kind": str, "contact_id": str}
+    {"type": "sensor_close_location", "kind": str, "contact_id": str, "row_id": str}
 """
 from __future__ import annotations
 
@@ -36,6 +37,16 @@ def open_add_history_modal(kind: str, contact_id: str) -> None:
         "type": "add_history",
         "kind": kind,
         "contact_id": contact_id,
+    }
+
+
+def open_sensor_close_location_modal(kind: str, contact_id: str, row_id: str) -> None:
+    """Open location picker after closing a sensor history (replaces edit_history modal)."""
+    st.session_state[_MODAL_KEY] = {
+        "type": "sensor_close_location",
+        "kind": kind,
+        "contact_id": contact_id,
+        "row_id": row_id,
     }
 
 

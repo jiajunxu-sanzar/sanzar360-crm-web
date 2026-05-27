@@ -8,14 +8,22 @@ import pytest
 
 from config.settings import INVENTORY_HEADERS, INVENTORY_MODEL_FIELDS_WORKSHEET_NAME, INVENTORY_WORKSHEET_NAME
 from services.history_service import HistoryService, parse_sensor_assets
-from services.inventory_service import InventoryService, RootAssetAssociations
-from services.sheet_date_format import is_valid_sensor_serial_number, sensor_serial_number_summary_lines
+from services.inventory_service import InventoryAssetOption, InventoryService, RootAssetAssociations
+from services.sheet_date_format import (
+    is_valid_sensor_serial_number,
+    normalize_sensor_serial_number,
+    sensor_serial_number_summary_lines,
+)
 from pages.contacts import (
     _collect_all_serials_from_sensor_sn,
+    _extract_em500_sn,
     _extract_sim_sn,
     _extract_solenoide_sn,
+    _extract_uc501_bundle,
     _extract_ug67_bundle,
+    _find_inventory_option_by_serial,
     _infer_sensor_root_type,
+    _resolve_inventory_option,
 )
 
 
@@ -147,6 +155,10 @@ def test_infer_sensor_root_type_ug67() -> None:
     assert _infer_sensor_root_type("ug67-UG001-SIM900,em500-EM001") == "ug67"
 
 
+def test_infer_sensor_root_type_em500() -> None:
+    assert _infer_sensor_root_type("em500-EM001") == "em500"
+
+
 def test_infer_sensor_root_type_solenoide() -> None:
     assert _infer_sensor_root_type("solenoide-SOL001") == "solenoide"
 
@@ -171,6 +183,60 @@ def test_extract_ug67_bundle_empty() -> None:
     assert sim_sn == ""
 
 
+def test_extract_ug67_bundle_strips_quotes_from_history() -> None:
+    ug_sn, sim_sn = _extract_ug67_bundle(
+        'ug67-"6222E3615254"-8988228066680501199,em500-"6126E51316512025"'
+    )
+    assert ug_sn == "6222E3615254"
+    assert sim_sn == "8988228066680501199"
+
+
+def test_find_inventory_option_by_serial_matches_quoted_inventory() -> None:
+    options = [
+        InventoryAssetOption(
+            inventory_id="ug-1",
+            serial_number='"6222E3615254"',
+            model="ug67",
+            label="UG67",
+        ),
+    ]
+    opt = _find_inventory_option_by_serial(options, "6222E3615254")
+    assert opt is not None
+    assert opt.inventory_id == "ug-1"
+
+
+def test_compose_ug67_sensor_serial_from_quoted_inventory() -> None:
+    """Regression: UG67 at cliente with quoted serial still resolves SIM and children."""
+    sheets = FakeSheets(inv_df=pd.DataFrame([
+        _row(
+            inventory_id="ug-1",
+            model="ug67",
+            serial_number='"6222E3615254"',
+            location_type="cliente",
+            associated_sim_inventory_id="sim-1",
+        ),
+        _row(inventory_id="sim-1", model="sim", serial_number="8988228066680501199"),
+        _row(
+            inventory_id="em-1",
+            model="em500",
+            serial_number='"6126E51316512025"',
+            associated_gateway_inventory_id="ug-1",
+        ),
+    ]))
+    inv_df = sheets.frames[INVENTORY_WORKSHEET_NAME]
+    svc = InventoryService(sheets)
+    history_value = 'ug67-"6222E3615254"-8988228066680501199,em500-"6126E51316512025"'
+    ug_sn, _ = _extract_ug67_bundle(history_value)
+    opt = _resolve_inventory_option(svc, ("ug67",), ug_sn, [], inv_df)
+    assert opt is not None
+    assoc = svc.associations_for_root_asset(opt.inventory_id, inv_df=inv_df)
+    assert assoc.sim is not None
+    gateway_part = f"ug67-{ug_sn}-{assoc.sim.serial_number}"
+    sensor_parts = [f"{c.model.lower()}-{c.serial_number}" for c in assoc.sensors]
+    compound = normalize_sensor_serial_number(",".join([gateway_part] + sensor_parts))
+    assert compound == "ug67-6222E3615254-8988228066680501199,em500-6126E51316512025"
+
+
 def test_extract_solenoide_sn() -> None:
     assert _extract_solenoide_sn("solenoide-SOL001") == "SOL001"
 
@@ -183,6 +249,10 @@ def test_extract_sim_sn() -> None:
     assert _extract_sim_sn("sim-SIM001") == "SIM001"
 
 
+def test_extract_em500_sn() -> None:
+    assert _extract_em500_sn("em500-EM001") == "EM001"
+
+
 def test_extract_sim_sn_empty() -> None:
     assert _extract_sim_sn("") == ""
 
@@ -193,6 +263,17 @@ def test_collect_all_serials_uc501() -> None:
     assert "T10" in serials
     assert "SIM001" in serials
     assert len(serials) == 3
+
+
+def test_extract_uc501_bundle_gateway_only() -> None:
+    sn, sim, probe = _extract_uc501_bundle("uc501-6772F19007800001")
+    assert sn == "6772F19007800001"
+    assert sim == ""
+    assert probe == ""
+
+
+def test_collect_all_serials_uc501_gateway_only() -> None:
+    assert _collect_all_serials_from_sensor_sn("uc501-6772F19007800001") == ["6772F19007800001"]
 
 
 def test_collect_all_serials_ug67_with_children() -> None:

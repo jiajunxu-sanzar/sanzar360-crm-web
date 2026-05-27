@@ -355,6 +355,8 @@ def parse_sensor_assets(sensor_serial_number: str) -> list[tuple[SensorAsset, st
                         (SensorAsset("sim", parts[3]), item),
                     ]
                 )
+            elif len(parts) == 2:
+                assets.append((SensorAsset("uc501", parts[1]), item))
             current_gateway = ""
         elif lower.startswith("ug67-"):
             parts = item.split("-")
@@ -596,6 +598,9 @@ class HistoryService:
         conflicts: list[SensorAssignmentConflict] = []
         for row in self.rows("sensores"):
             if ignore_historial_sensor_id and row.get("historial_sensor_id") == ignore_historial_sensor_id:
+                continue
+            estado = str(row.get("estado_cierre_sensor", "")).strip().lower()
+            if estado == "cerrado":
                 continue
             if str(row.get("contact_id", "")) == candidate_contact_id:
                 continue

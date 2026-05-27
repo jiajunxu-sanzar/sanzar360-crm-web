@@ -4,7 +4,13 @@ from __future__ import annotations
 import pytest
 import streamlit as st
 
-from pages.contacts import _clear_sensor_picker_state, _on_dismiss_history_add, _on_dismiss_history_edit
+from pages.contacts import (
+    _clear_sensor_picker_state,
+    _is_sensor_history_open,
+    _on_dismiss_history_add,
+    _on_dismiss_history_edit,
+    _on_dismiss_sensor_close_location,
+)
 from ui.components.history import clear_history_table_selection, history_table_selection_key
 
 
@@ -142,6 +148,30 @@ def test_dismiss_edit_prevents_cross_kind_reopen(fake_session_state: _FakeSessio
     _on_dismiss_history_edit()
 
     assert fake_session_state.get("active_modal") is None
+
+
+def test_is_sensor_history_open_treats_blank_as_open() -> None:
+    assert _is_sensor_history_open({"estado_cierre_sensor": ""}) is True
+    assert _is_sensor_history_open({"estado_cierre_sensor": "abierto"}) is True
+    assert _is_sensor_history_open({"estado_cierre_sensor": "cerrado"}) is False
+
+
+def test_dismiss_sensor_close_clears_active_modal_and_picker(fake_session_state: _FakeSessionState) -> None:
+    fake_session_state["active_modal"] = {
+        "type": "sensor_close_location",
+        "kind": "sensores",
+        "contact_id": "c1",
+        "row_id": "h1",
+    }
+    fake_session_state["hist_table_version_c1_sensores"] = 0
+    fake_session_state["hist_table_select_c1_sensores_v0"] = {"selection": {"rows": [0]}}
+    fake_session_state["sensores_h1_sensor_ug67_sn"] = "UG001"
+
+    _on_dismiss_sensor_close_location()
+
+    assert fake_session_state.get("active_modal") is None
+    assert "sensores_h1_sensor_ug67_sn" not in fake_session_state
+    assert fake_session_state.get("hist_table_version_c1_sensores") == 1
 
 
 def test_clear_sensor_picker_state_removes_widget_keys(fake_session_state: _FakeSessionState) -> None:

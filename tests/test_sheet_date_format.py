@@ -14,6 +14,7 @@ def test_validates_dd_mm_yyyy_dates() -> None:
 
 def test_sensor_serial_allows_uc501_ug67_and_standalone_node() -> None:
     assert is_valid_sensor_serial_number("uc501-UC001-TE001-SIM001")
+    assert is_valid_sensor_serial_number("uc501-6772F19007800001")
     assert is_valid_sensor_serial_number("ug67-UG001-SIM900, em500-EM50001, uc512-UC51201")
     assert is_valid_sensor_serial_number("uc512-UCDEM00341")
     assert is_valid_sensor_serial_number("sim-SIM001")
