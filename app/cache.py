@@ -4,7 +4,7 @@ import streamlit as st
 
 from app.telemetry import timed
 from config.settings import CONFIG
-from services.activity_log import ACTIVITY_HEADERS
+from config.settings import ACCIONES_HEADERS
 from services.compras_service import ComprasService
 from services.history_service import HistoryService
 from services.inventory_service import InventoryService
@@ -75,12 +75,17 @@ def load_compras_cached(version: int = 0):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_activity_log_cached(version: int = 0):
-    """Filas del log ``Acciones`` (append-only desde la app)."""
-    with timed("load_activity_log_cached", version=version):
+def load_acciones_cached(version: int = 0):
+    """Filas de seguimiento comercial (hoja Acciones)."""
+    with timed("load_acciones_cached", version=version):
         return sheets_service().read_worksheet_df(
-            CONFIG.google_activity_log_worksheet_name, list(ACTIVITY_HEADERS)
+            CONFIG.google_activity_log_worksheet_name, list(ACCIONES_HEADERS)
         )
+
+
+def load_activity_log_cached(version: int = 0):
+    """Alias de ``load_acciones_cached``."""
+    return load_acciones_cached(version)
 
 
 def clear_all_cache() -> None:

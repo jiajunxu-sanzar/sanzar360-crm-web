@@ -1,15 +1,10 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import pandas as pd
 
-
-def _parse_date(value: str) -> date | None:
-    try:
-        return datetime.strptime((value or "").strip(), "%d/%m/%Y").date()
-    except ValueError:
-        return None
+from services.sheet_date_format import parse_sheet_date
 
 
 def filter_by_persona_proxima_accion(df: pd.DataFrame, persona: str) -> pd.DataFrame:
@@ -29,7 +24,7 @@ def next_action_bucket_counts(df: pd.DataFrame, *, today: date | None = None) ->
     ref = today or date.today()
     tomorrow_date = ref + timedelta(days=1)
     for row in df.fillna("").astype(str).to_dict("records"):
-        due = _parse_date(row.get("proxima_accion_fecha", ""))
+        due = parse_sheet_date(str(row.get("proxima_accion_fecha", "") or ""))
         if due is None:
             continue
         if due < ref:
@@ -52,18 +47,14 @@ def apply_dash_bucket_date_filter(
     if not bucket or df.empty or "proxima_accion_fecha" not in df.columns:
         return df
     ref = today or date.today()
-    next_actions = pd.to_datetime(
-        df["proxima_accion_fecha"].fillna("").astype(str),
-        format="%d/%m/%Y",
-        errors="coerce",
-    )
-    ts = pd.Timestamp(ref)
+    tomorrow_date = ref + timedelta(days=1)
+    parsed = df["proxima_accion_fecha"].fillna("").astype(str).map(parse_sheet_date)
     if bucket == "past":
-        return df[next_actions < ts]
+        return df[parsed.map(lambda d: d is not None and d < ref)]
     if bucket == "today":
-        return df[next_actions == ts]
+        return df[parsed == ref]
     if bucket == "tomorrow":
-        return df[next_actions == (ts + pd.Timedelta(days=1))]
+        return df[parsed == tomorrow_date]
     return df
 
 
@@ -73,10 +64,13 @@ def upcoming_actions(df: pd.DataFrame, *, days: int = 14) -> list[dict[str, str]
     today = date.today()
     rows: list[dict[str, str]] = []
     for row in df.fillna("").astype(str).to_dict("records"):
-        due = _parse_date(row.get("proxima_accion_fecha", ""))
+        due = parse_sheet_date(str(row.get("proxima_accion_fecha", "") or ""))
         if due and 0 <= (due - today).days <= days:
             rows.append(row)
-    return sorted(rows, key=lambda row: _parse_date(row.get("proxima_accion_fecha", "")) or date.max)
+    return sorted(
+        rows,
+        key=lambda row: parse_sheet_date(str(row.get("proxima_accion_fecha", "") or "")) or date.max,
+    )
 
 
 def overdue_actions(df: pd.DataFrame) -> list[dict[str, str]]:
@@ -85,7 +79,10 @@ def overdue_actions(df: pd.DataFrame) -> list[dict[str, str]]:
     today = date.today()
     rows: list[dict[str, str]] = []
     for row in df.fillna("").astype(str).to_dict("records"):
-        due = _parse_date(row.get("proxima_accion_fecha", ""))
+        due = parse_sheet_date(str(row.get("proxima_accion_fecha", "") or ""))
         if due and due < today:
             rows.append(row)
-    return sorted(rows, key=lambda row: _parse_date(row.get("proxima_accion_fecha", "")) or date.max)
+    return sorted(
+        rows,
+        key=lambda row: parse_sheet_date(str(row.get("proxima_accion_fecha", "") or "")) or date.max,
+    )

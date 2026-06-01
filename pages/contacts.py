@@ -10,7 +10,15 @@ import streamlit as st
 
 from app import auth
 from app.navigation import page_menu_title
-from app.cache import clear_all_cache, history_service, inventory_service, load_inventory_cached, load_users_cached, sheets_service
+from app.cache import (
+    clear_all_cache,
+    history_service,
+    inventory_service,
+    load_acciones_cached,
+    load_inventory_cached,
+    load_users_cached,
+    sheets_service,
+)
 from app.state import (
     bump_contacts_cache,
     bump_history_cache,
@@ -30,10 +38,14 @@ from config.settings import (
     CONTACT_ESTADO_OPCIONES,
     FUENTE_LEAD_OPCIONES,
     PERSONA_COMERCIAL_OPCIONES,
-    SEGUIMIENTO_COMERCIAL_FIELDS,
+    LEAD_FIELDS,
+    CANAL_CONTACTO_OPCIONES,
+    EMAIL_CLASIFICACION_OPCIONES,
+    RESULTADO_CONTACTO_OPCIONES,
     VALOR_OPCIONES,
 )
-from services.activity_log import append_activity
+from services.commercial_action_validation import validate_commercial_action_values
+from services.contact_proxima_index import enrich_contacts_with_proxima, latest_commercial_contact_row
 from services.history_service import (
     HISTORY_SPECS,
     HistoryService,
@@ -57,12 +69,14 @@ from services.sheet_date_format import (
     SENSOR_SERIAL_NUMBER_FORMAT_HELP,
     is_valid_dd_mm_yyyy,
     is_valid_sensor_serial_number,
+    normalize_dd_mm_yyyy,
     normalize_sensor_serial_number,
     validate_contact_date_fields,
     validate_dd_mm_yyyy_fields,
 )
 from ui.components.cards import card, chip
 from ui.components.customer_timeline import render_contact_timeline_block
+from ui.components.commercial_followup import render_commercial_followup_list
 from ui.components.contact_detail_header import render_contact_detail_header
 from ui import modal_state
 from ui.components.history import (
@@ -88,6 +102,10 @@ DATE_COLUMNS_BY_KIND = {
         ("Fin suscripción", "suscripcion_fecha_fin"),
     ],
     "incidencias": [("Fecha apertura", "fecha_apertura"), ("Fecha cierre", "fecha_cierre")],
+    "seguimiento_comercial": [
+        ("Fecha contacto", "fecha_contacto"),
+        ("Próxima acción (fecha)", "proxima_accion_fecha"),
+    ],
 }
 
 SELECT_OPTIONS = {
@@ -102,6 +120,12 @@ SELECT_OPTIONS = {
     "estado": ["abierta", "en curso", "bloqueada", "cerrada"],
     "estado_cierre_campana": ["abierto", "cerrado"],
     "prioridad": ["alta", "media", "baja"],
+    "resultado_contacto": list(RESULTADO_CONTACTO_OPCIONES),
+    "canal_contacto": list(CANAL_CONTACTO_OPCIONES),
+    "email_clasificacion": list(EMAIL_CLASIFICACION_OPCIONES),
+    "proxima_accion_canal": list(CANAL_CONTACTO_OPCIONES),
+    "persona_contacto": list(PERSONA_COMERCIAL_OPCIONES),
+    "proxima_accion_persona": list(PERSONA_COMERCIAL_OPCIONES),
 }
 
 CONTACT_LIST_PANEL_HEIGHT_BASE = 980
@@ -352,6 +376,8 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _render_contact_list(df: pd.DataFrame) -> str:
+    acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
+    df = enrich_contacts_with_proxima(df, acciones_df)
     _render_next_action_strip(df)
     if "contact_search_open" not in st.session_state:
         st.session_state.contact_search_open = False
@@ -532,14 +558,6 @@ def _create_contact_dialog(df: pd.DataFrame) -> None:
                         verify.status,
                         message=verify.message or "Contacto creado pero pendiente de verificación remota.",
                     )
-                append_activity(
-                    sheets_service(),
-                    contact_id=new_contact_id,
-                    nombre_contacto=nombre_crear,
-                    tipo_accion="creacion nuevo contacto",
-                    detalle="",
-                    persona=_actor_name(),
-                )
                 select_contact(new_contact_id)
                 _new_contact_flow_finish(clear_inputs=True)
             st.rerun()
@@ -614,44 +632,8 @@ def _log_contact_save_actions(
     values: dict[str, str],
     actor: str,
 ) -> None:
-    """Diff old vs new values and log 'seguimiento comercial' and/or
-    'modificacion contacto' actions for whichever field groups changed."""
-    contact_id = str(original.get("contact_id", ""))
-    nombre_contacto = str(values.get("nombre") or original.get("nombre", ""))
-    sheets = sheets_service()
-
-    seg_changed: list[str] = []
-    other_changed: list[str] = []
-    skip = {"contact_id"}
-
-    for key, new_val in values.items():
-        if key in skip:
-            continue
-        old_val = str(original.get(key, "")).strip()
-        if str(new_val).strip() != old_val:
-            if key in SEGUIMIENTO_COMERCIAL_FIELDS:
-                seg_changed.append(key)
-            else:
-                other_changed.append(key)
-
-    if seg_changed:
-        append_activity(
-            sheets,
-            contact_id=contact_id,
-            nombre_contacto=nombre_contacto,
-            tipo_accion="seguimiento comercial",
-            detalle=", ".join(seg_changed),
-            persona=actor,
-        )
-    if other_changed:
-        append_activity(
-            sheets,
-            contact_id=contact_id,
-            nombre_contacto=nombre_contacto,
-            tipo_accion="modificacion contacto",
-            detalle=", ".join(other_changed),
-            persona=actor,
-        )
+    """Reserved for future audit; seguimiento comercial ya no se registra desde la ficha Contactos."""
+    _ = (original, values, actor)
 
 
 def _render_delete_contact_confirmation(*, contact_id: str, nombre: str) -> None:
@@ -694,11 +676,20 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     hs = history_service()
     subscription_status = hs.subscription_status_for_contact(contact_id)
     open_incidents = hs.has_open_incidents(contact_id)
+    acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
+    enriched = enrich_contacts_with_proxima(
+        pd.DataFrame([contact]),
+        acciones_df,
+    )
+    header_contact = enriched.iloc[0].fillna("").astype(str).to_dict() if not enriched.empty else contact
+    last_contact = latest_commercial_contact_row(acciones_df, contact_id)
+
     render_contact_detail_header(
-        contact=contact,
+        contact=header_contact,
         contact_id=contact_id,
         subscription_status=subscription_status,
         open_incidents=open_incidents,
+        last_contact=last_contact,
     )
     if st.toggle(
         "Mostrar línea de tiempo (sensores, campañas, pagos e incidencias)",
@@ -717,7 +708,11 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
         updated = _render_contact_form(df, row_idx, contact)
     else:
         updated = None
+        _render_history_kind_section(contact, "seguimiento_comercial", expanded=True)
+        st.divider()
         _render_operativa_cards(contact)
+    _maybe_render_add_history_modal(contact)
+    _maybe_render_edit_history_modal(contact)
     return updated if updated is not None else df
 
 
@@ -727,24 +722,18 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
         ("Identificación", ["nombre", "tipo_entidad", "detalle"]),
         ("Localización", ["país", "provincia", "municipio", "coordenadas", "direccion"]),
         ("Contacto", ["telefono", "correo", "otros_contactos"]),
-        ("Perfil agrícola y lead", ["cultivos", "superficie_ha", "tipo_riego"]),
-    ]
-    sections_right: list[tuple[str, list[str]]] = [
+        ("Perfil agrícola", ["cultivos", "superficie_ha", "tipo_riego"]),
         (
-            "Seguimiento comercial",
+            "Lead",
             [
                 "fuente_lead",
                 "lead_detalle",
                 "fecha_primer_contacto",
                 "persona_primer_contacto",
-                "fecha_ultimo_contacto",
-                "persona_ultimo_contacto",
-                "proxima_accion_fecha",
-                "persona_proxima_accion",
-                "proxima_accion_detalle",
-                "fecha_veces_sin_respuesta",
             ],
         ),
+    ]
+    sections_right: list[tuple[str, list[str]]] = [
         ("Estado y oportunidad", ["estado", "fecha_estado", "razon_perdida", "valor"]),
         ("Operativa y suscripción", ["cuenta_usuario", "digital_maps", "iot_module", "sowing_module"]),
     ]
@@ -774,7 +763,7 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
             type="secondary",
             width="stretch",
             key="btn_destruct_contact_ficha",
-            help="Borra la ficha, históricos (sensores, campañas, suscripciones, incidencias) y Acciones.",
+            help="Borra la ficha, históricos (seguimiento comercial en Acciones, sensores, campañas, suscripciones, incidencias).",
         )
 
     cid = str(contact.get("contact_id", "") or "")
@@ -935,8 +924,6 @@ def _render_operativa_cards(contact: dict[str, str]) -> None:
             _handle_history_table_secondary_open(kind, rows, contact, selected_pos)
 
     _maybe_render_sensor_close_location_modal(contact)
-    _maybe_render_add_history_modal(contact)
-    _maybe_render_edit_history_modal(contact)
 
 
 def _maybe_render_sensor_close_location_modal(contact: dict[str, str]) -> None:
@@ -1437,38 +1424,75 @@ def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
     if column == "fuente_lead":
         opts = [""] + list(FUENTE_LEAD_OPCIONES)
         return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
-    if column in {"persona_ultimo_contacto", "persona_proxima_accion", "persona_primer_contacto"}:
+    if column in {"persona_primer_contacto"}:
         opts = [""] + list(PERSONA_COMERCIAL_OPCIONES)
         return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
     if column == "valor":
         opts = [""] + list(VALOR_OPCIONES)
         return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
-    if column in {"detalle", "otros_contactos", "proxima_accion_detalle", "razon_perdida"}:
+    if column in {"detalle", "otros_contactos", "razon_perdida"}:
         return st.text_area(label, value=value, height=80, key=key)
     return st.text_input(label, value=value, key=key)
 
 
-def _render_histories(contact: dict[str, str]) -> None:
+def _render_seguimiento_comercial_section(contact: dict[str, str], rows: list[dict[str, str]]) -> None:
+    contact_id = str(contact.get("contact_id", "") or "")
+    st.caption(f"{len(rows)} registro{'s' if len(rows) != 1 else ''} de seguimiento comercial")
+    if st.button(
+        "Nuevo seguimiento",
+        type="primary",
+        key=f"seg_new_followup_{contact_id}",
+        width="stretch",
+    ):
+        modal_state.open_add_history_modal("seguimiento_comercial", contact_id)
+        st.rerun()
+    render_commercial_followup_list(rows, contact_id)
+
+
+def _render_history_kind_section(
+    contact: dict[str, str],
+    kind: str,
+    *,
+    expanded: bool | None = None,
+) -> None:
     contact_id = contact.get("contact_id", "")
-    for kind in ("sensores", "campanas", "suscripciones", "incidencias"):
-        spec = HISTORY_SPECS[kind]
-        rows = history_service().rows_for_contact(kind, contact_id)
-        with st.expander(spec.title, expanded=kind in {"sensores", "suscripciones", "incidencias"}):
-            render_history_summary(kind, rows)
-            col_a, col_b = st.columns([0.24, 0.76])
-            with col_a:
-                technical = st.checkbox("Ver columnas técnicas", key=f"{kind}_technical_{contact_id}")
-            with col_b:
-                selected_pos = render_history_table(
-                    kind,
-                    rows,
-                    technical=technical,
-                    contact_id=contact_id,
-                )
-                _handle_history_table_secondary_open(kind, rows, contact, selected_pos)
-            _render_history_create_form(kind, contact)
-            if rows:
-                _render_history_edit_form(kind, rows)
+    spec = HISTORY_SPECS[kind]
+    rows = history_service().rows_for_contact(kind, contact_id)
+    expanded_default = (
+        expanded
+        if expanded is not None
+        else kind in {"seguimiento_comercial", "sensores", "suscripciones", "incidencias"}
+    )
+    with st.expander(spec.title, expanded=expanded_default):
+        if kind == "seguimiento_comercial":
+            _render_seguimiento_comercial_section(contact, rows)
+            return
+        render_history_summary(kind, rows)
+        col_a, col_b = st.columns([0.24, 0.76])
+        with col_a:
+            technical = st.checkbox("Ver columnas técnicas", key=f"{kind}_technical_{contact_id}")
+        with col_b:
+            selected_pos = render_history_table(
+                kind,
+                rows,
+                technical=technical,
+                contact_id=contact_id,
+            )
+            _handle_history_table_secondary_open(kind, rows, contact, selected_pos)
+        _render_history_create_form(kind, contact)
+        if rows:
+            _render_history_edit_form(kind, rows)
+
+
+def _render_histories(contact: dict[str, str]) -> None:
+    for kind in (
+        "seguimiento_comercial",
+        "sensores",
+        "campanas",
+        "suscripciones",
+        "incidencias",
+    ):
+        _render_history_kind_section(contact, kind)
 
 
 def _render_history_create_form(kind: str, contact: dict[str, str]) -> None:
@@ -1511,6 +1535,49 @@ def _render_history_form(kind: str, base: dict[str, str], existing: dict[str, st
         st.rerun()
 
 
+_SEGUIMIENTO_CONTACTO_FIELDS = (
+    "resultado_contacto",
+    "fecha_contacto",
+    "hora_contacto",
+    "persona_contacto",
+    "canal_contacto",
+    "email_url",
+    "email_clasificacion",
+    "notas_contacto",
+)
+_SEGUIMIENTO_PROXIMA_FIELDS = (
+    "proxima_accion_canal",
+    "proxima_accion_persona",
+    "proxima_accion_fecha",
+    "proxima_accion_detalle",
+)
+
+
+def _render_seguimiento_comercial_fields(
+    kind: str,
+    prefix: str,
+    initial: dict[str, str],
+    excluded_headers: frozenset[str],
+) -> None:
+    st.markdown("**Contacto realizado**")
+    for header in _SEGUIMIENTO_CONTACTO_FIELDS:
+        if header in excluded_headers:
+            continue
+        _field_for_header(kind, header, initial.get(header, ""), prefix)
+    st.markdown("**Próxima acción pendiente**")
+    for header in _SEGUIMIENTO_PROXIMA_FIELDS:
+        if header in excluded_headers:
+            continue
+        _field_for_header(kind, header, initial.get(header, ""), prefix)
+    if "origen_registro" not in excluded_headers:
+        _field_for_header(
+            kind,
+            "origen_registro",
+            initial.get("origen_registro", "") or "manual",
+            prefix,
+        )
+
+
 def _render_history_form_body(
     kind: str,
     base: dict[str, str],
@@ -1537,6 +1604,10 @@ def _render_history_form_body(
                 disabled=True,
                 key=f"{prefix}_id_historial",
             )
+
+    if kind == "seguimiento_comercial":
+        _render_seguimiento_comercial_fields(kind, prefix, initial, excluded_headers)
+        return
 
     st.markdown("**Datos principales**")
     _always_skip = {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}
@@ -1574,6 +1645,11 @@ def _render_history_form_grouped_body(
                     disabled=True,
                     key=f"{prefix}_id_historial",
                 )
+
+    if kind == "seguimiento_comercial":
+        with st.container(border=True):
+            _render_seguimiento_comercial_fields(kind, prefix, initial, excluded_headers)
+        return
 
     _always_skip = {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}
     all_fields = [
@@ -1711,6 +1787,11 @@ def _submit_history_form(
     if error:
         st.error(error)
         return False
+    if kind == "seguimiento_comercial":
+        for date_col in ("fecha_contacto", "proxima_accion_fecha"):
+            raw = (values.get(date_col, "") or "").strip()
+            if raw:
+                values[date_col] = normalize_dd_mm_yyyy(raw) or raw
     try:
         with st.spinner("Guardando y comprobando que no se solapen sensores..."):
             if kind == "sensores":
@@ -2067,6 +2148,16 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         return st.text_input(label, value=value, key=key, disabled=red_value != "otro")
     if header in {"detalles", "detalle", "resolucion"}:
         return st.text_area(label, value=value, key=key, height=90)
+    if kind == "seguimiento_comercial":
+        if header == "hora_contacto":
+            return st.text_input(label, value=value, key=key, placeholder="14:30")
+        if header == "email_url":
+            canal = str(st.session_state.get(f"{prefix}_canal_contacto", "") or "").strip().lower()
+            return st.text_input(label, value=value, key=key, disabled=canal != "email")
+        if header in {"notas_contacto", "proxima_accion_detalle"}:
+            return st.text_area(label, value=value, key=key, height=120)
+        if header == "origen_registro":
+            return st.text_input(label, value=value or "manual", key=key, disabled=True)
     return st.text_input(label, value=value, key=key)
 
 
@@ -2136,4 +2227,8 @@ def _validate_history_values(kind: str, values: dict[str, str], prefix: str = ""
         end = values.get("fecha_campana_fin", "")
         if start and end and is_valid_dd_mm_yyyy(start) and is_valid_dd_mm_yyyy(end):
             pass
+    if kind == "seguimiento_comercial":
+        commercial_error = validate_commercial_action_values(values)
+        if commercial_error:
+            return commercial_error
     return None

@@ -9,6 +9,7 @@ import streamlit as st
 
 from ui.components.cards import chip
 from ui.palette import (
+    commercial_result_style,
     contact_status_style,
     incident_status_style,
     next_action_style,
@@ -28,12 +29,54 @@ def _short_detail(text: str, max_chars: int = 140) -> str:
     return t[: max_chars - 1] + "…"
 
 
+def _format_canal_label(canal: str) -> str:
+    c = (canal or "").strip().lower()
+    return {"email": "Email", "llamada": "Llamada", "en_persona": "En persona"}.get(c, c or "—")
+
+
+def _format_resultado_label(resultado: str) -> str:
+    r = (resultado or "").strip().lower()
+    if r == "exitoso":
+        return "Exitoso"
+    if r == "fallido":
+        return "Fallido"
+    return (resultado or "").strip() or "—"
+
+
+def _render_last_contact_block(last_contact: dict[str, str] | None) -> str:
+    if not last_contact:
+        return """
+  <div class="sanzar-detail-last-contact">
+    <div class="sanzar-detail-last-contact-label">Último contacto</div>
+    <p class="sanzar-detail-last-contact-line sanzar-muted">Sin contactos registrados en Acciones</p>
+  </div>
+"""
+    fecha = _esc(last_contact.get("fecha_contacto", ""))
+    hora = _esc(last_contact.get("hora_contacto", ""))
+    when = fecha + (f" · {hora}" if hora else "") or "—"
+    persona = _esc(last_contact.get("persona_contacto", "")) or "—"
+    canal = _esc(_format_canal_label(str(last_contact.get("canal_contacto", ""))))
+    resultado = str(last_contact.get("resultado_contacto", "") or "")
+    result_chip = chip(_format_resultado_label(resultado), commercial_result_style(resultado))
+    return f"""
+  <div class="sanzar-detail-last-contact">
+    <div class="sanzar-detail-last-contact-label">Último contacto</div>
+    <div class="sanzar-detail-last-contact-row">
+      <span class="sanzar-detail-last-contact-when">{when}</span>
+      {result_chip}
+    </div>
+    <p class="sanzar-detail-last-contact-sub">{persona} · {canal}</p>
+  </div>
+"""
+
+
 def render_contact_detail_header(
     *,
     contact: dict[str, str],
     contact_id: str,
     subscription_status: str,
     open_incidents: bool,
+    last_contact: dict[str, str] | None = None,
 ) -> None:
     """Render the sticky-ish operational header card (nombre, estado, próxima acción, alertas, contacto)."""
     cid_full = _esc(contact_id)
@@ -42,6 +85,7 @@ def render_contact_detail_header(
     prox_f = contact.get("proxima_accion_fecha", "")
     prox_p = contact.get("persona_proxima_accion", "")
     prox_d = contact.get("proxima_accion_detalle", "")
+    prox_c = contact.get("proxima_accion_canal", "")
     mun = contact.get("municipio", "")
     prov = contact.get("provincia", "")
     tel = contact.get("telefono", "")
@@ -69,6 +113,8 @@ def render_contact_detail_header(
         )
 
     persona_line = _esc(prox_p) if prox_p.strip() else "—"
+    canal_prox = _esc(_format_canal_label(str(prox_c))) if (prox_c or "").strip() else ""
+    canal_suffix = f" · {canal_prox}" if canal_prox and canal_prox != "—" else ""
     detalle_vis = _esc(_short_detail(prox_d)) if prox_d.strip() else "Sin detalle de próxima acción."
 
     contact_line_parts: list[str] = []
@@ -86,6 +132,8 @@ def render_contact_detail_header(
             '<div class="sanzar-detail-contact-line">' + " · ".join(contact_line_parts) + "</div>"
         )
 
+    last_contact_html = _render_last_contact_block(last_contact)
+
     st.markdown(
         f"""
 <section class="sanzar-detail-header" aria-label="Cabecera del contacto">
@@ -96,11 +144,12 @@ def render_contact_detail_header(
     </div>
     <div class="sanzar-detail-chips-primary">{estado_chip}{valor_row}</div>
   </div>
+  {last_contact_html}
   <div class="sanzar-detail-next">
     <div class="sanzar-detail-next-label">Próxima acción</div>
     <div class="sanzar-detail-next-row">
       {next_chip}
-      <span class="sanzar-detail-persona">{persona_line}</span>
+      <span class="sanzar-detail-persona">{persona_line}{canal_suffix}</span>
     </div>
     <p class="sanzar-detail-next-detail">{detalle_vis}</p>
   </div>

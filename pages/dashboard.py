@@ -4,14 +4,18 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from app.cache import load_acciones_cached
 from app.navigation import page_menu_title
 from app.telemetry import timed
+from services.contact_proxima_index import enrich_contacts_with_proxima
 from services.dashboard_stats import funnel_counts, kpi_summary, value_counts
 from ui.components.cards import metric_card
 
 
 def render(df: pd.DataFrame) -> None:
     st.title(page_menu_title("Dashboard"))
+    acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
+    df = enrich_contacts_with_proxima(df, acciones_df)
     with timed("dashboard.render"):
         metrics = kpi_summary(df)
     cols = st.columns(4)

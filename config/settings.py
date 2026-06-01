@@ -17,18 +17,41 @@ def normalize_google_sheet_id(raw: str) -> str:
     return value
 
 
-SEGUIMIENTO_COMERCIAL_FIELDS: frozenset[str] = frozenset({
+LEAD_FIELDS: frozenset[str] = frozenset({
     "fuente_lead",
     "lead_detalle",
     "fecha_primer_contacto",
     "persona_primer_contacto",
-    "fecha_ultimo_contacto",
-    "persona_ultimo_contacto",
-    "proxima_accion_fecha",
-    "persona_proxima_accion",
-    "proxima_accion_detalle",
-    "fecha_veces_sin_respuesta",
 })
+
+# Backward-compatible alias (prefer LEAD_FIELDS).
+SEGUIMIENTO_COMERCIAL_FIELDS = LEAD_FIELDS
+
+RESULTADO_CONTACTO_OPCIONES: tuple[str, ...] = ("exitoso", "fallido")
+CANAL_CONTACTO_OPCIONES: tuple[str, ...] = ("email", "llamada", "en_persona")
+EMAIL_CLASIFICACION_OPCIONES: tuple[str, ...] = ("primer_email", "seguimiento", "contestacion")
+ORIGEN_REGISTRO_OPCIONES: tuple[str, ...] = ("manual", "email_batch")
+
+ACCIONES_HEADERS: tuple[str, ...] = (
+    "historial_accion_id",
+    "contact_id",
+    "nombre_cliente",
+    "resultado_contacto",
+    "fecha_contacto",
+    "hora_contacto",
+    "persona_contacto",
+    "canal_contacto",
+    "email_url",
+    "email_clasificacion",
+    "notas_contacto",
+    "proxima_accion_canal",
+    "proxima_accion_persona",
+    "proxima_accion_fecha",
+    "proxima_accion_detalle",
+    "origen_registro",
+    "created_at",
+    "updated_at",
+)
 
 CANONICAL_COLUMNS = [
     "contact_id",
@@ -54,12 +77,6 @@ CANONICAL_COLUMNS = [
     "lead_detalle",
     "fecha_primer_contacto",
     "persona_primer_contacto",
-    "fecha_ultimo_contacto",
-    "persona_ultimo_contacto",
-    "proxima_accion_fecha",
-    "persona_proxima_accion",
-    "proxima_accion_detalle",
-    "fecha_veces_sin_respuesta",
     "estado",
     "fecha_estado",
     "razon_perdida",
@@ -127,9 +144,7 @@ _TEMPLATE_LABEL_ALIASES_EXTRA: dict[str, str] = {
     "Riego": "tipo_riego",
     "Fuente Lead": "fuente_lead",
     "Lead detalle": "lead_detalle",
-    "Persona último contacto": "persona_ultimo_contacto",
     "Valor": "valor",
-    "Próxima acción detalle": "proxima_accion_detalle",
     "Estado": "estado",
     "Fecha estado": "fecha_estado",
     "Razón pérdida": "razon_perdida",

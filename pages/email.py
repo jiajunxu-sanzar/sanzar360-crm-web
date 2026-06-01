@@ -13,16 +13,16 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.cache import sheets_service, load_users_cached
+from app.cache import history_service, load_users_cached
 from app.navigation import ROLE_SALES, normalize_role, page_menu_title
 from app.smtp_profiles import SmtpResolved, resolve_smtp_detail
-from app.state import bump_contacts_cache, set_contacts_df_override
+from app.state import bump_contacts_cache, bump_history_cache, set_contacts_df_override
 from config.settings import (
     CONTACT_ESTADO_OPCIONES,
+    EMAIL_CLASIFICACION_OPCIONES,
     PERSONA_COMERCIAL_OPCIONES,
 )
-from services.activity_log import append_activity
-from services.contact_use_cases import save_contact_by_id
+from services.commercial_action_validation import validate_commercial_action_values
 from services.email_service import render_template, send_email, smtp_exception_user_message, validate_placeholders
 from services.sheet_date_format import is_valid_dd_mm_yyyy
 from ui.components.tables import filter_dataframe
@@ -32,9 +32,11 @@ from ui.components.tables import filter_dataframe
 # ---------------------------------------------------------------------------
 _KEY_SELECTED = "email_selected_ids"    # set[str] — contact_ids selected in table
 _KEY_FILTERS_OPEN = "email_filters_open"
-_KEY_SEG_PERSONA_ULT = "email_seg_persona_ult"
-_KEY_SEG_FECHA_ULT = "email_seg_fecha_ult"
+_KEY_SEG_EMAIL_CLAS = "email_seg_email_clasificacion"
+_KEY_SEG_EMAIL_URL = "email_seg_email_url"
+_KEY_SEG_NOTAS = "email_seg_notas"
 _KEY_SEG_PROX_FECHA = "email_seg_prox_fecha"
+_KEY_SEG_PROX_CANAL = "email_seg_prox_canal"
 _KEY_SEG_PERSONA_PROX = "email_seg_persona_prox"
 _KEY_SEG_PROX_DETALLE = "email_seg_prox_detalle"
 
@@ -235,27 +237,35 @@ def _render_template_editor(
                 st.caption(f"**Asunto:** {render_template(subject, preview_contact)}")
                 st.text(render_template(body, preview_contact))
 
-    # --- Seguimiento comercial (before send button) ---
+    # --- Seguimiento comercial (histórico Acciones) ---
     st.markdown("---")
-    opts = [""] + list(PERSONA_COMERCIAL_OPCIONES)
+    opts_persona = [""] + list(PERSONA_COMERCIAL_OPCIONES)
+    opts_clas = list(EMAIL_CLASIFICACION_OPCIONES)
     update_seg = st.checkbox(
-        "Actualizar seguimiento comercial para contactos seleccionados",
+        "Registrar seguimiento comercial (histórico) para contactos con envío OK",
         key="email_update_seguimiento",
     )
     if update_seg:
-        c1, c2 = st.columns(2, gap="small")
-        c1.selectbox("Persona último contacto", opts, key=_KEY_SEG_PERSONA_ULT)
-        c2.text_input("Fecha último contacto (dd/mm/aaaa)", key=_KEY_SEG_FECHA_ULT)
-        c3, c4 = st.columns(2, gap="small")
-        c3.text_input("Fecha próxima acción (dd/mm/aaaa)", key=_KEY_SEG_PROX_FECHA)
-        c4.selectbox("Persona próxima acción", opts, key=_KEY_SEG_PERSONA_PROX)
-        st.text_area("Detalle próxima acción", key=_KEY_SEG_PROX_DETALLE, height=80)
-
-        # Inline date validation feedback (non-blocking, so user can still hit send)
-        fecha_ult_val = st.session_state.get(_KEY_SEG_FECHA_ULT, "").strip()
+        st.selectbox(
+            "Clasificación del email",
+            opts_clas,
+            index=1 if "seguimiento" in opts_clas else 0,
+            key=_KEY_SEG_EMAIL_CLAS,
+        )
+        st.text_input("URL del correo (opcional)", key=_KEY_SEG_EMAIL_URL)
+        st.text_area("Resumen / de qué se habló", key=_KEY_SEG_NOTAS, height=80, placeholder="Asunto o notas del envío")
+        st.markdown("**Próxima acción pendiente** (opcional)")
+        p1, p2 = st.columns(2, gap="small")
+        p1.text_input("Fecha próxima acción (dd/mm/aaaa)", key=_KEY_SEG_PROX_FECHA)
+        p2.selectbox("Persona próxima acción", opts_persona, key=_KEY_SEG_PERSONA_PROX)
+        p3, p4 = st.columns(2, gap="small")
+        p3.selectbox(
+            "Canal próxima acción",
+            [""] + ["email", "llamada", "en_persona"],
+            key=_KEY_SEG_PROX_CANAL,
+        )
+        p4.text_area("Detalle próxima acción", key=_KEY_SEG_PROX_DETALLE, height=60)
         prox_fecha_val = st.session_state.get(_KEY_SEG_PROX_FECHA, "").strip()
-        if fecha_ult_val and not is_valid_dd_mm_yyyy(fecha_ult_val):
-            st.warning("Fecha último contacto no válida — usa dd/mm/aaaa.")
         if prox_fecha_val and not is_valid_dd_mm_yyyy(prox_fecha_val):
             st.warning("Fecha próxima acción no válida — usa dd/mm/aaaa.")
 
@@ -285,17 +295,33 @@ def _do_send(
     body: str,
     smtp_detail: SmtpResolved,
 ) -> None:
-    update_seg: bool = st.session_state.get("email_update_seguimiento", False)
+    from datetime import date, datetime
 
-    # Validate seguimiento dates before sending anything
+    update_seg: bool = st.session_state.get("email_update_seguimiento", False)
+    actor = _email_actor_name()
+    now = datetime.now()
+    fecha_hoy = date.today().strftime("%d/%m/%Y")
+    hora_ahora = now.strftime("%H:%M")
+
     if update_seg:
-        fecha_ult = st.session_state.get(_KEY_SEG_FECHA_ULT, "").strip()
-        prox_fecha = st.session_state.get(_KEY_SEG_PROX_FECHA, "").strip()
-        if fecha_ult and not is_valid_dd_mm_yyyy(fecha_ult):
-            st.error("Fecha último contacto no válida. Corrige antes de enviar.")
-            return
-        if prox_fecha and not is_valid_dd_mm_yyyy(prox_fecha):
-            st.error("Fecha próxima acción no válida. Corrige antes de enviar.")
+        sample_row = {
+            "resultado_contacto": "exitoso",
+            "fecha_contacto": fecha_hoy,
+            "hora_contacto": hora_ahora,
+            "persona_contacto": actor,
+            "canal_contacto": "email",
+            "email_url": str(st.session_state.get(_KEY_SEG_EMAIL_URL, "") or "").strip(),
+            "email_clasificacion": str(st.session_state.get(_KEY_SEG_EMAIL_CLAS, "") or "seguimiento"),
+            "notas_contacto": str(st.session_state.get(_KEY_SEG_NOTAS, "") or subject).strip(),
+            "proxima_accion_fecha": str(st.session_state.get(_KEY_SEG_PROX_FECHA, "") or "").strip(),
+            "proxima_accion_persona": str(st.session_state.get(_KEY_SEG_PERSONA_PROX, "") or "").strip(),
+            "proxima_accion_canal": str(st.session_state.get(_KEY_SEG_PROX_CANAL, "") or "").strip(),
+            "proxima_accion_detalle": str(st.session_state.get(_KEY_SEG_PROX_DETALLE, "") or "").strip(),
+            "origen_registro": "email_batch",
+        }
+        validation_error = validate_commercial_action_values(sample_row)
+        if validation_error:
+            st.error(validation_error)
             return
 
     delivery = smtp_detail.delivery
@@ -334,65 +360,41 @@ def _do_send(
     if not update_seg or not sent_ids:
         return
 
-    # ---- Bulk seguimiento update ----
-    patch: dict[str, str] = {}
-    persona_ult = st.session_state.get(_KEY_SEG_PERSONA_ULT, "")
-    fecha_ult = st.session_state.get(_KEY_SEG_FECHA_ULT, "").strip()
-    prox_fecha = st.session_state.get(_KEY_SEG_PROX_FECHA, "").strip()
-    persona_prox = st.session_state.get(_KEY_SEG_PERSONA_PROX, "")
-    prox_detalle = st.session_state.get(_KEY_SEG_PROX_DETALLE, "").strip()
-
-    if persona_ult:   patch["persona_ultimo_contacto"] = persona_ult
-    if fecha_ult:     patch["fecha_ultimo_contacto"]   = fecha_ult
-    if prox_fecha:    patch["proxima_accion_fecha"]     = prox_fecha
-    if persona_prox:  patch["persona_proxima_accion"]   = persona_prox
-    if prox_detalle:  patch["proxima_accion_detalle"]   = prox_detalle
-
-    if not patch:
-        return
-
-    sheets = sheets_service()
-    updated_df = df_raw.copy()
+    hs = history_service()
     ok = 0
     seg_errors: list[str] = []
+    notas_base = str(st.session_state.get(_KEY_SEG_NOTAS, "") or subject).strip()
     for cid in sent_ids:
-        matches = updated_df[updated_df["contact_id"].astype(str) == str(cid)]
-        if matches.empty:
-            seg_errors.append(f"{cid}: no encontrado")
-            continue
-        row_idx = int(matches.index[0])
-        contact_vals = matches.iloc[0].fillna("").astype(str).to_dict()
-        contact_vals.update(patch)
+        matches = contacts[contacts["contact_id"].astype(str) == str(cid)]
+        nombre_c = str(matches.iloc[0].get("nombre", cid)) if not matches.empty else cid
+        row = {
+            "contact_id": cid,
+            "nombre_cliente": nombre_c,
+            "resultado_contacto": "exitoso",
+            "fecha_contacto": fecha_hoy,
+            "hora_contacto": hora_ahora,
+            "persona_contacto": actor,
+            "canal_contacto": "email",
+            "email_url": str(st.session_state.get(_KEY_SEG_EMAIL_URL, "") or "").strip(),
+            "email_clasificacion": str(st.session_state.get(_KEY_SEG_EMAIL_CLAS, "") or "seguimiento"),
+            "notas_contacto": notas_base,
+            "proxima_accion_fecha": str(st.session_state.get(_KEY_SEG_PROX_FECHA, "") or "").strip(),
+            "proxima_accion_persona": str(st.session_state.get(_KEY_SEG_PERSONA_PROX, "") or "").strip(),
+            "proxima_accion_canal": str(st.session_state.get(_KEY_SEG_PROX_CANAL, "") or "").strip(),
+            "proxima_accion_detalle": str(st.session_state.get(_KEY_SEG_PROX_DETALLE, "") or "").strip(),
+            "origen_registro": "email_batch",
+        }
         try:
-            updated_df, _verify = save_contact_by_id(
-                updated_df,
-                row_idx=row_idx,
-                contact_id=cid,
-                values=contact_vals,
-                sheets=sheets,
-            )
+            hs.add_row("seguimiento_comercial", row)
             ok += 1
         except Exception as exc:
-            seg_errors.append(f"{cid}: {exc}")
+            seg_errors.append(f"{nombre_c}: {exc}")
 
-    bump_contacts_cache()
-    set_contacts_df_override(updated_df)
+    bump_history_cache()
     if ok:
-        st.success(f"Seguimiento comercial actualizado en {ok} contacto(s).")
-        actor = _email_actor_name()
-        for cid in sent_ids:
-            matches = df_raw[df_raw["contact_id"].astype(str) == str(cid)]
-            nombre_c = matches.iloc[0].get("nombre", cid) if not matches.empty else cid
-            append_activity(
-                sheets_service(),
-                contact_id=cid,
-                nombre_contacto=str(nombre_c),
-                tipo_accion="batch email",
-                detalle="email enviado + seguimiento comercial actualizado",
-                persona=actor,
-            )
+        st.success(f"Histórico de seguimiento registrado para {ok} contacto(s).")
     if seg_errors:
-        st.error("Errores en seguimiento:\n" + "\n".join(seg_errors))
+        st.error("Errores al registrar seguimiento:\n" + "\n".join(seg_errors))
 
 
 # ---------------------------------------------------------------------------

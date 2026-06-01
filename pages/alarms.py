@@ -7,8 +7,9 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import streamlit as st
 
-from app.cache import history_service
+from app.cache import history_service, load_acciones_cached
 from app.navigation import page_menu_title
+from services.contact_proxima_index import enrich_contacts_with_proxima
 from app.state import select_contact
 from services.estado_stagnation_alarms import stagnation_alarms
 from services.history_service import HistoryService
@@ -166,7 +167,7 @@ def _funnel_items(contacts_df: pd.DataFrame) -> list[WorkAlarmItem]:
                 title=str(row.get("nombre", "Contacto")),
                 priority=val or "Medio",
                 due=due_display,
-                owner=str(row.get("persona_proxima_accion", "") or row.get("persona_ultimo_contacto", "")),
+                owner=str(row.get("persona_proxima_accion", "") or ""),
                 suggested_action=str(row.get("proxima_accion_detalle", "") or "Definir siguiente paso"),
                 detail=f'Estado: {row.get("estado", "—")}',
                 contact_id=str(row.get("contact_id", "")),
@@ -255,7 +256,6 @@ def _subscriptions_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[
                 due=end_raw,
                 owner=str(
                     crow.get("persona_proxima_accion", "")
-                    or crow.get("persona_ultimo_contacto", "")
                 ),
                 suggested_action=sug,
                 detail=f"Estado registro · {estado_sub or '—'}",
@@ -308,7 +308,7 @@ def _sensors_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[WorkAl
                 title=str(row.get("nombre_cliente", "") or contact_row.get("nombre", "") or "Sensor"),
                 priority=priority,
                 due=end_raw,
-                owner=str(contact_row.get("persona_proxima_accion", "") or contact_row.get("persona_ultimo_contacto", "")),
+                owner=str(contact_row.get("persona_proxima_accion", "") or ""),
                 suggested_action=str(row.get("detalles", "") or "").strip() or suggested,
                 detail=sensor_label,
                 contact_id=cid,
@@ -359,7 +359,7 @@ def _campaigns_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[Work
                 title=str(row.get("nombre_cliente", "") or contact_row.get("nombre", "") or "Campaña"),
                 priority=priority,
                 due=end_raw,
-                owner=str(contact_row.get("persona_proxima_accion", "") or contact_row.get("persona_ultimo_contacto", "")),
+                owner=str(contact_row.get("persona_proxima_accion", "") or ""),
                 suggested_action=str(row.get("detalles", "") or "").strip() or suggested,
                 detail=campaign_name,
                 contact_id=cid,
@@ -373,6 +373,11 @@ def _campaigns_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[Work
 def render(contacts_df: pd.DataFrame) -> None:
     st.title(page_menu_title("Centro de alarmas"))
     st.caption("Bandeja de trabajo: prioridad, plazos y siguiente acción sobre la ficha del contacto")
+
+    contacts_df = enrich_contacts_with_proxima(
+        contacts_df,
+        load_acciones_cached(st.session_state.get("history_cache_version", 0)),
+    )
 
     try:
         hs = history_service()

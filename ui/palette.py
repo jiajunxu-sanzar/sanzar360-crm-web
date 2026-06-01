@@ -77,6 +77,25 @@ def next_action_style(value: str) -> VisualStatusStyle:
     return STATUS_WARNING if (value or "").strip() else STATUS_NEUTRAL
 
 
+def commercial_result_style(resultado: str) -> VisualStatusStyle:
+    text = _normalize_visual_text(resultado)
+    if text == "exitoso":
+        return STATUS_SUCCESS
+    if text == "fallido":
+        return STATUS_DANGER
+    return STATUS_NEUTRAL
+
+
+def commercial_seg_card_modifier(resultado: str) -> str:
+    """CSS modifier suffix for seguimiento cards: exitoso | fallido | neutral."""
+    text = _normalize_visual_text(resultado)
+    if text == "exitoso":
+        return "exitoso"
+    if text == "fallido":
+        return "fallido"
+    return "neutral"
+
+
 def subscription_status_style(value: str) -> VisualStatusStyle:
     text = _normalize_visual_text(value)
     if "caduca" in text or "pronto" in text:

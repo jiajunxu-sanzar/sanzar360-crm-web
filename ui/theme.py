@@ -423,6 +423,43 @@ def apply_theme() -> None:
           gap: 8px;
         }
         .sanzar-detail-chips-primary { justify-content: flex-end; flex: 1 1 140px; }
+        .sanzar-detail-last-contact {
+          padding: 8px 12px;
+          margin-bottom: 10px;
+          background: #f8fafc;
+          border: 1px solid var(--ui-border);
+          border-radius: 8px;
+        }
+        .sanzar-detail-last-contact-label {
+          font-size: 0.6875rem;
+          font-weight: 650;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: var(--ui-text-muted);
+          margin-bottom: 4px;
+        }
+        .sanzar-detail-last-contact-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 8px;
+        }
+        .sanzar-detail-last-contact-when {
+          font-size: 0.8125rem;
+          font-weight: 550;
+          color: var(--ui-text);
+        }
+        .sanzar-detail-last-contact-sub {
+          margin: 4px 0 0 !important;
+          padding: 0 !important;
+          font-size: 0.75rem;
+          color: var(--ui-text-muted);
+          line-height: 1.4;
+        }
+        .sanzar-detail-last-contact-line {
+          margin: 0 !important;
+          font-size: 0.75rem;
+        }
         .sanzar-detail-next {
           padding: 10px 12px;
           margin-bottom: 12px;
@@ -467,6 +504,79 @@ def apply_theme() -> None:
           font-size: 0.8125rem;
           color: var(--ui-text);
           line-height: 1.5;
+        }
+
+        /* Seguimiento comercial — cards in contact ficha */
+        .sanzar-seg-card {
+          margin: 0 0 4px 0;
+          padding: 12px 14px;
+          border-radius: 10px;
+          border: 1px solid var(--ui-border);
+          background: var(--ui-bg-elevated);
+        }
+        .sanzar-seg-card--exitoso {
+          border-left: 4px solid #15803d;
+          background: #f0fdf4;
+        }
+        .sanzar-seg-card--fallido {
+          border-left: 4px solid #b91c1c;
+          background: #fef2f2;
+        }
+        .sanzar-seg-card--neutral {
+          border-left: 4px solid var(--ui-border-strong);
+        }
+        .sanzar-seg-card-head {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 4px;
+        }
+        .sanzar-seg-card-when {
+          font-size: 0.9375rem;
+          font-weight: 600;
+          color: var(--ui-text);
+        }
+        .sanzar-seg-card-sub {
+          font-size: 0.8125rem;
+          color: var(--ui-text-muted);
+          margin-bottom: 6px;
+        }
+        .sanzar-seg-card-notes {
+          margin: 0 0 8px 0 !important;
+          font-size: 0.8125rem;
+          color: var(--ui-text);
+          line-height: 1.45;
+        }
+        .sanzar-seg-card-proxima {
+          padding: 8px 10px;
+          margin-top: 4px;
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.65);
+          border: 1px dashed var(--ui-border);
+          font-size: 0.8125rem;
+        }
+        .sanzar-seg-card-proxima-detail {
+          margin: 4px 0 0 !important;
+          font-size: 0.75rem;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-seg-card-meta-label {
+          font-size: 0.6875rem;
+          font-weight: 650;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: var(--ui-text-muted);
+          margin-right: 4px;
+        }
+        .sanzar-seg-card-meta {
+          margin-top: 6px;
+          font-size: 0.6875rem;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-seg-card-edit-spacer {
+          height: 12px;
         }
 
         /* Pricing — mode badge */

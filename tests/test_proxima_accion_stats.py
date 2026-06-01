@@ -67,3 +67,20 @@ def test_apply_dash_bucket_with_persona() -> None:
     scoped = filter_by_persona_proxima_accion(df, "David Ortiz")
     today_rows = apply_dash_bucket_date_filter(scoped, "today", today=today)
     assert list(today_rows["contact_id"]) == ["c2"]
+
+
+def test_bucket_filter_accepts_iso_proxima_fecha() -> None:
+    today = date.today()
+    df = pd.DataFrame(
+        [
+            {
+                "contact_id": "c_iso",
+                "persona_proxima_accion": "David Ortiz",
+                "proxima_accion_fecha": today.strftime("%Y-%m-%d"),
+            }
+        ]
+    )
+    counts = next_action_bucket_counts(df, today=today)
+    assert counts["today"] == 1
+    filtered = apply_dash_bucket_date_filter(df, "today", today=today)
+    assert len(filtered) == 1

@@ -1,8 +1,11 @@
 from ui.palette import (
     STATUS_DANGER,
+    STATUS_NEUTRAL,
     STATUS_SUCCESS,
     STATUS_WARNING,
     alarm_category_style,
+    commercial_result_style,
+    commercial_seg_card_modifier,
     contact_status_style,
     incident_status_style,
     subscription_status_style,
@@ -21,3 +24,12 @@ def test_incident_and_alarm_styles() -> None:
     style, width = alarm_category_style(True, True)
     assert style == STATUS_DANGER
     assert width == 3
+
+
+def test_commercial_result_and_card_modifier() -> None:
+    assert commercial_result_style("exitoso") == STATUS_SUCCESS
+    assert commercial_result_style("fallido") == STATUS_DANGER
+    assert commercial_result_style("") == STATUS_NEUTRAL
+    assert commercial_seg_card_modifier("exitoso") == "exitoso"
+    assert commercial_seg_card_modifier("Fallido") == "fallido"
+    assert commercial_seg_card_modifier("") == "neutral"

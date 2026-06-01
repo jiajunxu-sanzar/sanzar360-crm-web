@@ -25,6 +25,7 @@ from app.state import (
 )
 from config.settings import CONFIG
 from models.contact import empty_contacts_dataframe
+from services.activity_log import init_activity_sheet
 from pages import (
     actions_dashboard,
     alarms,
@@ -47,6 +48,12 @@ from ui.theme import apply_theme
 st.set_page_config(page_title="Sanzar CRM", page_icon="S", layout="wide")
 apply_theme()
 init_state()
+
+if CONFIG.google_sheet_id:
+    try:
+        init_activity_sheet(sheets_service())
+    except Exception:
+        pass
 
 
 def _close_all_overlays() -> None:

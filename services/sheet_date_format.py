@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+
+import pandas as pd
 
 _DATE_RE = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 DD_MM_YYYY_HINT = (
@@ -23,21 +25,46 @@ def is_valid_dd_mm_yyyy(value: str) -> bool:
     return True
 
 
+def parse_sheet_date(value: str) -> date | None:
+    """Parse dates from Sheets (dd/mm/yyyy, ISO, or flexible pandas parse)."""
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    if " " in raw:
+        raw = raw.split(" ", 1)[0].strip()
+    if is_valid_dd_mm_yyyy(raw):
+        try:
+            return datetime.strptime(raw, "%d/%m/%Y").date()
+        except ValueError:
+            return None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    parsed = pd.to_datetime(raw, dayfirst=True, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
+def normalize_dd_mm_yyyy(value: str) -> str:
+    """Return canonical dd/mm/yyyy or empty string if unparseable."""
+    parsed = parse_sheet_date(value)
+    if parsed is None:
+        return ""
+    return parsed.strftime("%d/%m/%Y")
+
+
 CONTACT_DATE_COLUMNS = frozenset(
     {
         "fecha_primer_contacto",
-        "fecha_ultimo_contacto",
-        "proxima_accion_fecha",
-        "fecha_veces_sin_respuesta",
         "fecha_estado",
     }
 )
 
 CONTACT_DATE_COLUMN_LABELS: dict[str, str] = {
     "fecha_primer_contacto": "Fecha primer contacto",
-    "fecha_ultimo_contacto": "Fecha último contacto",
-    "proxima_accion_fecha": "Próxima acción (fecha)",
-    "fecha_veces_sin_respuesta": "Fecha / veces sin respuesta",
     "fecha_estado": "Fecha cambio de estado",
 }
 

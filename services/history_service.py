@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 
 from app.telemetry import timed
+from config.settings import CONFIG
 from services.inventory_service import normalize_inventory_serial_for_match
 from services.sheet_date_format import is_valid_sensor_serial_number, normalize_sensor_serial_number
 from services.sheets_service import SheetsService
@@ -212,6 +213,42 @@ HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
             "tipo_incidencia",
             "sensor_serial_number",
             "nombre_campana",
+        ),
+    ),
+    "seguimiento_comercial": HistorySpec(
+        "seguimiento_comercial",
+        "Histórico de seguimiento comercial",
+        CONFIG.google_activity_log_worksheet_name,
+        "historial_accion_id",
+        "fecha_contacto",
+        (
+            "historial_accion_id",
+            "contact_id",
+            "nombre_cliente",
+            "resultado_contacto",
+            "fecha_contacto",
+            "hora_contacto",
+            "persona_contacto",
+            "canal_contacto",
+            "email_url",
+            "email_clasificacion",
+            "notas_contacto",
+            "proxima_accion_canal",
+            "proxima_accion_persona",
+            "proxima_accion_fecha",
+            "proxima_accion_detalle",
+            "origen_registro",
+            "created_at",
+            "updated_at",
+        ),
+        (
+            "fecha_contacto",
+            "hora_contacto",
+            "persona_contacto",
+            "canal_contacto",
+            "resultado_contacto",
+            "proxima_accion_fecha",
+            "proxima_accion_persona",
         ),
     ),
 }
@@ -511,6 +548,8 @@ class HistoryService:
             row["cantidad_sensores"] = str(count_sensor_assets(row.get("sensor_serial_number", "")))
         if kind == "campanas":
             row["dias_campana"] = self._campaign_days(row)
+        if kind == "seguimiento_comercial" and not str(row.get("origen_registro", "") or "").strip():
+            row["origen_registro"] = "manual"
         self._sheets_service.append_worksheet_row(spec.worksheet_name, list(spec.headers), row)
         df = pd.concat([self._frames[kind], pd.DataFrame([row])], ignore_index=True)
         self._frames[kind] = self._normalize_dataframe(df, spec)
