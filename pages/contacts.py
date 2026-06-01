@@ -47,6 +47,11 @@ from services.history_service import (
 )
 from services.contact_deletion import delete_contact_and_related_data
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
+from services.proxima_accion_stats import (
+    apply_dash_bucket_date_filter,
+    filter_by_persona_proxima_accion,
+    next_action_bucket_counts,
+)
 from services.inventory_service import InventoryAssetOption, normalize_inventory_serial_for_match
 from services.sheet_date_format import (
     SENSOR_SERIAL_NUMBER_FORMAT_HELP,
@@ -114,6 +119,7 @@ CONTACTS_DELETE_SUCCESS_KEY = "contacts.delete_success_message"
 CONTACTS_DELETE_TARGET_ID_KEY = "contacts.delete_target_id"
 CONTACTS_DELETE_TARGET_NAME_KEY = "contacts.delete_target_name"
 HISTORY_DELETE_CONFIRM_PREFIX = "history_delete_confirm"
+DASH_PERSONA_PROXIMA_ACCION_KEY = "dash_persona_proxima_accion"
 
 
 def _clear_modal_flags() -> None:
@@ -423,20 +429,11 @@ def _render_contact_list(df: pd.DataFrame) -> str:
         ]
     if not bool(st.session_state.get(CONTACTS_SHOW_LOST_KEY, True)):
         filtered = filtered[filtered["estado"].astype(str).str.lower() != "perdido"]
+    persona_proxima = str(st.session_state.get(DASH_PERSONA_PROXIMA_ACCION_KEY, "") or "")
+    filtered = filter_by_persona_proxima_accion(filtered, persona_proxima)
     dash_bucket = st.session_state.get("dash_bucket", "")
     if dash_bucket:
-        today = pd.Timestamp(date.today())
-        next_actions = pd.to_datetime(
-            filtered["proxima_accion_fecha"].fillna("").astype(str),
-            format="%d/%m/%Y",
-            errors="coerce",
-        )
-        if dash_bucket == "past":
-            filtered = filtered[next_actions < today]
-        elif dash_bucket == "today":
-            filtered = filtered[next_actions == today]
-        elif dash_bucket == "tomorrow":
-            filtered = filtered[next_actions == (today + pd.Timedelta(days=1))]
+        filtered = apply_dash_bucket_date_filter(filtered, str(dash_bucket))
     filtered = filtered.reset_index(drop=True)
 
     if st.button("Nuevo contacto", key="create_contact_top", width="stretch"):
@@ -1378,22 +1375,38 @@ def _sync_inventory_from_sensor_history(
     _reconcile_inventory_locations_for_sensor_serials(serials, default_location_type=default_location_type)
 
 
+def _persona_proxima_accion_filter_options(df: pd.DataFrame) -> list[str]:
+    opts = list(PERSONA_COMERCIAL_OPCIONES)
+    if not df.empty and "persona_proxima_accion" in df.columns:
+        known = set(opts)
+        extra = sorted(
+            {
+                x
+                for x in df["persona_proxima_accion"].fillna("").astype(str).str.strip().unique()
+                if x and x not in known
+            }
+        )
+        opts = opts + extra
+    return [""] + opts
+
+
 def _render_next_action_strip(df: pd.DataFrame) -> None:
     if "dash_bucket" not in st.session_state:
         st.session_state.dash_bucket = ""
-    today = date.today()
-    counts = {"past": 0, "today": 0, "tomorrow": 0}
-    for row in df.fillna("").astype(str).to_dict("records"):
-        when = _parse_ddmmyyyy(row.get("proxima_accion_fecha", ""))
-        if when is None:
-            continue
-        if when < today:
-            counts["past"] += 1
-        elif when == today:
-            counts["today"] += 1
-        elif when == today + timedelta(days=1):
-            counts["tomorrow"] += 1
     st.markdown("##### Próximas acciones")
+    persona_opts = _persona_proxima_accion_filter_options(df)
+    current_persona = str(st.session_state.get(DASH_PERSONA_PROXIMA_ACCION_KEY, "") or "")
+    persona_index = persona_opts.index(current_persona) if current_persona in persona_opts else 0
+    st.selectbox(
+        "Persona próxima acción",
+        options=persona_opts,
+        index=persona_index,
+        format_func=lambda v: "Todas" if not v else v,
+        key=DASH_PERSONA_PROXIMA_ACCION_KEY,
+    )
+    persona_proxima = str(st.session_state.get(DASH_PERSONA_PROXIMA_ACCION_KEY, "") or "")
+    scoped = filter_by_persona_proxima_accion(df, persona_proxima)
+    counts = next_action_bucket_counts(scoped)
     c1, c2, c3 = st.columns(3, gap="small")
     for col, key, label in (
         (c1, "past", "Fecha anterior"),

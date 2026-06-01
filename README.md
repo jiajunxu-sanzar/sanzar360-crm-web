@@ -11,7 +11,7 @@ cd /Users/davidxu/Documents/sanzar-crm-web
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-,
+streamlit run streamlit_app.py
 ```
 
 La app lee secretos desde `.env` y desde
