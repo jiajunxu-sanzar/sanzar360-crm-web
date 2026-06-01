@@ -78,20 +78,10 @@ from ui.components.cards import card, chip
 from ui.components.customer_timeline import render_contact_timeline_block
 from ui.components.commercial_followup import render_commercial_followup_list
 from ui.components.contact_detail_header import render_contact_detail_header
+from ui.components.history_cards import render_paginated_history_cards
 from ui import modal_state
-from ui.components.history import (
-    clear_history_table_selection,
-    render_history_summary,
-    render_history_table,
-)
+from ui.components.history import clear_history_table_selection
 from ui.components.tables import filter_dataframe
-from ui.palette import (
-    STATUS_INFO,
-    STATUS_DANGER,
-    STATUS_NEUTRAL,
-    incident_status_style,
-    subscription_status_style,
-)
 
 DATE_COLUMNS_BY_KIND = {
     "sensores": [("Fecha inicio", "fecha_inicio"), ("Fecha fin", "fecha_fin"), ("Última revisión", "ultima_revision")],
@@ -709,8 +699,9 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     else:
         updated = None
         _render_history_kind_section(contact, "seguimiento_comercial", expanded=True)
-        st.divider()
-        _render_operativa_cards(contact)
+        for kind in ("sensores", "campanas", "suscripciones", "incidencias"):
+            _render_history_kind_section(contact, kind)
+        _maybe_render_sensor_close_location_modal(contact)
     _maybe_render_add_history_modal(contact)
     _maybe_render_edit_history_modal(contact)
     return updated if updated is not None else df
@@ -844,88 +835,6 @@ def _render_form_sections(
                     )
 
 
-def _handle_history_table_secondary_open(
-    kind: str,
-    rows: list[dict[str, str]],
-    contact: dict[str, str],
-    selected_pos: int | None,
-) -> None:
-    """Segunda acción explícita: editar la fila actualmente destacada en la tabla."""
-    if selected_pos is None or selected_pos < 0:
-        return
-    if selected_pos >= len(rows):
-        return
-    spec = HISTORY_SPECS[kind]
-    contact_id = contact.get("contact_id", "")
-    row_id = str(rows[selected_pos].get(spec.id_column, "")).strip()
-    if not row_id:
-        return
-    suffix = f"{contact_id}_{kind}"
-    if st.button(
-        "Editar fila seleccionada",
-        key=f"hist_edit_selected_{suffix}",
-        width="stretch",
-        type="primary",
-    ):
-        modal_state.open_edit_history_modal(kind, contact_id, row_id)
-        st.rerun()
-
-
-def _render_operativa_cards(contact: dict[str, str]) -> None:
-    hs = history_service()
-    contact_id = contact.get("contact_id", "")
-    st.markdown("##### Sensores / Campañas / Suscripciones / Incidencias")
-    for kind in ("sensores", "campanas", "suscripciones", "incidencias"):
-        rows = hs.rows_for_contact(kind, contact_id)
-        spec = HISTORY_SPECS[kind]
-        latest = rows[0] if rows else {}
-        summary_parts = [
-            f"{column}: {latest.get(column, '—')}"
-            for column in spec.summary_columns[:2]
-        ]
-        style = STATUS_NEUTRAL
-        if kind == "suscripciones":
-            style = subscription_status_style(hs.subscription_status_for_contact(contact_id))
-        if kind == "incidencias":
-            style = incident_status_style(hs.has_open_incidents(contact_id))
-        card(
-            spec.title,
-            (
-                chip(f"{len(rows)} registros", STATUS_INFO)
-                + "<br>"
-                + "<br>".join(summary_parts if summary_parts else ["Sin registros todavía."])
-            ),
-            style=style,
-        )
-        c1, c2 = st.columns([0.6, 0.4], gap="small")
-        if c1.button("Historial", key=f"inline_history_{kind}_{contact_id}", width="stretch"):
-            _clear_contact_overlay_state(keep_contact_id=contact_id)
-            _clear_history_selection(contact_id, kind)
-            st.session_state[f"show_history_{kind}_{contact_id}"] = not st.session_state.get(
-                f"show_history_{kind}_{contact_id}", False
-            )
-            st.rerun()
-        if c2.button(
-            "Nuevo histórico",
-            key=f"inline_add_{kind}_{contact_id}",
-            width="stretch",
-        ):
-            _clear_contact_overlay_state(keep_contact_id=contact_id)
-            modal_state.open_add_history_modal(kind, contact_id)
-            st.rerun()
-
-        if st.session_state.get(f"show_history_{kind}_{contact_id}", False):
-            selected_pos = render_history_table(
-                kind,
-                rows,
-                technical=False,
-                contact_id=contact_id,
-            )
-            _handle_history_table_secondary_open(kind, rows, contact, selected_pos)
-
-    _maybe_render_sensor_close_location_modal(contact)
-
-
 def _maybe_render_sensor_close_location_modal(contact: dict[str, str]) -> None:
     m = modal_state.get_active_modal()
     if not m or m.get("type") != "sensor_close_location":
@@ -989,6 +898,10 @@ def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
         prefix = f"{kind}_new"
         st.markdown("**Sensor**")
         _render_sensor_serial_field("", prefix, f"{prefix}_sensor_serial_number", exclude_hist_id="")
+    elif kind == "seguimiento_comercial":
+        excluded = _SEGUIMIENTO_CANAL_FIELDS
+        prefix, initial = _seguimiento_modal_initial(kind, contact, None)
+        _render_seguimiento_canal_block(prefix, initial)
 
     with st.form(f"history_add_modal_{kind}_{contact.get('contact_id', '')}"):
         _render_history_form_body(kind, contact, None, excluded_headers=excluded)
@@ -1063,6 +976,10 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
             f"{prefix}_sensor_serial_number",
             exclude_hist_id=hist_id,
         )
+    elif kind == "seguimiento_comercial":
+        excluded = _SEGUIMIENTO_CANAL_FIELDS
+        prefix, initial = _seguimiento_modal_initial(kind, contact, row)
+        _render_seguimiento_canal_block(prefix, initial)
 
     with st.form(f"history_edit_modal_{kind}_{row.get(spec.id_column, '')}"):
         _render_history_form_grouped_body(kind, contact, row, excluded_headers=excluded)
@@ -1449,6 +1366,24 @@ def _render_seguimiento_comercial_section(contact: dict[str, str], rows: list[di
     render_commercial_followup_list(rows, contact_id)
 
 
+def _render_operative_history_cards_section(
+    contact: dict[str, str],
+    kind: str,
+    rows: list[dict[str, str]],
+) -> None:
+    contact_id = str(contact.get("contact_id", "") or "")
+    st.caption(f"{len(rows)} registro{'s' if len(rows) != 1 else ''}")
+    if st.button(
+        "Nuevo histórico",
+        type="primary",
+        key=f"hist_new_{kind}_{contact_id}",
+        width="stretch",
+    ):
+        modal_state.open_add_history_modal(kind, contact_id)
+        st.rerun()
+    render_paginated_history_cards(kind, rows, contact_id)
+
+
 def _render_history_kind_section(
     contact: dict[str, str],
     kind: str,
@@ -1467,21 +1402,7 @@ def _render_history_kind_section(
         if kind == "seguimiento_comercial":
             _render_seguimiento_comercial_section(contact, rows)
             return
-        render_history_summary(kind, rows)
-        col_a, col_b = st.columns([0.24, 0.76])
-        with col_a:
-            technical = st.checkbox("Ver columnas técnicas", key=f"{kind}_technical_{contact_id}")
-        with col_b:
-            selected_pos = render_history_table(
-                kind,
-                rows,
-                technical=technical,
-                contact_id=contact_id,
-            )
-            _handle_history_table_secondary_open(kind, rows, contact, selected_pos)
-        _render_history_create_form(kind, contact)
-        if rows:
-            _render_history_edit_form(kind, rows)
+        _render_operative_history_cards_section(contact, kind, rows)
 
 
 def _render_histories(contact: dict[str, str]) -> None:
@@ -1545,12 +1466,42 @@ _SEGUIMIENTO_CONTACTO_FIELDS = (
     "email_clasificacion",
     "notas_contacto",
 )
+_SEGUIMIENTO_CANAL_FIELDS = frozenset({"canal_contacto", "email_url", "email_clasificacion"})
 _SEGUIMIENTO_PROXIMA_FIELDS = (
     "proxima_accion_canal",
     "proxima_accion_persona",
     "proxima_accion_fecha",
     "proxima_accion_detalle",
 )
+
+
+def _render_seguimiento_canal_block(prefix: str, initial: dict[str, str]) -> None:
+    """Canal + campos email fuera del form para que el rerun habilite email_url."""
+    kind = "seguimiento_comercial"
+    st.markdown("**Canal de contacto**")
+    _field_for_header(kind, "canal_contacto", initial.get("canal_contacto", ""), prefix)
+    canal = str(st.session_state.get(f"{prefix}_canal_contacto", "") or "").strip().lower()
+    if canal == "email":
+        _field_for_header(kind, "email_url", initial.get("email_url", ""), prefix)
+        _field_for_header(kind, "email_clasificacion", initial.get("email_clasificacion", ""), prefix)
+    elif canal:
+        st.caption("URL y clasificación de email solo aplican cuando el canal es email.")
+    else:
+        st.caption("Selecciona un canal de contacto.")
+
+
+def _seguimiento_modal_initial(kind: str, contact: dict[str, str], row: dict[str, str] | None) -> tuple[str, dict[str, str]]:
+    spec = HISTORY_SPECS[kind]
+    if row is None:
+        prefix = f"{kind}_new"
+        initial = {header: "" for header in spec.headers}
+    else:
+        row_id = str(row.get(spec.id_column, "") or "")
+        prefix = f"{kind}_{row_id}"
+        initial = {header: str(row.get(header, "") or "") for header in spec.headers}
+    initial["contact_id"] = str(contact.get("contact_id", "") or "")
+    initial["nombre_cliente"] = str(contact.get("nombre", contact.get("nombre_cliente", "")) or "")
+    return prefix, initial
 
 
 def _render_seguimiento_comercial_fields(
@@ -2152,8 +2103,7 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         if header == "hora_contacto":
             return st.text_input(label, value=value, key=key, placeholder="14:30")
         if header == "email_url":
-            canal = str(st.session_state.get(f"{prefix}_canal_contacto", "") or "").strip().lower()
-            return st.text_input(label, value=value, key=key, disabled=canal != "email")
+            return st.text_input(label, value=value, key=key)
         if header in {"notas_contacto", "proxima_accion_detalle"}:
             return st.text_area(label, value=value, key=key, height=120)
         if header == "origen_registro":

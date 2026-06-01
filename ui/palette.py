@@ -96,6 +96,68 @@ def commercial_seg_card_modifier(resultado: str) -> str:
     return "neutral"
 
 
+def history_open_closed_modifier(field: str, value: str) -> str:
+    """CSS modifier for abierto/cerrado history fields: exitoso | fallido | neutral."""
+    del field  # reserved for field-specific rules later
+    text = _normalize_visual_text(value)
+    if text == "abierto":
+        return "exitoso"
+    if text == "cerrado":
+        return "fallido"
+    return "neutral"
+
+
+def history_open_closed_style(value: str) -> VisualStatusStyle:
+    modifier = history_open_closed_modifier("", value)
+    if modifier == "exitoso":
+        return STATUS_SUCCESS
+    if modifier == "fallido":
+        return STATUS_DANGER
+    return STATUS_NEUTRAL
+
+
+def history_subscription_modifier(estado_suscripcion: str) -> str:
+    """CSS modifier for subscription cards: exitoso | warning | fallido | neutral."""
+    text = _normalize_visual_text(estado_suscripcion)
+    if "caduca" in text or "pronto" in text:
+        return "warning"
+    if "activa" in text and "inactiva" not in text:
+        return "exitoso"
+    if "inactiva" in text:
+        return "fallido"
+    return "neutral"
+
+
+def history_subscription_style(value: str) -> VisualStatusStyle:
+    modifier = history_subscription_modifier(value)
+    if modifier == "warning":
+        return STATUS_WARNING
+    if modifier == "exitoso":
+        return STATUS_SUCCESS
+    if modifier == "fallido":
+        return STATUS_DANGER
+    return STATUS_NEUTRAL
+
+
+def history_incident_modifier(estado: str) -> str:
+    """CSS modifier for incident history cards (open=green, closed=red)."""
+    text = _normalize_visual_text(estado)
+    if text in {"cerrada", "cerrado", "resuelta", "resuelto"}:
+        return "fallido"
+    if text in {"abierta", "en curso", "bloqueada"}:
+        return "exitoso"
+    return "neutral"
+
+
+def history_incident_style(value: str) -> VisualStatusStyle:
+    modifier = history_incident_modifier(value)
+    if modifier == "exitoso":
+        return STATUS_SUCCESS
+    if modifier == "fallido":
+        return STATUS_DANGER
+    return STATUS_NEUTRAL
+
+
 def subscription_status_style(value: str) -> VisualStatusStyle:
     text = _normalize_visual_text(value)
     if "caduca" in text or "pronto" in text:

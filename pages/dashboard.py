@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 
 from app.cache import load_acciones_cached
@@ -9,50 +8,40 @@ from app.navigation import page_menu_title
 from app.telemetry import timed
 from services.contact_proxima_index import enrich_contacts_with_proxima
 from services.dashboard_stats import funnel_counts, kpi_summary, value_counts
-from ui.components.cards import metric_card
+from ui.components.dashboard_cards import (
+    render_dashboard_kpi_row,
+    render_funnel_cards,
+    render_ranked_bar_cards,
+)
 
 
 def render(df: pd.DataFrame) -> None:
     st.title(page_menu_title("Dashboard"))
+    st.caption("Resumen del CRM: contactos, embudo comercial y distribución geográfica y agrícola.")
+
     acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
     df = enrich_contacts_with_proxima(df, acciones_df)
     with timed("dashboard.render"):
         metrics = kpi_summary(df)
-    cols = st.columns(4)
-    with cols[0]:
-        metric_card("Contactos", metrics["contactos"], "Total cargado desde Google Sheets")
-    with cols[1]:
-        metric_card("Clientes", metrics["clientes"], "Estado = Cliente")
-    with cols[2]:
-        metric_card("Próximas acciones", metrics["proximas_acciones"], "Contactos con fecha prevista")
-    with cols[3]:
-        metric_card("Sin estado", metrics["sin_estado"], "Requieren limpieza")
 
-    left, right = st.columns(2)
+    render_dashboard_kpi_row(metrics)
+
+    left, right = st.columns(2, gap="large")
     with left:
         st.subheader("Embudo comercial")
-        funnel = funnel_counts(df)
-        if funnel:
-            chart_df = pd.DataFrame({"estado": list(funnel.keys()), "contactos": list(funnel.values())})
-            st.plotly_chart(px.bar(chart_df, x="estado", y="contactos"), use_container_width=True)
-        else:
-            st.info("No hay estados disponibles.")
+        render_funnel_cards(funnel_counts(df), metrics["contactos"])
     with right:
         st.subheader("Top provincias")
-        provinces = value_counts(df, "provincia", top=8)
-        if provinces:
-            chart_df = pd.DataFrame({"provincia": list(provinces.keys()), "contactos": list(provinces.values())})
-            st.plotly_chart(px.bar(chart_df, x="contactos", y="provincia", orientation="h"), use_container_width=True)
-        else:
-            st.info("No hay provincias disponibles.")
+        render_ranked_bar_cards(
+            value_counts(df, "provincia", top=8),
+            empty_msg="No hay provincias disponibles.",
+        )
 
     st.subheader("Top cultivos")
-    crops = value_counts(df, "cultivos", top=12)
-    if crops:
-        crop_df = pd.DataFrame({"cultivo": list(crops.keys()), "contactos": list(crops.values())})
-        st.dataframe(crop_df, hide_index=True, width="stretch")
-    else:
-        st.info("No hay cultivos disponibles.")
+    render_ranked_bar_cards(
+        value_counts(df, "cultivos", top=12),
+        empty_msg="No hay cultivos disponibles.",
+    )
 
     with st.expander("Telemetría (baseline)"):
         events = st.session_state.get("telemetry_events", [])

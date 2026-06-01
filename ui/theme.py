@@ -130,6 +130,194 @@ def apply_theme() -> None:
         .sanzar-muted { color: var(--ui-text-muted); font-size: 0.875rem; }
         .sanzar-table-note { color: var(--ui-text-muted); font-size: 0.85rem; margin-top: -8px; }
 
+        /* Shared KPI cards (Dashboard + Acciones) */
+        .sanzar-kpi,
+        .sanzar-acciones-kpi {
+          border: 1px solid var(--ui-border);
+          border-radius: 14px;
+          padding: 16px 18px;
+          background: #fafafa;
+          margin-bottom: 8px;
+        }
+        .sanzar-kpi--success,
+        .sanzar-acciones-kpi--success {
+          background: #f0fdf4;
+          border-color: #bbf7d0;
+        }
+        .sanzar-kpi--danger,
+        .sanzar-acciones-kpi--danger {
+          background: #fef2f2;
+          border-color: #fecaca;
+        }
+        .sanzar-kpi--info {
+          background: #f0f9ff;
+          border-color: #bae6fd;
+        }
+        .sanzar-kpi--warning {
+          background: #fffbeb;
+          border-color: #fde68a;
+        }
+        .sanzar-kpi-label,
+        .sanzar-acciones-kpi-label {
+          font-size: 0.8125rem;
+          color: var(--ui-text-muted);
+          margin-bottom: 6px;
+        }
+        .sanzar-kpi-value,
+        .sanzar-acciones-kpi-value {
+          font-size: 2rem;
+          font-weight: 650;
+          letter-spacing: -0.03em;
+          color: var(--ui-text);
+          line-height: 1.1;
+        }
+        .sanzar-kpi-help {
+          margin-top: 6px;
+          font-size: 0.75rem;
+          color: var(--ui-text-muted);
+        }
+        /* Dashboard ranked lists + funnel */
+        .sanzar-dash-section {
+          margin-bottom: 8px;
+        }
+        .sanzar-dash-rank-card,
+        .sanzar-dash-funnel-card {
+          border: 1px solid var(--ui-border);
+          border-radius: 12px;
+          padding: 12px 14px;
+          background: var(--ui-bg-elevated);
+          margin-bottom: 10px;
+        }
+        .sanzar-dash-rank-head,
+        .sanzar-dash-funnel-head {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .sanzar-dash-rank-title,
+        .sanzar-dash-funnel-title {
+          font-size: 0.9375rem;
+          font-weight: 650;
+          color: var(--ui-text);
+        }
+        .sanzar-dash-rank-value,
+        .sanzar-dash-funnel-value {
+          font-size: 0.875rem;
+          font-weight: 600;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-dash-rank-track,
+        .sanzar-dash-funnel-track {
+          height: 10px;
+          border-radius: 999px;
+          background: #f4f4f5;
+          overflow: hidden;
+          margin-bottom: 4px;
+        }
+        .sanzar-dash-rank-fill,
+        .sanzar-dash-funnel-fill {
+          height: 100%;
+          border-radius: 999px;
+          background: #cbd5e1;
+        }
+        .sanzar-dash-funnel-meta {
+          font-size: 0.75rem;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-acciones-week-caption {
+          text-align: center;
+          margin: 0.35rem 0 0.75rem;
+          font-size: 0.9375rem;
+          color: var(--ui-text);
+        }
+        .sanzar-acciones-person-card,
+        .sanzar-acciones-week-snapshot,
+        .sanzar-acciones-canal-rate-card {
+          border: 1px solid var(--ui-border);
+          border-radius: 14px;
+          padding: 14px 16px;
+          background: var(--ui-bg-elevated);
+          margin-bottom: 12px;
+        }
+        .sanzar-acciones-person-head,
+        .sanzar-acciones-week-snapshot-head,
+        .sanzar-acciones-canal-rate-head {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .sanzar-acciones-person-name,
+        .sanzar-acciones-week-snapshot-when,
+        .sanzar-acciones-canal-rate-title {
+          font-size: 1rem;
+          font-weight: 650;
+          color: var(--ui-text);
+        }
+        .sanzar-acciones-person-total,
+        .sanzar-acciones-week-snapshot-total,
+        .sanzar-acciones-canal-rate-pct {
+          font-size: 0.875rem;
+          font-weight: 600;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-acciones-person-summary,
+        .sanzar-acciones-week-snapshot-summary {
+          margin-bottom: 10px;
+        }
+        .sanzar-acciones-canal-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 8px;
+        }
+        .sanzar-acciones-canal-item {
+          border: 1px dashed var(--ui-border);
+          border-radius: 10px;
+          padding: 8px 10px;
+          background: rgba(255, 255, 255, 0.55);
+        }
+        .sanzar-acciones-canal-item-label {
+          font-size: 0.75rem;
+          font-weight: 650;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: var(--ui-text-muted);
+          margin-bottom: 4px;
+        }
+        .sanzar-acciones-canal-item-stats {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          font-size: 0.8125rem;
+          color: var(--ui-text);
+        }
+        .sanzar-acciones-stat-ok { color: #15803d; font-weight: 600; }
+        .sanzar-acciones-stat-ko { color: #b91c1c; font-weight: 600; }
+        .sanzar-acciones-person-btn-spacer { height: 18px; }
+        .sanzar-acciones-canal-rate-track {
+          height: 10px;
+          border-radius: 999px;
+          background: #f4f4f5;
+          overflow: hidden;
+          margin-bottom: 8px;
+        }
+        .sanzar-acciones-canal-rate-fill {
+          height: 100%;
+          border-radius: 999px;
+        }
+        .sanzar-acciones-canal-rate-fill--high { background: #86efac; }
+        .sanzar-acciones-canal-rate-fill--mid { background: #fde68a; }
+        .sanzar-acciones-canal-rate-fill--low { background: #fca5a5; }
+        .sanzar-acciones-canal-rate-meta {
+          font-size: 0.8125rem;
+          color: var(--ui-text-muted);
+        }
+
         .sanzar-alarm-card {
           border-radius: 12px;
           padding: 12px;
@@ -506,26 +694,35 @@ def apply_theme() -> None:
           line-height: 1.5;
         }
 
-        /* Seguimiento comercial — cards in contact ficha */
-        .sanzar-seg-card {
+        /* Seguimiento comercial + históricos operativos — cards in contact ficha */
+        .sanzar-seg-card,
+        .sanzar-hist-card {
           margin: 0 0 4px 0;
           padding: 12px 14px;
           border-radius: 10px;
           border: 1px solid var(--ui-border);
           background: var(--ui-bg-elevated);
         }
-        .sanzar-seg-card--exitoso {
+        .sanzar-seg-card--exitoso,
+        .sanzar-hist-card--exitoso {
           border-left: 4px solid #15803d;
           background: #f0fdf4;
         }
-        .sanzar-seg-card--fallido {
+        .sanzar-seg-card--fallido,
+        .sanzar-hist-card--fallido {
           border-left: 4px solid #b91c1c;
           background: #fef2f2;
         }
-        .sanzar-seg-card--neutral {
+        .sanzar-seg-card--neutral,
+        .sanzar-hist-card--neutral {
           border-left: 4px solid var(--ui-border-strong);
         }
-        .sanzar-seg-card-head {
+        .sanzar-hist-card--warning {
+          border-left: 4px solid #b45309;
+          background: #fffbeb;
+        }
+        .sanzar-seg-card-head,
+        .sanzar-hist-card-head {
           display: flex;
           flex-wrap: wrap;
           align-items: center;
@@ -533,21 +730,38 @@ def apply_theme() -> None:
           gap: 8px;
           margin-bottom: 4px;
         }
-        .sanzar-seg-card-when {
+        .sanzar-seg-card-when,
+        .sanzar-hist-card-when {
           font-size: 0.9375rem;
           font-weight: 600;
           color: var(--ui-text);
         }
-        .sanzar-seg-card-sub {
+        .sanzar-seg-card-sub,
+        .sanzar-hist-card-sub {
           font-size: 0.8125rem;
           color: var(--ui-text-muted);
           margin-bottom: 6px;
         }
-        .sanzar-seg-card-notes {
+        .sanzar-hist-card-body {
+          font-size: 0.8125rem;
+          color: var(--ui-text);
+          margin-bottom: 6px;
+          line-height: 1.45;
+        }
+        .sanzar-seg-card-notes,
+        .sanzar-hist-card-notes {
           margin: 0 0 8px 0 !important;
           font-size: 0.8125rem;
           color: var(--ui-text);
           line-height: 1.45;
+        }
+        .sanzar-hist-card-extra {
+          padding: 8px 10px;
+          margin: 4px 0 8px;
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.65);
+          border: 1px dashed var(--ui-border);
+          font-size: 0.8125rem;
         }
         .sanzar-seg-card-proxima {
           padding: 8px 10px;
@@ -562,7 +776,8 @@ def apply_theme() -> None:
           font-size: 0.75rem;
           color: var(--ui-text-muted);
         }
-        .sanzar-seg-card-meta-label {
+        .sanzar-seg-card-meta-label,
+        .sanzar-hist-card-meta-label {
           font-size: 0.6875rem;
           font-weight: 650;
           text-transform: uppercase;
@@ -570,12 +785,14 @@ def apply_theme() -> None:
           color: var(--ui-text-muted);
           margin-right: 4px;
         }
-        .sanzar-seg-card-meta {
+        .sanzar-seg-card-meta,
+        .sanzar-hist-card-meta {
           margin-top: 6px;
           font-size: 0.6875rem;
           color: var(--ui-text-muted);
         }
-        .sanzar-seg-card-edit-spacer {
+        .sanzar-seg-card-edit-spacer,
+        .sanzar-hist-card-edit-spacer {
           height: 12px;
         }
 

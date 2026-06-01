@@ -2,76 +2,101 @@
 
 from __future__ import annotations
 
-import plotly.express as px
 import streamlit as st
 
-from app.cache import load_acciones_cached
+from app.cache import load_acciones_cached, load_users_cached
 from app.navigation import page_menu_title
 from app.telemetry import timed
 from services.actions_dashboard_stats import (
-    contacts_by_hour,
+    commercial_team_roster,
+    merge_person_canal_week_with_roster,
+    person_performance_averages,
+    person_performance_last_months,
     success_rate_by_canal,
     summarize_commercial_week,
+    summarize_person_canal_week,
 )
+from ui.components.actions_dashboard_cards import (
+    render_canal_success_cards,
+    render_person_averages_dashboard,
+    render_person_cards_grid,
+    render_person_performance_snapshots,
+    render_week_kpi_cards,
+    render_week_navigation,
+)
+
+ACCIONES_VIEW_KEY = "acciones_view"
+ACCIONES_PERSON_KEY = "acciones_selected_person"
+ACCIONES_WEEK_OFFSET_KEY = "acciones_week_offset"
+
+
+def _init_acciones_session_state() -> None:
+    if ACCIONES_VIEW_KEY not in st.session_state:
+        st.session_state[ACCIONES_VIEW_KEY] = "team"
+    if ACCIONES_WEEK_OFFSET_KEY not in st.session_state:
+        st.session_state[ACCIONES_WEEK_OFFSET_KEY] = 0
+
+
+def _render_team_view(df) -> None:
+    week_offset = int(st.session_state.get(ACCIONES_WEEK_OFFSET_KEY, 0) or 0)
+    summary = summarize_commercial_week(df, week_offset=week_offset)
+    roster = commercial_team_roster(load_users_cached(st.session_state.get("users_cache_version", 0)))
+    people = merge_person_canal_week_with_roster(
+        summarize_person_canal_week(df, summary.week_start, summary.week_end),
+        roster,
+    )
+
+    render_week_navigation(
+        summary.week_start,
+        summary.week_end,
+        week_offset=week_offset,
+        prev_key="acciones_week_prev",
+        next_key="acciones_week_next",
+    )
+    render_week_kpi_cards(summary.total_contacts, summary.exitosos, summary.fallidos)
+
+    st.subheader("Por persona")
+    render_person_cards_grid(people, key_prefix=f"acciones_w{week_offset}")
+
+    st.divider()
+    st.subheader("Tasa de éxito por canal (histórico)")
+    render_canal_success_cards(success_rate_by_canal(df))
+
+
+def _render_person_view(df) -> None:
+    persona = str(st.session_state.get(ACCIONES_PERSON_KEY, "") or "").strip()
+    if not persona:
+        st.session_state[ACCIONES_VIEW_KEY] = "team"
+        st.rerun()
+
+    if st.button("← Volver al equipo", key="acciones_back_team"):
+        st.session_state[ACCIONES_VIEW_KEY] = "team"
+        st.session_state.pop(ACCIONES_PERSON_KEY, None)
+        st.rerun()
+
+    st.markdown(f"### Detalle comercial · {persona}")
+    st.caption("Últimos 3 meses · resumen semanal de contactos, canales y resultados.")
+
+    snapshots = person_performance_last_months(df, persona, months=3)
+    averages = person_performance_averages(snapshots)
+    render_person_averages_dashboard(averages)
+    st.divider()
+    render_person_performance_snapshots(snapshots)
 
 
 def render() -> None:
     st.title(page_menu_title("Acciones"))
-    st.caption("Seguimiento comercial por contacto (email, llamada, en persona). Una fila por touchpoint en la hoja Acciones.")
+    st.caption(
+        "Seguimiento comercial por contacto (email, llamada, en persona). "
+        "Una fila por touchpoint en la hoja Acciones."
+    )
+    _init_acciones_session_state()
 
     with timed("actions_dashboard.render"):
         df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
-        summary = summarize_commercial_week(df)
 
-    ws, we = summary.week_start, summary.week_end
-    st.info(
-        f"**Semana actual (lunes–domingo):** del **{ws.strftime('%d/%m/%Y')}** al **{we.strftime('%d/%m/%Y')}**."
-    )
+    if st.session_state.get(ACCIONES_VIEW_KEY) == "person":
+        _render_person_view(df)
+        return
 
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Contactos esta semana", summary.total_contacts)
-    m2.metric("Exitosos", summary.exitosos)
-    m3.metric("Fallidos", summary.fallidos)
-
-    if summary.by_person.empty:
-        st.warning("No hay registros de seguimiento en la semana actual.")
-    else:
-        st.subheader("Por persona (esta semana)")
-        show = summary.by_person.rename(
-            columns={
-                "persona_contacto": "Persona",
-                "total": "Total",
-                "exitosos": "Exitosos",
-                "fallidos": "Fallidos",
-            }
-        )
-        st.dataframe(show, width="stretch", hide_index=True)
-
-    st.divider()
-    st.subheader("Tasa de éxito por canal (histórico)")
-    canal_df = success_rate_by_canal(df)
-    if canal_df.empty:
-        st.info("Sin datos de canal todavía.")
-    else:
-        st.dataframe(
-            canal_df.rename(
-                columns={
-                    "canal_contacto": "Canal",
-                    "total": "Total",
-                    "exitosos": "Exitosos",
-                    "tasa_exito": "Tasa éxito %",
-                }
-            ),
-            width="stretch",
-            hide_index=True,
-        )
-        fig = px.bar(canal_df, x="canal_contacto", y="tasa_exito", title="Tasa de éxito por canal (%)")
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Contactos por hora del día (histórico)")
-    hour_df = contacts_by_hour(df)
-    if hour_df.empty:
-        st.info("Sin horas registradas todavía.")
-    else:
-        fig2 = px.bar(hour_df, x="hora", y="total", title="Volumen por hora (HH)")
-        st.plotly_chart(fig2, use_container_width=True)
+    _render_team_view(df)

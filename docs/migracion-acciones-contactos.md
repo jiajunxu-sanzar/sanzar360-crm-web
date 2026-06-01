@@ -8,7 +8,14 @@
 
 ## Hoja Acciones
 
-Al arrancar la app nueva, si la fila 1 no coincide con `ACCIONES_HEADERS` en `config/settings.py`, la hoja se **vacía** y se reescribe la cabecera. Planificad el cambio en una ventana de mantenimiento.
+Al arrancar la app, **no se borran filas** de Acciones. El comportamiento es:
+
+- Si la pestaña no existe, se crea con la cabecera `ACCIONES_HEADERS` de `config/settings.py`.
+- Si la hoja está vacía (sin filas de datos), se actualiza la fila 1 a esa cabecera.
+- Si hay datos y faltan columnas nuevas al final, se **añaden** a la fila 1 sin tocar filas existentes.
+- Si la cabecera es incompatible (columnas obsoletas u orden distinto), la app **registra un error en logs** y conserva los datos; hay que migrar manualmente (CSV o edición de la fila 1).
+
+Para migrar desde el log antiguo de 6 columnas, exportad CSV, adaptad columnas y reimportad en una ventana de mantenimiento.
 
 ## Contactos: columnas a eliminar en Google Sheets
 
