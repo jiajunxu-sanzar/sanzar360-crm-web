@@ -607,7 +607,13 @@ class HistoryService:
         if not mask.any():
             raise ValueError(f"No existe {row_id}")
         df = df.loc[~mask].copy()
-        self._sheets_service.write_worksheet_df(spec.worksheet_name, df, list(spec.headers))
+        removed = self._sheets_service.delete_rows_where_column_equals(
+            spec.worksheet_name,
+            spec.id_column,
+            str(row_id),
+        )
+        if removed < 1:
+            raise ValueError(f"No existe {row_id}")
         self._frames[kind] = self._normalize_dataframe(df, spec)
         self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
         if kind == "sensores":

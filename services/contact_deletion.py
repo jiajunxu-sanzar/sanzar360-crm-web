@@ -47,10 +47,6 @@ def delete_contact_and_related_data(sheets: SheetsService, contact_id: str) -> N
     for spec in HISTORY_SPECS.values():
         sheets.delete_rows_where_column_equals(spec.worksheet_name, "contact_id", cid)
 
-    sheets.delete_rows_where_column_equals(
-        CONFIG.google_activity_log_worksheet_name, "contact_id", cid
-    )
-
     removed = sheets.delete_rows_where_column_equals(
         CONFIG.google_worksheet_name, "contact_id", cid
     )

@@ -122,6 +122,7 @@ def test_summarize_person_canal_week() -> None:
     assert ana.by_canal["email"].total == 1
     assert ana.by_canal["llamada"].fallidos == 1
     assert ana.by_canal["en_persona"].exitosos == 1
+    assert ana.by_canal["whatsapp"].total == 0
 
 
 def test_person_performance_last_months_counts_unique_contacts() -> None:
@@ -241,3 +242,17 @@ def test_success_rate_by_canal() -> None:
     assert email_row["total"] == 2
     assert email_row["fallidos"] == 1
     assert email_row["tasa_exito"] == 50.0
+
+
+def test_success_rate_by_canal_whatsapp() -> None:
+    df = pd.DataFrame(
+        [
+            {"canal_contacto": "whatsapp", "resultado_contacto": "exitoso"},
+            {"canal_contacto": "whatsapp", "resultado_contacto": "fallido"},
+        ]
+    )
+    out = success_rate_by_canal(df)
+    wa_row = out[out["canal_contacto"] == "whatsapp"].iloc[0]
+    assert wa_row["total"] == 2
+    assert wa_row["exitosos"] == 1
+    assert wa_row["tasa_exito"] == 50.0

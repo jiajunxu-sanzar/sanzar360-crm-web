@@ -28,7 +28,7 @@ LEAD_FIELDS: frozenset[str] = frozenset({
 SEGUIMIENTO_COMERCIAL_FIELDS = LEAD_FIELDS
 
 RESULTADO_CONTACTO_OPCIONES: tuple[str, ...] = ("exitoso", "fallido")
-CANAL_CONTACTO_OPCIONES: tuple[str, ...] = ("email", "llamada", "en_persona")
+CANAL_CONTACTO_OPCIONES: tuple[str, ...] = ("email", "llamada", "en_persona", "whatsapp")
 EMAIL_CLASIFICACION_OPCIONES: tuple[str, ...] = ("primer_email", "seguimiento", "contestacion")
 ORIGEN_REGISTRO_OPCIONES: tuple[str, ...] = ("manual", "email_batch")
 

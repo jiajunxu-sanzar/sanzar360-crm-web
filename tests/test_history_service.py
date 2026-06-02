@@ -45,6 +45,7 @@ class FakeSheets:
             .fillna("")
             .astype(str),
         }
+        self.deleted_calls: list[tuple[str, str, str]] = []
 
     def get_or_create_worksheet(self, name: str, headers: list[str]) -> None:
         if name not in self.frames:
@@ -78,6 +79,18 @@ class FakeSheets:
 
     def write_worksheet_df(self, name: str, df: pd.DataFrame, headers: list[str]) -> None:
         self.frames[name] = df[headers].fillna("").astype(str).copy()
+
+    def delete_rows_where_column_equals(self, worksheet_title: str, column_name: str, value: str) -> int:
+        self.deleted_calls.append((worksheet_title, column_name, str(value)))
+        if worksheet_title not in self.frames:
+            return 0
+        df = self.frames[worksheet_title].copy()
+        if column_name not in df.columns:
+            return 0
+        mask = df[column_name].astype(str).str.strip() == str(value).strip()
+        removed = int(mask.sum())
+        self.frames[worksheet_title] = df.loc[~mask].copy()
+        return removed
 
 
 def _office_closed_row() -> dict[str, str]:
@@ -153,3 +166,18 @@ def test_sensor_assignment_conflicts_blocks_open_history_in_other_contact() -> N
     assert all(c.nombre_cliente == "oficina" for c in conflicts)
     conflict_types = {c.asset.asset_type for c in conflicts}
     assert conflict_types == {"uc501", "teros10", "sim"}
+
+
+def test_delete_row_uses_targeted_delete_without_full_rewrite() -> None:
+    rows = [
+        _sensor_row(historial_sensor_id="h-1", contact_id="cid-1", nombre_cliente="Cliente 1"),
+        _sensor_row(historial_sensor_id="h-2", contact_id="cid-2", nombre_cliente="Cliente 2"),
+    ]
+    sheets = FakeSheets(sensor_rows=rows)
+    hist = HistoryService(sheets)
+
+    hist.delete_row("sensores", "h-1")
+
+    assert sheets.deleted_calls == [("HistoricoSensores", "historial_sensor_id", "h-1")]
+    remaining_ids = sheets.frames["HistoricoSensores"]["historial_sensor_id"].astype(str).tolist()
+    assert remaining_ids == ["h-2"]

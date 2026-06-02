@@ -29,7 +29,7 @@ def _short(text: str, max_chars: int = 220) -> str:
 
 def _format_canal(canal: str) -> str:
     c = (canal or "").strip().lower()
-    labels = {"email": "Email", "llamada": "Llamada", "en_persona": "En persona"}
+    labels = {"email": "Email", "llamada": "Llamada", "en_persona": "En persona", "whatsapp": "WhatsApp"}
     return labels.get(c, c or "—")
 
 

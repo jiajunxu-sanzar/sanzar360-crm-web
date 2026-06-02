@@ -38,3 +38,15 @@ def test_proxima_partial_requires_core_fields() -> None:
     v["proxima_accion_persona"] = "David Ortiz"
     v["proxima_accion_canal"] = "email"
     assert validate_commercial_action_values(v) is None
+
+
+def test_whatsapp_is_valid_for_contact_and_next_action() -> None:
+    v = _base()
+    v["canal_contacto"] = "whatsapp"
+    assert validate_commercial_action_values(v) is None
+
+    v["proxima_accion_fecha"] = "10/06/2026"
+    v["proxima_accion_persona"] = "David Ortiz"
+    v["proxima_accion_canal"] = "whatsapp"
+    v["proxima_accion_detalle"] = "Escribir por WhatsApp"
+    assert validate_commercial_action_values(v) is None

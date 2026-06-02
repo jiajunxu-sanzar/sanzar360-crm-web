@@ -20,6 +20,7 @@ CANAL_LABELS: dict[str, str] = {
     "email": "Email",
     "llamada": "Llamada",
     "en_persona": "En persona",
+    "whatsapp": "WhatsApp",
 }
 
 CANAL_ORDER: tuple[str, ...] = CANAL_CONTACTO_OPCIONES
