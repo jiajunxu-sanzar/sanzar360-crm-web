@@ -17,6 +17,11 @@ import streamlit as st
 
 from services.history_service import SensorAssetOccurrence
 from services.inventory_service import normalize_inventory_serial_for_match, normalize_model_name
+from ui.components.inventory_cards import (
+    build_association_group_html,
+    build_conflict_card_html,
+    build_occurrence_card_html,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -336,22 +341,12 @@ _CONFLICT_ICON = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Streamlit dialog (Fase 1 + 2 + 4)
-# ---------------------------------------------------------------------------
-
-@st.dialog("Ver asociados por SN", width="large")
-def render_sn_viewer_dialog(
+def _render_sn_viewer_content(
     inv_df: pd.DataFrame,
     occurrences: list[SensorAssetOccurrence],
 ) -> None:
-    """Full-screen popup for SN search + association map + integrity view."""
-
-    # --- Build association map and conflicts from inventory ---
     groups, conflicts = build_inventory_association_map(inv_df)
-
-    # --- Search controls ---
-    st.markdown("### Buscar activo")
+    st.markdown("### Ver asociados por SN")
     col_q, col_t = st.columns([3, 1])
     query = col_q.text_input(
         "Serial number, cliente, asociación…",
@@ -364,63 +359,29 @@ def render_sn_viewer_dialog(
         key="sn_viewer_type",
         label_visibility="collapsed",
     )
-
-    # --- Tabs ---
     conflict_label = f"Incidencias ({len(conflicts)})" if conflicts else "Incidencias"
     tab_list, tab_map, tab_conflicts = st.tabs(["Lista (historial)", "Mapa de asociación", conflict_label])
 
-    # ---------------------------------------------------------------
-    # Tab 1 – flat list from history occurrences
-    # ---------------------------------------------------------------
     with tab_list:
         filtered_occ = _filter_occurrences(occurrences, query, asset_type)
         occ_df = _occurrences_to_df(filtered_occ)
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Resultados", len(occ_df))
-        in_use = int((occ_df.get("estado", pd.Series(dtype=str)) == "En uso").sum()) if not occ_df.empty else 0
-        available = int((occ_df.get("estado", pd.Series(dtype=str)) == "Disponible").sum()) if not occ_df.empty else 0
-        c2.metric("En uso", in_use)
-        c3.metric("Disponibles", available)
-
         if occ_df.empty:
-            if (query or asset_type):
-                st.info("No se encontraron activos con esos criterios en el historial.")
-            else:
-                st.info("No hay datos de historial cargados.")
+            st.info("No se encontraron activos con esos criterios en el historial.")
         else:
-            st.dataframe(
-                occ_df,
-                width="stretch",
-                hide_index=True,
-                height=380,
-                key="sn_viewer_occ_table",
-                column_config={
-                    "estado": st.column_config.TextColumn("Estado"),
-                    "tipo": st.column_config.TextColumn("Tipo"),
-                    "serial": st.column_config.TextColumn("Serial"),
-                    "asociado_con": st.column_config.TextColumn("Asociado con"),
-                    "cliente": st.column_config.TextColumn("Cliente"),
-                    "fecha_inicio": st.column_config.TextColumn("Inicio"),
-                    "fecha_fin": st.column_config.TextColumn("Fin"),
-                    "red": st.column_config.TextColumn("Red"),
-                    "contact_id": None,
-                },
-            )
+            occ_df = occ_df.sort_values(["fecha_inicio", "fecha_fin"], ascending=False, na_position="last")
+            for row in occ_df.to_dict("records"):
+                st.markdown(build_occurrence_card_html({k: str(v or "") for k, v in row.items()}), unsafe_allow_html=True)
 
-    # ---------------------------------------------------------------
-    # Tab 2 – hierarchical map from inventory associations
-    # ---------------------------------------------------------------
     with tab_map:
-        filtered_groups = [g for g in groups if _group_matches_query(g, query) and (not asset_type or asset_type.lower() in {g.role, normalize_model_name(g.model)})]
-
+        filtered_groups = [
+            g
+            for g in groups
+            if _group_matches_query(g, query)
+            and (not asset_type or asset_type.lower() in {g.role, normalize_model_name(g.model)})
+        ]
         if not filtered_groups:
-            if groups:
-                st.info("Ningún grupo coincide con la búsqueda.")
-            else:
-                st.info("No hay activos con asociaciones definidas en inventario.")
+            st.info("No hay activos con asociaciones para la búsqueda actual.")
         else:
-            st.caption(f"{len(filtered_groups)} grupo(s) encontrado(s)")
             for group in filtered_groups:
                 icon = _ROLE_ICON.get(group.role, "📦")
                 label = _ROLE_LABEL.get(group.role, group.role.upper())
@@ -429,50 +390,57 @@ def render_sn_viewer_dialog(
                     or any(ch.serial_number in c.affected_serials for ch in group.children)
                     for c in conflicts
                 )
-                header = f"{icon} **{label}** · `{group.serial_number or group.inventory_id[:8]}`"
-                if has_conflict:
-                    header += "  ⚠️"
-                with st.expander(header, expanded=len(filtered_groups) <= 5):
-                    if group.location_type == "cliente" and group.location_detail:
-                        st.caption(f"Asignado a: **{group.location_detail}**")
-                    elif group.location_type == "cliente":
-                        st.caption("Asignado a cliente (sin nombre registrado)")
-                    elif group.location_type == "oficina":
-                        st.caption("Ubicación: oficina")
-                    if not group.children:
-                        st.caption("Sin activos asociados en inventario.")
-                    else:
-                        for child in group.children:
-                            child_icon = _ROLE_ICON.get(child.role, "•")
-                            child_label = _ROLE_LABEL.get(child.role, child.role)
-                            child_conflict = any(
-                                child.serial_number in c.affected_serials or child.inventory_id in c.affected_serials
-                                for c in conflicts
-                            )
-                            flag = " ⚠️" if child_conflict else ""
-                            eid_part = ""
-                            if child.role == "sim" and child.sim_eid_number:
-                                eid_part = f" · EID `{child.sim_eid_number}`"
-                            st.markdown(
-                                f"&nbsp;&nbsp;{child_icon} **{child_label}** · "
-                                f"`{child.serial_number or child.inventory_id[:8]}`"
-                                f"{eid_part}"
-                                f" _(modelo: {child.model})_{flag}"
-                            )
+                if group.location_type == "cliente" and group.location_detail:
+                    location_caption = f"Asignado a: {group.location_detail}"
+                elif group.location_type == "cliente":
+                    location_caption = "Asignado a cliente"
+                elif group.location_type == "oficina":
+                    location_caption = "Ubicación: oficina"
+                else:
+                    location_caption = "Sin ubicación definida"
+                child_lines: list[str] = []
+                for child in group.children:
+                    child_icon = _ROLE_ICON.get(child.role, "•")
+                    child_label = _ROLE_LABEL.get(child.role, child.role.upper())
+                    eid_part = f" · EID {child.sim_eid_number}" if child.role == "sim" and child.sim_eid_number else ""
+                    child_lines.append(
+                        f'<div class="sanzar-inv-card-line"><span class="sanzar-inv-card-label">{child_icon} {child_label}:</span> '
+                        f'{child.serial_number or child.inventory_id[:8]}{eid_part} · {child.model}</div>'
+                    )
+                st.markdown(
+                    build_association_group_html(
+                        role_label=f"{icon} {label}",
+                        serial_or_id=group.serial_number or group.inventory_id[:8],
+                        location_caption=location_caption,
+                        children_lines=child_lines,
+                        has_conflict=has_conflict,
+                    ),
+                    unsafe_allow_html=True,
+                )
 
-    # ---------------------------------------------------------------
-    # Tab 3 – integrity conflicts (Fase 4)
-    # ---------------------------------------------------------------
     with tab_conflicts:
         if not conflicts:
             st.success("No se detectaron incidencias de integridad.")
         else:
-            st.error(f"Se encontraron **{len(conflicts)}** incidencia(s). Revisa y corrige en Inventario.")
             for c in conflicts:
-                icon = _CONFLICT_ICON.get(c.kind, "⚠️")
-                kind_label = {
+                title = {
                     "sim_duplicate": "SIM duplicada",
                     "probe_duplicate": "Sonda duplicada",
                     "broken_link": "Enlace roto",
                 }.get(c.kind, c.kind)
-                st.markdown(f"**{icon} {kind_label}:** {c.description}")
+                st.markdown(build_conflict_card_html(title, c.description), unsafe_allow_html=True)
+
+
+def render_sn_viewer_panel(
+    inv_df: pd.DataFrame,
+    occurrences: list[SensorAssetOccurrence],
+) -> None:
+    _render_sn_viewer_content(inv_df, occurrences)
+
+
+@st.dialog("Ver asociados por SN", width="large")
+def render_sn_viewer_dialog(
+    inv_df: pd.DataFrame,
+    occurrences: list[SensorAssetOccurrence],
+) -> None:
+    _render_sn_viewer_content(inv_df, occurrences)

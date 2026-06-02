@@ -318,6 +318,76 @@ def apply_theme() -> None:
           color: var(--ui-text-muted);
         }
 
+        /* Inventario cards */
+        .sanzar-inv-card,
+        .sanzar-inv-assoc-card,
+        .sanzar-inv-conflict-card {
+          border: 1px solid var(--ui-border);
+          border-radius: 12px;
+          padding: 12px 14px;
+          background: var(--ui-bg-elevated);
+          margin-bottom: 10px;
+        }
+        .sanzar-inv-card-head {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 6px;
+        }
+        .sanzar-inv-card-sn {
+          font-size: 0.95rem;
+          font-weight: 650;
+          color: var(--ui-text);
+        }
+        .sanzar-inv-card-model {
+          font-size: 0.8125rem;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-inv-card-meta {
+          margin-bottom: 6px;
+          font-size: 0.75rem;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-inv-card-line {
+          font-size: 0.8125rem;
+          color: var(--ui-text);
+          line-height: 1.4;
+          margin-bottom: 2px;
+        }
+        .sanzar-inv-card-label {
+          color: var(--ui-text-muted);
+          font-weight: 600;
+        }
+        .sanzar-inv-card-edit-spacer { height: 16px; }
+        .sanzar-inv-state--en-uso,
+        .sanzar-inv-state--disponible {
+          display: inline-block;
+          border-radius: 999px;
+          padding: 3px 10px;
+          font-size: 0.75rem;
+          font-weight: 600;
+        }
+        .sanzar-inv-state--en-uso {
+          color: #166534;
+          background: #dcfce7;
+          border: 1px solid #86efac;
+        }
+        .sanzar-inv-state--disponible {
+          color: #991b1b;
+          background: #fee2e2;
+          border: 1px solid #fca5a5;
+        }
+        .sanzar-inv-pagination-caption {
+          text-align: center;
+          margin: 0.4rem 0 0.7rem;
+          font-size: 0.875rem;
+          color: var(--ui-text-muted);
+        }
+
         .sanzar-alarm-card {
           border-radius: 12px;
           padding: 12px;

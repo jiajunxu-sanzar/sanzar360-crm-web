@@ -12,7 +12,8 @@ from app.navigation import page_menu_title
 from app.state import bump_inventory_cache
 from config.settings import INVENTORY_HEADERS, INVENTORY_MODEL_FIELD_HEADERS
 from services.inventory_service import normalize_model_name
-from ui.components.sn_association_viewer import render_sn_viewer_dialog
+from ui.components.inventory_cards import build_inventory_card_html
+from ui.components.sn_association_viewer import render_sn_viewer_panel
 
 DEFAULT_MODEL_FIELDS: dict[str, list[str]] = {
     "uc501": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "configured", "associated_sim_inventory_id", "associated_probe_inventory_id", "proforma_invoice_url", "payment_receipt_url"],
@@ -62,6 +63,9 @@ INVENTORY_SUCCESS_MESSAGE_KEY = "inventory_success_message"
 INVENTORY_MODEL_DELETE_CONFIRM_KEY = "inventory_model_delete_confirm"
 INVENTORY_DELETE_STEP2_KEY = "inventory_delete_step2_id"
 INVENTORY_CREATE_DRAFT_ID_KEY = "inventory_create_draft_id"
+INVENTORY_VIEW_MODE_KEY = "inventory_view_mode"
+INVENTORY_PAGE_KEY = "inventory_card_page"
+INVENTORY_PAGE_SIZE = 15
 
 
 def _normalize_model_name(model: str) -> str:
@@ -626,8 +630,61 @@ def _inventory_edit_dialog() -> None:
     _render_inventory_form_dialog(model, model_fields_df, inv_df, mode="edit", existing=current)
 
 
+def _inventory_model_options(inv_df: pd.DataFrame) -> list[str]:
+    if inv_df.empty or "model" not in inv_df.columns:
+        return []
+    models = sorted(
+        {
+            str(model or "").strip().lower()
+            for model in inv_df["model"].fillna("").astype(str).tolist()
+            if str(model or "").strip()
+        }
+    )
+    return models
+
+
+def _render_inventory_cards_section(filtered: pd.DataFrame) -> None:
+    total = len(filtered)
+    if total == 0:
+        st.info("No hay inventario que cumpla el filtro actual.")
+        return
+    max_page = max(0, (total - 1) // INVENTORY_PAGE_SIZE)
+    page = int(st.session_state.get(INVENTORY_PAGE_KEY, 0) or 0)
+    page = max(0, min(page, max_page))
+    st.session_state[INVENTORY_PAGE_KEY] = page
+    nav_prev, nav_info, nav_next = st.columns([0.12, 0.76, 0.12], gap="small")
+    with nav_prev:
+        if st.button("←", key="inventory_page_prev", disabled=page <= 0, width="stretch"):
+            st.session_state[INVENTORY_PAGE_KEY] = page - 1
+            st.rerun()
+    with nav_info:
+        start = page * INVENTORY_PAGE_SIZE + 1
+        end = min((page + 1) * INVENTORY_PAGE_SIZE, total)
+        st.markdown(f'<p class="sanzar-inv-pagination-caption">Mostrando {start}–{end} de {total}</p>', unsafe_allow_html=True)
+    with nav_next:
+        if st.button("→", key="inventory_page_next", disabled=page >= max_page, width="stretch"):
+            st.session_state[INVENTORY_PAGE_KEY] = page + 1
+            st.rerun()
+
+    offset = page * INVENTORY_PAGE_SIZE
+    page_df = filtered.iloc[offset : offset + INVENTORY_PAGE_SIZE]
+    for row in page_df.fillna("").astype(str).to_dict("records"):
+        inv_id = str(row.get("inventory_id", "") or "").strip()
+        card_col, btn_col = st.columns([0.88, 0.12], gap="small")
+        with card_col:
+            st.markdown(build_inventory_card_html(row), unsafe_allow_html=True)
+        with btn_col:
+            st.markdown('<div class="sanzar-inv-card-edit-spacer"></div>', unsafe_allow_html=True)
+            if st.button("Editar", key=f"inventory_card_edit_{inv_id}", width="stretch"):
+                st.session_state[INVENTORY_SELECTED_ROW_ID_KEY] = inv_id
+                st.session_state[INVENTORY_EDIT_DIALOG_OPEN_KEY] = True
+                st.rerun()
+
+
 def render(_: pd.DataFrame) -> None:
     st.title(page_menu_title("Inventario"))
+    if INVENTORY_VIEW_MODE_KEY not in st.session_state:
+        st.session_state[INVENTORY_VIEW_MODE_KEY] = "list"
     try:
         _seed_model_catalog_if_empty()
         inv_df = load_inventory_cached(st.session_state.get("inventory_cache_version", 0))
@@ -637,96 +694,67 @@ def render(_: pd.DataFrame) -> None:
             return
         raise
 
-    col1, col2, col3, col4 = st.columns([0.42, 0.2, 0.2, 0.18])
-    query = col1.text_input("Buscar inventario", key="inventory_query", placeholder="SN, EID SIM, modelo, proveedor, ubicacion...")
-    with col2:
-        st.text("")
-        if st.button("🔗 Ver asociados SN", key="inventory_btn_sn_viewer", width="stretch"):
-            st.session_state[INVENTORY_SN_VIEWER_OPEN_KEY] = True
-            st.rerun()
+    if st.session_state.get(INVENTORY_VIEW_MODE_KEY) == "associations":
+        top_left, top_right = st.columns([0.22, 0.78])
+        with top_left:
+            if st.button("← Volver a inventario", key="inventory_back_to_list", width="stretch"):
+                st.session_state[INVENTORY_VIEW_MODE_KEY] = "list"
+                st.rerun()
+        with top_right:
+            pdf_content, pdf_name = build_association_map_pdf_bytes(inv_df)
+            st.download_button(
+                "📄 Exportar PDF (mapa)",
+                data=pdf_content,
+                file_name=pdf_name,
+                mime="application/pdf",
+                key="inventory_btn_export_pdf_association_detail",
+                width="stretch",
+            )
+        _occurrences = history_service().search_sensor_assets()
+        render_sn_viewer_panel(inv_df, _occurrences)
+        if st.session_state.pop(INVENTORY_EDIT_DIALOG_OPEN_KEY, False):
+            _inventory_edit_dialog()
+        return
+
+    col1, col2, col3, col4, col5 = st.columns([0.34, 0.2, 0.18, 0.15, 0.13])
+    query = col1.text_input("Buscar inventario", key="inventory_query", placeholder="SN, EID SIM, modelo, proveedor, ubicación...")
+    model_opts = _inventory_model_options(inv_df)
+    model_filter = col2.selectbox("Filtrar modelo", [""] + model_opts, key="inventory_model_filter")
     with col3:
         st.text("")
-        pdf_content, pdf_name = build_association_map_pdf_bytes(inv_df)
-        st.download_button(
-            "📄 Exportar PDF (mapa)",
-            data=pdf_content,
-            file_name=pdf_name,
-            mime="application/pdf",
-            key="inventory_btn_export_pdf_association",
-            width="stretch",
-        )
+        if st.button("🔗 Ver asociados SN", key="inventory_btn_sn_viewer", width="stretch"):
+            st.session_state[INVENTORY_VIEW_MODE_KEY] = "associations"
+            st.rerun()
     with col4:
         st.text("")
         if st.button("+ Nuevo inventario", key="inventory_btn_new", width="stretch", type="primary"):
             st.session_state[INVENTORY_NEW_DIALOG_OPEN_KEY] = True
             st.session_state.pop(INVENTORY_DIALOG_MODEL_LOCKED_KEY, None)
             st.rerun()
+    with col5:
+        st.text("")
+        pdf_content, pdf_name = build_association_map_pdf_bytes(inv_df)
+        st.download_button(
+            "PDF mapa",
+            data=pdf_content,
+            file_name=pdf_name,
+            mime="application/pdf",
+            key="inventory_btn_export_pdf_association",
+            width="stretch",
+        )
 
     filtered = inv_df.copy()
+    if not filtered.empty and model_filter:
+        filtered = filtered[filtered["model"].fillna("").astype(str).str.strip().str.lower() == model_filter]
     if not filtered.empty and (query or "").strip():
         filtered = filtered[_row_contains_query(filtered, query)]
     if st.session_state.get(INVENTORY_SELECTION_MESSAGE_KEY):
         st.info(str(st.session_state.pop(INVENTORY_SELECTION_MESSAGE_KEY)))
     if st.session_state.get(INVENTORY_SUCCESS_MESSAGE_KEY):
         st.success(str(st.session_state.pop(INVENTORY_SUCCESS_MESSAGE_KEY)))
-
-    visible_ids = set(filtered.get("inventory_id", pd.Series(dtype=str)).fillna("").astype(str).str.strip().tolist())
-    selected = _reconcile_selected_inventory_id(
-        str(st.session_state.get(INVENTORY_SELECTED_ROW_ID_KEY, "") or ""),
-        visible_ids,
-    )
-    if str(st.session_state.get(INVENTORY_SELECTED_ROW_ID_KEY, "") or "") != selected:
-        st.session_state[INVENTORY_SELECTED_ROW_ID_KEY] = selected
-        if not selected and visible_ids:
-            st.session_state[INVENTORY_SELECTION_MESSAGE_KEY] = "La fila seleccionada ya no está visible con el filtro actual."
-
-    if filtered.empty:
-        st.session_state[INVENTORY_SELECTED_ROW_ID_KEY] = ""
-        st.dataframe(filtered, width="stretch", hide_index=True, height=420)
-    else:
-        display_df = filtered.copy()
-        selected_col: list[bool] = []
-        for row in display_df.fillna("").astype(str).to_dict("records"):
-            selected_col.append(str(row.get("inventory_id", "")).strip() == selected)
-        display_df.insert(0, "Seleccionar", selected_col)
-        edited = st.data_editor(
-            display_df,
-            width="stretch",
-            hide_index=True,
-            height=420,
-            key="inventory_table_editor",
-            column_config={
-                "Seleccionar": st.column_config.CheckboxColumn(
-                    "Seleccionar",
-                    help="Marca una fila para editarla",
-                    default=False,
-                )
-            },
-            disabled=[c for c in display_df.columns if c != "Seleccionar"],
-        )
-        picked_ids = edited[edited["Seleccionar"] == True]["inventory_id"].fillna("").astype(str).str.strip().tolist()
-        picked_ids = [x for x in picked_ids if x]
-        if len(picked_ids) > 1:
-            st.session_state[INVENTORY_SELECTED_ROW_ID_KEY] = picked_ids[0]
-            st.session_state[INVENTORY_SELECTION_MESSAGE_KEY] = "Solo se puede editar una fila a la vez. Se tomó la primera seleccionada."
-            st.rerun()
-        st.session_state[INVENTORY_SELECTED_ROW_ID_KEY] = picked_ids[0] if picked_ids else ""
-
-    selected_now = str(st.session_state.get(INVENTORY_SELECTED_ROW_ID_KEY, "") or "").strip()
-    if selected_now:
-        if st.button("Editar inventario seleccionado", width="stretch", key="inventory_edit_selected_btn", type="primary"):
-            if selected_now not in visible_ids:
-                st.session_state[INVENTORY_SELECTED_ROW_ID_KEY] = ""
-                st.session_state[INVENTORY_SELECTION_MESSAGE_KEY] = "La selección ya no está en la lista filtrada. Elige otra fila."
-                st.rerun()
-            st.session_state[INVENTORY_EDIT_DIALOG_OPEN_KEY] = True
-            st.rerun()
+    _render_inventory_cards_section(filtered)
 
     if st.session_state.pop(INVENTORY_NEW_DIALOG_OPEN_KEY, False):
         _inventory_new_dialog()
     if st.session_state.pop(INVENTORY_EDIT_DIALOG_OPEN_KEY, False):
         _inventory_edit_dialog()
-    if st.session_state.get(INVENTORY_SN_VIEWER_OPEN_KEY):
-        st.session_state.pop(INVENTORY_SN_VIEWER_OPEN_KEY, None)
-        _occurrences = history_service().search_sensor_assets()
-        render_sn_viewer_dialog(inv_df, _occurrences)
