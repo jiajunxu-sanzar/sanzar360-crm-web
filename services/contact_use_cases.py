@@ -1,10 +1,34 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pandas as pd
 
+from config.contact_estado import normalize_contact_estado
+from config.settings import CONTACT_ESTADO_DEFAULT
 from models.contact import new_contact_row_dict
 from services.contact_write_consistency import WriteVerificationResult, verify_contact_write_with_retry
 from services.sheets_service import SheetsService
+
+
+def _today_estado() -> str:
+    return date.today().strftime("%d/%m/%Y")
+
+
+def _apply_estado_fields_on_save(
+    df: pd.DataFrame,
+    row_idx: int,
+    values: dict[str, str],
+) -> dict[str, str]:
+    updated = dict(values)
+    old_estado = str(df.at[row_idx, "estado"] if "estado" in df.columns else "")
+    new_estado = normalize_contact_estado(str(updated.get("estado", old_estado) or old_estado))
+    if new_estado:
+        updated["estado"] = new_estado
+    old_normalized = normalize_contact_estado(old_estado)
+    if new_estado and new_estado != old_normalized:
+        updated["fecha_estado"] = _today_estado()
+    return updated
 
 
 def _aligned_contact_row(columns: pd.Index | list[str], row: dict[str, str]) -> pd.DataFrame:
@@ -22,6 +46,10 @@ def create_empty_contact(
     name_clean = (nombre or "").strip()
     if name_clean:
         row_dict["nombre"] = name_clean
+    if not str(row_dict.get("estado", "") or "").strip():
+        row_dict["estado"] = CONTACT_ESTADO_DEFAULT
+    if not str(row_dict.get("fecha_estado", "") or "").strip():
+        row_dict["fecha_estado"] = _today_estado()
     aligned = _aligned_contact_row(df.columns, row_dict)
 
     hdr = sheets.worksheet().row_values(1)
@@ -55,6 +83,7 @@ def save_contact_by_id(
     incoming_id = str(values.get("contact_id", "") or "").strip()
     if incoming_id != target_id:
         raise RuntimeError("Inconsistencia de contacto: el contact_id de la ficha no coincide con el registro a guardar.")
+    values = _apply_estado_fields_on_save(df, row_idx, values)
     new_df = df.copy()
     for column, value in values.items():
         if column in new_df.columns:

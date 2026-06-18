@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from config.contact_estado import is_contact_perdido
 from app.navigation import page_menu_title
 from app.state import select_contact
 from services.map_service import build_contacts_map, resolve_row_coordinates
@@ -26,7 +27,7 @@ def render(df: pd.DataFrame) -> None:
 
     records = df.fillna("").astype(str).to_dict("records")
     if not bool(st.session_state.get(MAP_SHOW_LOST_KEY, True)):
-        records = [row for row in records if str(row.get("estado", "")).strip().lower() != "perdido"]
+        records = [row for row in records if not is_contact_perdido(str(row.get("estado", "")))]
 
     visible_ids = {str(row.get("contact_id", "")).strip() for row in records}
     selected_id_state = str(st.session_state.get("map_selected_contact_id", "") or "")

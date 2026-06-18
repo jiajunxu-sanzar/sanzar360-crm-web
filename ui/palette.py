@@ -3,6 +3,8 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass
 
+from ui.design_tokens import color, load_design_tokens, mix_hex, pastel_triplet
+
 
 @dataclass(frozen=True)
 class VisualStatusStyle:
@@ -14,27 +16,43 @@ class VisualStatusStyle:
         return f"background:{self.bg};border:1px solid {self.border};color:{self.fg};"
 
 
-# ── Minimal cohesive chip palette (muted surfaces + readable text) ─────────
-STATUS_NEUTRAL = VisualStatusStyle("#fafafa", "#e5e5e5", "#404040")
-STATUS_INFO = VisualStatusStyle("#f0f9ff", "#bae6fd", "#0369a1")
-STATUS_SUCCESS = VisualStatusStyle("#f0fdf4", "#bbf7d0", "#15803d")
-STATUS_WARNING = VisualStatusStyle("#fffbeb", "#fde68a", "#b45309")
-STATUS_DANGER = VisualStatusStyle("#fef2f2", "#fecaca", "#b91c1c")
-STATUS_PURPLE = VisualStatusStyle("#faf5ff", "#e9d5ff", "#6d28d9")
+def _status_style(base_token: str) -> VisualStatusStyle:
+    base = color(base_token)
+    bg, border, fg = pastel_triplet(base)
+    return VisualStatusStyle(bg, border, fg)
 
-# Accents for “next action” filter buttons (thin left stripe when selected)
-ACCENT_BUCKET_PAST = "#e11d48"
-ACCENT_BUCKET_TODAY = "#ca8a04"
-ACCENT_BUCKET_TOMORROW = "#16a34a"
 
-# Idle state (all buckets)
-_BTN_IDLE_BG = "#ffffff"
-_BTN_IDLE_BORDER = "#e5e5e5"
-_BTN_IDLE_FG = "#525252"
-# Selected: shared neutral lift + coloured left accent in contacts markup
-_BTN_ON_BG = "#f4f4f5"
-_BTN_ON_BORDER = "#d4d4d8"
-_BTN_ON_FG = "#18181b"
+def _neutral_style() -> VisualStatusStyle:
+    tokens = load_design_tokens().get("colors", {})
+    bg = tokens.get("surface-card", "#f5f5f5")
+    border = tokens.get("hairline", "#e5e7eb")
+    fg = tokens.get("body", "#374151")
+    return VisualStatusStyle(str(bg), str(border), str(fg))
+
+
+STATUS_NEUTRAL = _neutral_style()
+STATUS_INFO = _status_style("semantic-info")
+STATUS_SUCCESS = _status_style("semantic-success")
+STATUS_WARNING = _status_style("semantic-warning")
+STATUS_DANGER = _status_style("semantic-error")
+STATUS_PURPLE = _status_style("semantic-purple")
+
+ACCENT_BUCKET_PAST = color("bucket-past")
+ACCENT_BUCKET_TODAY = color("bucket-today")
+ACCENT_BUCKET_FUTURE = color("bucket-future")
+
+_CANVAS = color("canvas", default="#ffffff")
+_HAIRLINE = color("hairline", default="#e5e7eb")
+_SURFACE_SOFT = color("surface-soft", default="#f8f9fa")
+_INK = color("ink", default="#111111")
+_BODY = color("body", default="#374151")
+
+_BTN_IDLE_BG = str(_CANVAS)
+_BTN_IDLE_BORDER = str(_HAIRLINE)
+_BTN_IDLE_FG = str(_BODY)
+_BTN_ON_BG = str(_SURFACE_SOFT)
+_BTN_ON_BORDER = mix_hex("#ffffff", str(_HAIRLINE), 0.55)
+_BTN_ON_FG = str(_INK)
 
 
 def dash_bucket_button_style(active_bucket: str, kind: str) -> tuple[str, str, str, str]:
@@ -43,8 +61,9 @@ def dash_bucket_button_style(active_bucket: str, kind: str) -> tuple[str, str, s
     accent = {
         "past": ACCENT_BUCKET_PAST,
         "today": ACCENT_BUCKET_TODAY,
-        "tomorrow": ACCENT_BUCKET_TOMORROW,
-    }[kind]
+        "tomorrow": ACCENT_BUCKET_FUTURE,
+        "future": ACCENT_BUCKET_FUTURE,
+    }.get(kind, ACCENT_BUCKET_PAST)
     if is_on:
         return _BTN_ON_BG, _BTN_ON_BORDER, _BTN_ON_FG, f"3px solid {accent}"
     return _BTN_IDLE_BG, _BTN_IDLE_BORDER, _BTN_IDLE_FG, "3px solid transparent"
@@ -64,12 +83,16 @@ def contact_status_style(value: str) -> VisualStatusStyle:
     text = _normalize_visual_text(value)
     if text == "cliente":
         return STATUS_SUCCESS
-    if text in {"en negociacion", "en contacto"}:
-        return STATUS_INFO
     if text == "perdido":
         return STATUS_DANGER
     if text == "nuevo contacto":
         return STATUS_WARNING
+    if text == "contacto inicial":
+        return STATUS_INFO
+    if text in {"piloto aceptado", "contrato firmado", "onboarding"}:
+        return STATUS_INFO
+    if text in {"piloto activo", "fin de piloto"}:
+        return STATUS_PURPLE
     return STATUS_NEUTRAL
 
 

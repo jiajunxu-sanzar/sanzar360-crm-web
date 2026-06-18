@@ -82,6 +82,10 @@ def load_users(sheets: SheetsService) -> list[AppUser]:
     return out or _default_users()
 
 
+def crm_user_names(users: list[AppUser]) -> list[str]:
+    return sorted({user.nombre.strip() for user in users if user.nombre.strip()})
+
+
 def _read_users_df_with_retry(sheets: SheetsService) -> tuple[pd.DataFrame, bool]:
     """Return (dataframe, had_error).
 

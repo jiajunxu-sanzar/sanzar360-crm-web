@@ -11,6 +11,7 @@ from app.cache import history_service, load_acciones_cached
 from app.navigation import page_menu_title
 from services.contact_proxima_index import enrich_contacts_with_proxima
 from app.state import select_contact
+from config.contact_estado import is_terminal_contact_estado, normalize_contact_estado
 from services.estado_stagnation_alarms import stagnation_alarms
 from services.history_service import HistoryService
 from ui.components.alarms import WorkAlarmItem, render_work_inbox_row
@@ -108,8 +109,10 @@ def _render_inbox_for_category(
 def _funnel_embudo_df(contacts_df: pd.DataFrame) -> pd.DataFrame:
     if contacts_df.empty or "estado" not in contacts_df.columns:
         return contacts_df.iloc[0:0].copy()
-    e = contacts_df["estado"].fillna("").astype(str).str.strip().str.lower()
-    return contacts_df[~e.isin(["cliente", "perdido"])].copy()
+    mask = contacts_df["estado"].fillna("").astype(str).map(
+        lambda value: not is_terminal_contact_estado(normalize_contact_estado(value))
+    )
+    return contacts_df[mask].copy()
 
 
 def _funnel_items(contacts_df: pd.DataFrame) -> list[WorkAlarmItem]:
@@ -119,12 +122,14 @@ def _funnel_items(contacts_df: pd.DataFrame) -> list[WorkAlarmItem]:
 
     merged: dict[str, dict[str, object]] = {}
 
-    for row in stagnation_alarms(funnel_df, max_days=21):
+    for row in stagnation_alarms(funnel_df):
         cid = str(row.get("contact_id", "") or "").strip()
         if not cid:
             continue
         dia = row.get("dias_en_estado", "")
-        parts: list[str] = [f"{dia} días sin cambio de estado comercial"]
+        estado_label = row.get("estado_normalizado") or row.get("estado", "")
+        umbral = row.get("umbral_estado", "")
+        parts: list[str] = [f"{dia} días en «{estado_label}» (umbral: {umbral})"]
         prox = _sentence_proxima(str(row.get("proxima_accion_fecha", "")))
         if prox:
             parts.append(prox)

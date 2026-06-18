@@ -5,6 +5,8 @@ import html
 
 import streamlit as st
 
+from config.contact_estado import normalize_contact_estado
+from config.settings import CONTACT_ESTADO_ORDER
 from ui.palette import contact_status_style
 
 
@@ -60,12 +62,26 @@ def build_funnel_card_html(estado: str, count: int, total_contactos: int) -> str
 """
 
 
+def _funnel_display_order(funnel: dict[str, int]) -> list[tuple[str, int]]:
+    order_index = {estado: idx for idx, estado in enumerate(CONTACT_ESTADO_ORDER)}
+    aggregated: dict[str, int] = {}
+    for estado, count in funnel.items():
+        label = normalize_contact_estado(estado) or estado or "Sin estado"
+        aggregated[label] = aggregated.get(label, 0) + int(count)
+
+    def sort_key(item: tuple[str, int]) -> tuple[int, int, str]:
+        estado, count = item
+        return (order_index.get(estado, 999), -count, estado)
+
+    return sorted(aggregated.items(), key=sort_key)
+
+
 def render_funnel_cards(funnel: dict[str, int], total_contactos: int) -> None:
     st.markdown('<div class="sanzar-dash-section">', unsafe_allow_html=True)
     if not funnel:
         st.info("No hay estados disponibles.")
         return
-    ordered = sorted(funnel.items(), key=lambda item: item[1], reverse=True)
+    ordered = _funnel_display_order(funnel)
     total = total_contactos if total_contactos > 0 else sum(funnel.values())
     for estado, count in ordered:
         st.markdown(build_funnel_card_html(estado, count, total), unsafe_allow_html=True)

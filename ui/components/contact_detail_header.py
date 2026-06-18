@@ -91,10 +91,13 @@ def render_contact_detail_header(
     tel = contact.get("telefono", "")
     mail = contact.get("correo", "")
     valor = contact.get("valor", "")
+    responsable = (contact.get("responsable_cliente", "") or "").strip()
 
     ubic = ", ".join(p for p in (mun.strip(), prov.strip()) if p)
     if not ubic:
         ubic = "Sin ubicación"
+    if responsable:
+        ubic = f"{ubic} · Responsable: {_esc(responsable)}"
 
     estado_chip = chip(estado, contact_status_style(estado))
     fecha_label = prox_f.strip() or "Sin fecha"

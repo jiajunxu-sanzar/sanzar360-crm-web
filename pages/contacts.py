@@ -33,6 +33,7 @@ from app.state import (
     set_pending_created_contact_id,
 )
 from app.telemetry import timed, track_event
+from config.contact_estado import is_contact_perdido
 from config.settings import (
     CANONICAL_COLUMNS,
     CONTACT_ESTADO_OPCIONES,
@@ -61,9 +62,12 @@ from services.contact_deletion import delete_contact_and_related_data
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
 from services.proxima_accion_stats import (
     apply_dash_bucket_date_filter,
+    filter_by_contact_estado,
     filter_by_persona_proxima_accion,
+    filter_by_responsable_cliente,
     next_action_bucket_counts,
 )
+from services.users_service import crm_user_names
 from services.inventory_service import InventoryAssetOption, normalize_inventory_serial_for_match
 from services.sheet_date_format import (
     SENSOR_SERIAL_NUMBER_FORMAT_HELP,
@@ -134,6 +138,8 @@ CONTACTS_DELETE_TARGET_ID_KEY = "contacts.delete_target_id"
 CONTACTS_DELETE_TARGET_NAME_KEY = "contacts.delete_target_name"
 HISTORY_DELETE_CONFIRM_PREFIX = "history_delete_confirm"
 DASH_PERSONA_PROXIMA_ACCION_KEY = "dash_persona_proxima_accion"
+DASH_ESTADO_FILTER_KEY = "dash_estado_filter"
+DASH_RESPONSABLE_FILTER_KEY = "dash_responsable_cliente"
 
 
 def _clear_modal_flags() -> None:
@@ -444,9 +450,13 @@ def _render_contact_list(df: pd.DataFrame) -> str:
             filtered["cultivos"].fillna("").astype(str).str.contains(cultivos_filter.strip(), case=False, na=False)
         ]
     if not bool(st.session_state.get(CONTACTS_SHOW_LOST_KEY, True)):
-        filtered = filtered[filtered["estado"].astype(str).str.lower() != "perdido"]
+        filtered = filtered[~filtered["estado"].astype(str).map(is_contact_perdido)]
     persona_proxima = str(st.session_state.get(DASH_PERSONA_PROXIMA_ACCION_KEY, "") or "")
     filtered = filter_by_persona_proxima_accion(filtered, persona_proxima)
+    dash_responsable = str(st.session_state.get(DASH_RESPONSABLE_FILTER_KEY, "") or "")
+    filtered = filter_by_responsable_cliente(filtered, dash_responsable)
+    dash_estado = str(st.session_state.get(DASH_ESTADO_FILTER_KEY, "") or "")
+    filtered = filter_by_contact_estado(filtered, dash_estado)
     dash_bucket = st.session_state.get("dash_bucket", "")
     if dash_bucket:
         filtered = apply_dash_bucket_date_filter(filtered, str(dash_bucket))
@@ -496,7 +506,7 @@ def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> s
         )
         for row in filtered.fillna("").astype(str).to_dict("records"):
             contact_id = row.get("contact_id", "")
-            is_lost = str(row.get("estado", "")).strip().lower() == "perdido"
+            is_lost = is_contact_perdido(str(row.get("estado", "")))
             row_label = " | ".join(
                 [
                     row.get("nombre", "") or "Sin nombre",
@@ -725,7 +735,7 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
         ),
     ]
     sections_right: list[tuple[str, list[str]]] = [
-        ("Estado y oportunidad", ["estado", "fecha_estado", "razon_perdida", "valor"]),
+        ("Estado y oportunidad", ["estado", "fecha_estado", "razon_perdida", "valor", "responsable_cliente"]),
         ("Operativa y suscripción", ["cuenta_usuario", "digital_maps", "iot_module", "sowing_module"]),
     ]
 
@@ -1310,12 +1320,17 @@ def _render_next_action_strip(df: pd.DataFrame) -> None:
     )
     persona_proxima = str(st.session_state.get(DASH_PERSONA_PROXIMA_ACCION_KEY, "") or "")
     scoped = filter_by_persona_proxima_accion(df, persona_proxima)
+    dash_responsable = str(st.session_state.get(DASH_RESPONSABLE_FILTER_KEY, "") or "")
+    scoped = filter_by_responsable_cliente(scoped, dash_responsable)
+    dash_estado = str(st.session_state.get(DASH_ESTADO_FILTER_KEY, "") or "")
+    scoped = filter_by_contact_estado(scoped, dash_estado)
     counts = next_action_bucket_counts(scoped)
-    c1, c2, c3 = st.columns(3, gap="small")
+    c1, c2, c3, c4 = st.columns(4, gap="small")
     for col, key, label in (
         (c1, "past", "Fecha anterior"),
         (c2, "today", "Hoy"),
         (c3, "tomorrow", "Mañana"),
+        (c4, "future", "Fecha futura"),
     ):
         active = st.session_state.dash_bucket == key
         if col.button(
@@ -1327,6 +1342,26 @@ def _render_next_action_strip(df: pd.DataFrame) -> None:
             _clear_modal_flags()
             st.session_state.dash_bucket = "" if active else key
             st.rerun()
+    estado_opts = [""] + list(CONTACT_ESTADO_OPCIONES)
+    current_estado = str(st.session_state.get(DASH_ESTADO_FILTER_KEY, "") or "")
+    estado_index = estado_opts.index(current_estado) if current_estado in estado_opts else 0
+    st.selectbox(
+        "Estado",
+        options=estado_opts,
+        index=estado_index,
+        format_func=lambda v: "Todos" if not v else v,
+        key=DASH_ESTADO_FILTER_KEY,
+    )
+    responsable_opts = [""] + crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+    current_responsable = str(st.session_state.get(DASH_RESPONSABLE_FILTER_KEY, "") or "")
+    responsable_index = responsable_opts.index(current_responsable) if current_responsable in responsable_opts else 0
+    st.selectbox(
+        "Responsable del cliente",
+        options=responsable_opts,
+        index=responsable_index,
+        format_func=lambda v: "Todos" if not v else v,
+        key=DASH_RESPONSABLE_FILTER_KEY,
+    )
 
 
 def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
@@ -1347,6 +1382,14 @@ def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
     if column == "valor":
         opts = [""] + list(VALOR_OPCIONES)
         return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
+    if column == "responsable_cliente":
+        opts = [""] + crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        return st.selectbox(
+            "Responsable del cliente",
+            opts,
+            index=opts.index(value) if value in opts else 0,
+            key=key,
+        )
     if column in {"detalle", "otros_contactos", "razon_perdida"}:
         return st.text_area(label, value=value, height=80, key=key)
     return st.text_input(label, value=value, key=key)

@@ -81,15 +81,36 @@ CANONICAL_COLUMNS = [
     "fecha_estado",
     "razon_perdida",
     "valor",
+    "responsable_cliente",
 ]
 
 CONTACT_ESTADO_OPCIONES: tuple[str, ...] = (
-    "Nuevo Contacto",
-    "En Contacto",
-    "En Negociación",
+    "Nuevo contacto",
+    "Contacto inicial",
+    "Piloto aceptado",
+    "Contrato firmado",
+    "Onboarding",
+    "Piloto activo",
+    "Fin de piloto",
     "Cliente",
     "Perdido",
 )
+CONTACT_ESTADO_ORDER: tuple[str, ...] = CONTACT_ESTADO_OPCIONES
+CONTACT_ESTADO_DEFAULT = "Nuevo contacto"
+CONTACT_ESTADO_TERMINAL: frozenset[str] = frozenset({"Cliente", "Perdido"})
+CONTACT_ESTADO_STAGNATION_DAYS: dict[str, int] = {
+    "Nuevo contacto": 14,
+    "Contacto inicial": 21,
+    "Piloto aceptado": 10,
+    "Contrato firmado": 7,
+    "Onboarding": 14,
+    "Piloto activo": 60,
+    "Fin de piloto": 7,
+}
+CONTACT_ESTADO_LEGACY_ALIASES: dict[str, str] = {
+    "en contacto": "Contacto inicial",
+    "en negociacion": "Piloto aceptado",
+}
 CONTACT_ESTADO_SET = frozenset(CONTACT_ESTADO_OPCIONES)
 
 FUENTE_LEAD_OPCIONES: tuple[str, ...] = (
@@ -148,6 +169,8 @@ _TEMPLATE_LABEL_ALIASES_EXTRA: dict[str, str] = {
     "Estado": "estado",
     "Fecha estado": "fecha_estado",
     "Razón pérdida": "razon_perdida",
+    "Responsable del cliente": "responsable_cliente",
+    "Responsable cliente": "responsable_cliente",
 }
 TEMPLATE_LABEL_ALIASES: dict[str, str] = {
     c: c for c in CANONICAL_COLUMNS

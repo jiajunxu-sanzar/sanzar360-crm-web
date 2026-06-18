@@ -2,50 +2,17 @@ from __future__ import annotations
 
 import streamlit as st
 
+from ui.design_tokens import css_variables
+
 
 def apply_theme() -> None:
     st.markdown(
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-        :root {
-          /* Typography */
-          --ui-font: 'Inter', ui-sans-serif, system-ui, sans-serif;
-          /* Core — minimalist neutral + single accent */
-          --ui-bg-page: #fafafa;
-          --ui-bg-elevated: #ffffff;
-          --ui-sidebar: #f4f4f5;
-          --ui-border: #e5e5e5;
-          --ui-border-strong: #d4d4d8;
-          --ui-text: #18181b;
-          --ui-text-muted: #737373;
-          /* Brand accent — single green */
-          --ui-accent: #15803d;
-          --ui-accent-hover: #166534;
-          --ui-accent-contrast: #ffffff;
-          /* Legacy aliases (contacts / alarms) */
-          --sanzar-green: #15803d;
-          --sanzar-green-soft: #ecfdf5;
-          --sanzar-border: var(--ui-border);
-          --sanzar-text: var(--ui-text);
-          /* Semantic button tokens */
-          --ui-btn-save-bg: #15803d;
-          --ui-btn-save-hover: #166534;
-          --ui-btn-save-fg: #ffffff;
-          --ui-btn-destruct-bg: #fef2f2;
-          --ui-btn-destruct-border: #fecaca;
-          --ui-btn-destruct-hover: #ffe4e6;
-          --ui-btn-destruct-fg: #991b1b;
-          --ui-btn-neutral-bg: #fafafa;
-          --ui-btn-neutral-border: #e5e5e5;
-          --ui-btn-neutral-hover: #f4f4f5;
-          --ui-btn-neutral-fg: #404040;
-          /* Kept for any legacy reference */
-          --ui-btn-affirm-bg: #fafafa;
-          --ui-btn-affirm-border: #e5e5e5;
-          --ui-btn-affirm-hover: #f4f4f5;
-          --ui-btn-affirm-fg: #18181b;
-        }
+        """
+        + css_variables()
+        + """
         body, .stApp { font-family: var(--ui-font) !important; }
         /* Page */
         .block-container {
@@ -68,12 +35,23 @@ def apply_theme() -> None:
           background-color: var(--ui-accent) !important;
           color: var(--ui-accent-contrast) !important;
           border: 1px solid var(--ui-accent) !important;
-          border-radius: 8px !important;
+          border-radius: var(--ui-radius-md) !important;
           font-weight: 550 !important;
         }
         .stButton > button[kind="primary"]:hover {
           background-color: var(--ui-accent-hover) !important;
           border-color: var(--ui-accent-hover) !important;
+        }
+        .stButton > button.crm-btn-strong,
+        div[data-testid="stSidebar"] button.crm-btn-strong {
+          background-color: var(--ui-primary-strong) !important;
+          color: var(--ui-primary-strong-contrast) !important;
+          border: 1px solid var(--ui-primary-strong) !important;
+        }
+        .stButton > button.crm-btn-strong:hover,
+        div[data-testid="stSidebar"] button.crm-btn-strong:hover {
+          background-color: var(--ui-primary-strong-active) !important;
+          border-color: var(--ui-primary-strong-active) !important;
         }
         .stButton > button[kind="secondary"],
         .stButton > button[kind="tertiary"] {
@@ -136,26 +114,26 @@ def apply_theme() -> None:
           border: 1px solid var(--ui-border);
           border-radius: 14px;
           padding: 16px 18px;
-          background: #fafafa;
+          background: var(--ui-kpi-neutral-bg);
           margin-bottom: 8px;
         }
         .sanzar-kpi--success,
         .sanzar-acciones-kpi--success {
-          background: #f0fdf4;
-          border-color: #bbf7d0;
+          background: var(--ui-kpi-success-bg);
+          border-color: var(--ui-kpi-success-border);
         }
         .sanzar-kpi--danger,
         .sanzar-acciones-kpi--danger {
-          background: #fef2f2;
-          border-color: #fecaca;
+          background: var(--ui-kpi-danger-bg);
+          border-color: var(--ui-kpi-danger-border);
         }
         .sanzar-kpi--info {
-          background: #f0f9ff;
-          border-color: #bae6fd;
+          background: var(--ui-kpi-info-bg);
+          border-color: var(--ui-kpi-info-border);
         }
         .sanzar-kpi--warning {
-          background: #fffbeb;
-          border-color: #fde68a;
+          background: var(--ui-kpi-warning-bg);
+          border-color: var(--ui-kpi-warning-border);
         }
         .sanzar-kpi-label,
         .sanzar-acciones-kpi-label {
@@ -296,8 +274,8 @@ def apply_theme() -> None:
           font-size: 0.8125rem;
           color: var(--ui-text);
         }
-        .sanzar-acciones-stat-ok { color: #15803d; font-weight: 600; }
-        .sanzar-acciones-stat-ko { color: #b91c1c; font-weight: 600; }
+        .sanzar-acciones-stat-ok { color: var(--ui-semantic-success); font-weight: 600; }
+        .sanzar-acciones-stat-ko { color: var(--ui-semantic-error); font-weight: 600; }
         .sanzar-acciones-person-btn-spacer { height: 18px; }
         .sanzar-acciones-canal-rate-track {
           height: 10px;
@@ -552,7 +530,7 @@ def apply_theme() -> None:
           background: var(--ui-text-muted);
           border: 2px solid var(--ui-bg-elevated);
         }
-        .sanzar-timeline-item[data-kind^="sensor-"] .sanzar-timeline-dot { background: #15803d; }
+        .sanzar-timeline-item[data-kind^="sensor-"] .sanzar-timeline-dot { background: var(--ui-accent); }
         .sanzar-timeline-item[data-kind^="campana-"] .sanzar-timeline-dot { background: #4f46e5; }
         .sanzar-timeline-item[data-kind^="pago"] .sanzar-timeline-dot,
         .sanzar-timeline-item[data-kind^="pago-"] .sanzar-timeline-dot { background: #7c3aed; }
@@ -775,21 +753,21 @@ def apply_theme() -> None:
         }
         .sanzar-seg-card--exitoso,
         .sanzar-hist-card--exitoso {
-          border-left: 4px solid #15803d;
-          background: #f0fdf4;
+          border-left: 4px solid var(--ui-accent);
+          background: var(--ui-kpi-success-bg);
         }
         .sanzar-seg-card--fallido,
         .sanzar-hist-card--fallido {
-          border-left: 4px solid #b91c1c;
-          background: #fef2f2;
+          border-left: 4px solid var(--ui-semantic-error);
+          background: var(--ui-kpi-danger-bg);
         }
         .sanzar-seg-card--neutral,
         .sanzar-hist-card--neutral {
           border-left: 4px solid var(--ui-border-strong);
         }
         .sanzar-hist-card--warning {
-          border-left: 4px solid #b45309;
-          background: #fffbeb;
+          border-left: 4px solid var(--ui-semantic-warning);
+          background: var(--ui-kpi-warning-bg);
         }
         .sanzar-seg-card-head,
         .sanzar-hist-card-head {
@@ -930,22 +908,23 @@ def apply_theme() -> None:
          */
         .st-key-dash_bucket_past button,
         .st-key-dash_bucket_today button,
-        .st-key-dash_bucket_tomorrow button {
-          background: #ffffff !important;
-          border: 1px solid #e5e5e5 !important;
+        .st-key-dash_bucket_tomorrow button,
+        .st-key-dash_bucket_future button {
+          background: var(--ui-bg-elevated) !important;
+          border: 1px solid var(--ui-border) !important;
           border-left: 3px solid transparent !important;
-          color: #525252 !important;
-          border-radius: 8px !important;
+          color: var(--ui-text-body) !important;
+          border-radius: var(--ui-radius-md) !important;
           font-weight: 500 !important;
         }
-        /* Selected variants — Python sets type="primary" when active */
-        .st-key-dash_bucket_past button[kind="primary"]     { border-left: 3px solid #e11d48 !important; background: #f4f4f5 !important; border-color: #d4d4d8 !important; color: #18181b !important; }
-        .st-key-dash_bucket_today button[kind="primary"]    { border-left: 3px solid #ca8a04 !important; background: #f4f4f5 !important; border-color: #d4d4d8 !important; color: #18181b !important; }
-        .st-key-dash_bucket_tomorrow button[kind="primary"] { border-left: 3px solid #16a34a !important; background: #f4f4f5 !important; border-color: #d4d4d8 !important; color: #18181b !important; }
-        /* Hover must also stay grey — otherwise the global primary:hover turns them green */
-        .st-key-dash_bucket_past button[kind="primary"]:hover     { background: #ececec !important; border-left-color: #e11d48 !important; border-color: #c4c4c8 !important; }
-        .st-key-dash_bucket_today button[kind="primary"]:hover    { background: #ececec !important; border-left-color: #ca8a04 !important; border-color: #c4c4c8 !important; }
-        .st-key-dash_bucket_tomorrow button[kind="primary"]:hover { background: #ececec !important; border-left-color: #16a34a !important; border-color: #c4c4c8 !important; }
+        .st-key-dash_bucket_past button[kind="primary"]     { border-left: 3px solid var(--ui-bucket-past) !important; background: var(--ui-surface-soft) !important; border-color: var(--ui-border-strong) !important; color: var(--ui-text) !important; }
+        .st-key-dash_bucket_today button[kind="primary"]    { border-left: 3px solid var(--ui-bucket-today) !important; background: var(--ui-surface-soft) !important; border-color: var(--ui-border-strong) !important; color: var(--ui-text) !important; }
+        .st-key-dash_bucket_tomorrow button[kind="primary"],
+        .st-key-dash_bucket_future button[kind="primary"] { border-left: 3px solid var(--ui-bucket-future) !important; background: var(--ui-surface-soft) !important; border-color: var(--ui-border-strong) !important; color: var(--ui-text) !important; }
+        .st-key-dash_bucket_past button[kind="primary"]:hover     { background: var(--ui-hairline-soft) !important; border-left-color: var(--ui-bucket-past) !important; }
+        .st-key-dash_bucket_today button[kind="primary"]:hover    { background: var(--ui-hairline-soft) !important; border-left-color: var(--ui-bucket-today) !important; }
+        .st-key-dash_bucket_tomorrow button[kind="primary"]:hover,
+        .st-key-dash_bucket_future button[kind="primary"]:hover { background: var(--ui-hairline-soft) !important; border-left-color: var(--ui-bucket-future) !important; }
 
         /* ── Semantic button tiers (key-prefix based, generic and stable) ──────
          * Save / confirm: any button or form-submit whose widget key starts with

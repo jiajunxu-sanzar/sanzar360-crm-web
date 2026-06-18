@@ -26,6 +26,7 @@ from app.state import (
 from config.settings import CONFIG
 from models.contact import empty_contacts_dataframe
 from services.activity_log import init_activity_sheet
+from services.contacts_schema import init_contacts_schema
 from pages import (
     actions_dashboard,
     alarms,
@@ -52,6 +53,7 @@ init_state()
 if CONFIG.google_sheet_id:
     try:
         init_activity_sheet(sheets_service())
+        init_contacts_schema(sheets_service())
     except Exception:
         pass
 

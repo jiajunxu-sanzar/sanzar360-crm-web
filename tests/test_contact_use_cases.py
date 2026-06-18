@@ -1,6 +1,7 @@
 import pandas as pd
+from datetime import date
 
-from config.settings import CANONICAL_COLUMNS
+from config.settings import CANONICAL_COLUMNS, CONTACT_ESTADO_DEFAULT
 from models.contact import empty_contacts_dataframe
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
 
@@ -84,6 +85,37 @@ def test_create_empty_contact_sets_nombre() -> None:
     new_df, contact_id, _verify = create_empty_contact(df, sheets, nombre="  Mi cliente  ")  # type: ignore[arg-type]
     assert new_df.iloc[-1]["nombre"] == "Mi cliente"
     assert contact_id == str(new_df.iloc[-1]["contact_id"])
+
+
+def test_create_empty_contact_sets_default_estado_and_fecha_estado() -> None:
+    sheets = _FakeSheets(simulate_sheet_headers=False)
+    df = empty_contacts_dataframe()
+    new_df, _contact_id, _verify = create_empty_contact(df, sheets)  # type: ignore[arg-type]
+    row = new_df.iloc[-1]
+    assert row["estado"] == CONTACT_ESTADO_DEFAULT
+    assert row["fecha_estado"] == date.today().strftime("%d/%m/%Y")
+
+
+def test_save_contact_by_id_updates_fecha_estado_when_estado_changes() -> None:
+    sheets = _FakeSheets(simulate_sheet_headers=False)
+    df = empty_contacts_dataframe()
+    new_df, contact_id, _verify = create_empty_contact(df, sheets)  # type: ignore[arg-type]
+    row_idx = new_df.index[0]
+    original_fecha = str(new_df.loc[row_idx, "fecha_estado"])
+    updated, verify = save_contact_by_id(
+        new_df,
+        row_idx=row_idx,
+        contact_id=contact_id,
+        values={
+            "contact_id": contact_id,
+            "estado": "Contacto inicial",
+            "fecha_estado": original_fecha,
+        },
+        sheets=sheets,  # type: ignore[arg-type]
+    )
+    assert updated.loc[row_idx, "estado"] == "Contacto inicial"
+    assert updated.loc[row_idx, "fecha_estado"] == date.today().strftime("%d/%m/%Y")
+    assert verify.status in {"confirmed", "ambiguous"}
 
 
 def test_save_contact_by_id_updates_dataframe_and_calls_partial_save() -> None:

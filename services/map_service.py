@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from config.contact_estado import is_contact_perdido
+
 import folium
 import pandas as pd
 
@@ -51,7 +53,7 @@ def build_contacts_map(
             continue
         lat, lon = coords
         points.append((lat, lon))
-        is_lost = str(row.get("estado", "")).strip().lower() == "perdido"
+        is_lost = is_contact_perdido(str(row.get("estado", "")))
         marker_color = "#dc2626" if is_lost else "#2f855a"
         popup = (
             f"<b>{row.get('nombre', '')}</b><br>"

@@ -1,6 +1,8 @@
 from ui.palette import (
     STATUS_DANGER,
+    STATUS_INFO,
     STATUS_NEUTRAL,
+    STATUS_PURPLE,
     STATUS_SUCCESS,
     STATUS_WARNING,
     alarm_category_style,
@@ -14,6 +16,10 @@ from ui.palette import (
 
 def test_contact_and_subscription_styles() -> None:
     assert contact_status_style("Cliente") == STATUS_SUCCESS
+    assert contact_status_style("Nuevo contacto") == STATUS_WARNING
+    assert contact_status_style("Contacto inicial") == STATUS_INFO
+    assert contact_status_style("Piloto activo") == STATUS_PURPLE
+    assert contact_status_style("Perdido") == STATUS_DANGER
     assert subscription_status_style("caduca pronto") == STATUS_WARNING
     assert subscription_status_style("inactiva") == STATUS_DANGER
 
