@@ -1,9 +1,4 @@
-"""Pricing calculator — mirrors the sanzar-crm desktop PricingView.
-
-Two modes:
-  · Cliente   (default) — sensor price 700 EUR
-  · Proveedor (locked)  — sensor price 325 EUR, unlocked with password
-"""
+"""Pricing calculator — tiered annual/monthly subscription by sensor count."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,20 +7,18 @@ import pandas as pd
 import streamlit as st
 
 from app.navigation import page_menu_title
+from services.pricing_calculator import (
+    compare_annual_vs_monthly,
+    compute_quote,
+    sensor_unit_price,
+)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-_SENSOR_CLIENT_EUR   = 700.0
-_SENSOR_PROVIDER_EUR = 325.0
-_ANNUAL_EUR          = 360.0
-_MONTHLY_EUR         = 45.0
-_PROVIDER_PASSWORD   = "sanzar"
-
-_MEDIA_DIR  = Path(__file__).resolve().parents[1] / "assets" / "media"
+_MEDIA_DIR = Path(__file__).resolve().parents[1] / "assets" / "media"
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 _KEY_PROVIDER = "pricing.provider_mode"
+_MODE_ANNUAL = "Pago anual (recomendado)"
+_MODE_MONTHLY = "Pago mensual"
 
 
 def _ensure_state() -> None:
@@ -38,91 +31,137 @@ def _load_media() -> list[Path]:
     return sorted(p for p in _MEDIA_DIR.iterdir() if p.suffix.lower() in _IMAGE_EXTS)
 
 
-@st.dialog("Cambiar vista")
-def _view_switch_dialog() -> None:
-    is_provider: bool = st.session_state[_KEY_PROVIDER]
-    if is_provider:
-        st.markdown("Estás en **vista proveedor**. ¿Volver a vista cliente?")
-        if st.button("Volver a vista cliente", width="stretch", type="primary"):
-            st.session_state[_KEY_PROVIDER] = False
-            st.rerun()
-    else:
-        st.markdown("Introduce la contraseña para ver **precios de proveedor**.")
-        pwd = st.text_input("Contraseña", type="password", key="pricing_pwd_input")
-        if st.button("Desbloquear", width="stretch", type="primary"):
-            if pwd.strip() == _PROVIDER_PASSWORD:
-                st.session_state[_KEY_PROVIDER] = True
-                st.rerun()
-            else:
-                st.error("Contraseña incorrecta.")
+def _format_eur(value: float) -> str:
+    return f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def render(_: pd.DataFrame) -> None:
     _ensure_state()
 
-    is_provider: bool = st.session_state[_KEY_PROVIDER]
+    is_provider: bool = bool(st.session_state[_KEY_PROVIDER])
 
-    # --- Header row: title + mode badge + swap icon ---
-    h_left, h_mid, h_right = st.columns([0.72, 0.2, 0.08])
-    h_left.title(page_menu_title("Pricing"))
-    badge_class = "sanzar-badge-proveedor" if is_provider else "sanzar-badge-cliente"
-    badge_label = "PROVEEDOR" if is_provider else "CLIENTE"
-    h_mid.markdown(
-        f"<span class='{badge_class}'>{badge_label}</span>",
+    st.markdown(
+        """
+        <style>
+        h1#pricing { margin-bottom: 0.35rem !important; }
+        </style>
+        """,
         unsafe_allow_html=True,
     )
-    h_right.markdown("<div style='height:1.6rem'></div>", unsafe_allow_html=True)
-    if h_right.button("🔄", key="pricing_swap_btn", help="Cambiar vista cliente / proveedor"):
-        _view_switch_dialog()
-
-    st.markdown("---")
-
-    # --- Inputs (left) + Desglose (right) ---
-    sensor_price = _SENSOR_PROVIDER_EUR if is_provider else _SENSOR_CLIENT_EUR
+    st.title(page_menu_title("Pricing"))
 
     c1, c2 = st.columns([0.6, 0.4], gap="large")
 
     with c1:
-        include_sensor  = st.checkbox("Sensor UC501 + Teros 10",         value=True, key="pricing_sensor")
-        include_annual  = st.checkbox("Suscripción anual (360 EUR)",      value=True, key="pricing_annual")
-        include_monthly = st.checkbox("Suscripción mensual (45 EUR/mes)", value=False, key="pricing_monthly")
-        months = 12
-        if include_monthly:
-            months = st.number_input(
-                "Número de meses", min_value=1, max_value=120, value=12, step=1, key="pricing_months"
+        badge_col, toggle_col = st.columns([0.78, 0.22], vertical_alignment="center")
+        badge_class = "sanzar-badge-proveedor" if is_provider else "sanzar-badge-cliente"
+        badge_label = "PROVEEDOR" if is_provider else "CLIENTE"
+        badge_col.markdown(
+            f"<span class='{badge_class}'>{badge_label}</span>",
+            unsafe_allow_html=True,
+        )
+        with toggle_col:
+            st.toggle(
+                "Proveedor",
+                key=_KEY_PROVIDER,
+                label_visibility="collapsed",
+                help="Vista proveedor (hardware a 325 €/sensor)",
             )
 
-    total = 0.0
-    lines: list[str] = []
-    if include_sensor:
-        total += sensor_price
-        lines.append(f"Sensor: **{sensor_price:.2f} EUR**")
-    if include_annual:
-        total += _ANNUAL_EUR
-        lines.append(f"Suscripción anual: **{_ANNUAL_EUR:.2f} EUR**")
-    if include_monthly:
-        monthly_total = round(months * _MONTHLY_EUR, 2)
-        total += monthly_total
-        lines.append(f"Suscripción mensual ({months} × {_MONTHLY_EUR:.2f}): **{monthly_total:.2f} EUR**")
-    total = round(total, 2)
+        n_sensors = int(
+            st.number_input(
+                "Número de sensores",
+                min_value=1,
+                max_value=150,
+                value=4,
+                step=1,
+                key="pricing_n_sensors",
+            )
+        )
+        payment_label = st.radio(
+            "Modalidad de suscripción",
+            options=[_MODE_ANNUAL, _MODE_MONTHLY],
+            index=0,
+            key="pricing_payment_mode",
+        )
+        include_sensor = st.checkbox(
+            "Incluir coste de sensor (UC501 + Teros 10, 2 años de garantía incluidos)",
+            value=True,
+            key="pricing_include_sensor",
+        )
+        months = 12
+        if payment_label == _MODE_MONTHLY:
+            months = int(
+                st.number_input(
+                    "Meses de suscripción",
+                    min_value=1,
+                    max_value=120,
+                    value=12,
+                    step=1,
+                    key="pricing_months",
+                )
+            )
+
+        unit = sensor_unit_price(provider_mode=is_provider)
+        st.caption(
+            f"Hardware por sensor (2 años de garantía incluidos): **{_format_eur(unit)} €** "
+            f"({'proveedor' if is_provider else 'cliente'})."
+        )
+
+    mode = "annual" if payment_label == _MODE_ANNUAL else "monthly"
+    quote = compute_quote(
+        n_sensors,
+        mode,
+        include_sensor=include_sensor,
+        provider_mode=is_provider,
+    )
+    comparison = compare_annual_vs_monthly(n_sensors)
 
     with c2:
         st.markdown("#### Desglose")
-        if lines:
-            for line in lines:
-                st.markdown(f"- {line}")
-        else:
-            st.caption("Selecciona al menos un componente.")
-        st.markdown(f"### Total: {total:.2f} EUR")
-        monthly_year = _MONTHLY_EUR * 12.0
-        savings_pct  = round(((monthly_year - _ANNUAL_EUR) / monthly_year) * 100.0, 2)
-        st.info(
-            f"Pago anual ({_ANNUAL_EUR:.2f} EUR) vs mensual "
-            f"(12 × {_MONTHLY_EUR:.2f} = {monthly_year:.2f} EUR) → "
-            f"**ahorro: {savings_pct:.2f}%**"
+        period_unit = "€/año" if mode == "annual" else "€/mes"
+        for line in quote.subscription.lines:
+            st.markdown(f"- {line.label}: **{_format_eur(line.amount)} {line.unit}**")
+
+        st.markdown(
+            f"**Total suscripción:** {_format_eur(quote.subscription.subscription_total)} {period_unit}"
         )
 
-    # --- Image gallery (no captions) ---
+        if quote.hardware_line:
+            st.markdown(
+                f"- {quote.hardware_line.label}: **{_format_eur(quote.hardware_total)} €**"
+            )
+            st.markdown(f"**Total hardware:** {_format_eur(quote.hardware_total)} €")
+
+        if mode == "monthly":
+            subscription_period = round(quote.subscription.subscription_total * months, 2)
+            grand = round(subscription_period + quote.hardware_total, 2)
+            st.markdown(
+                f"**Total suscripción ({months} meses):** "
+                f"{_format_eur(subscription_period)} €"
+            )
+            st.markdown(f"### Total general: {_format_eur(grand)} €")
+            st.info(
+                f"Si pagas **anual**, la suscripción sería "
+                f"**{_format_eur(comparison.annual_subscription)} €/año** en lugar de "
+                f"**{_format_eur(comparison.monthly_subscription_per_year)} €/año** "
+                f"(12 × {_format_eur(comparison.monthly_subscription_per_month)} €/mes). "
+                f"**Ahorro: {_format_eur(comparison.savings_eur)} € "
+                f"({comparison.savings_pct:g}%)**"
+            )
+        else:
+            st.markdown(f"### Total general: {_format_eur(quote.grand_total)} €")
+            st.info(
+                f"El pago mensual equivalente (12 meses) costaría "
+                f"**{_format_eur(comparison.monthly_subscription_per_year)} €/año** "
+                f"vs **{_format_eur(comparison.annual_subscription)} €/año** en anual. "
+                f"**Ahorro con anual: {_format_eur(comparison.savings_eur)} € "
+                f"({comparison.savings_pct:g}%)**"
+            )
+
+        if quote.subscription.custom_pricing_note:
+            st.warning(quote.subscription.custom_pricing_note)
+
     st.markdown("---")
     images = _load_media()
     if images:
