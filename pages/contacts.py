@@ -15,6 +15,7 @@ from app.cache import (
     history_service,
     inventory_service,
     load_acciones_cached,
+    load_contact_sensor_overview_cached,
     load_inventory_cached,
     load_users_cached,
     sheets_service,
@@ -59,6 +60,17 @@ from services.history_service import (
     validate_projectiotid_assignments,
 )
 from services.contact_deletion import delete_contact_and_related_data
+from services.incidencia_association_options import (
+    AssociationOption,
+    build_campana_history_options,
+    build_sensor_history_options,
+    option_by_id,
+)
+from services.contact_sensor_overview import (
+    filter_by_sensor_overview,
+    semaforo_by_contact_id,
+    semaforo_display_prefix,
+)
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
 from services.proxima_accion_stats import (
     apply_dash_bucket_date_filter,
@@ -82,6 +94,11 @@ from ui.components.cards import card, chip
 from ui.components.customer_timeline import render_contact_timeline_block
 from ui.components.commercial_followup import render_commercial_followup_list
 from ui.components.contact_detail_header import render_contact_detail_header
+from ui.components.contact_overview_table import (
+    filter_overview_by_contact_ids,
+    render_contact_overview_dialog_content,
+    sort_overview_by_proxima_accion,
+)
 from ui.components.history_cards import render_paginated_history_cards
 from ui import modal_state
 from ui.components.history import clear_history_table_selection
@@ -122,8 +139,8 @@ SELECT_OPTIONS = {
     "proxima_accion_persona": list(PERSONA_COMERCIAL_OPCIONES),
 }
 
-CONTACT_LIST_PANEL_HEIGHT_BASE = 980
-CONTACT_LIST_PANEL_HEIGHT_WITH_DETAIL = 1320
+CONTACT_LIST_PANEL_HEIGHT_BASE = 920
+CONTACT_LIST_PANEL_HEIGHT_WITH_DETAIL = 1240
 NEW_CONTACT_FLOW_KEY = "new_contact_flow_state"
 NEW_CONTACT_FLOW_IDLE = "idle"
 NEW_CONTACT_FLOW_OPEN = "open"
@@ -132,6 +149,11 @@ NEW_CONTACT_SIMILAR_CANDIDATES_KEY = "new_contact_similar_candidates"
 NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY = "new_contact_require_second_confirm"
 NEW_CONTACT_CONFIRM_OVERRIDE_KEY = "new_contact_confirmed_override"
 CONTACTS_SHOW_LOST_KEY = "contacts.show_lost"
+CONTACTS_ONLY_WITH_SENSORS_KEY = "contacts.only_with_sensors"
+CONTACTS_VIEW_MODE_KEY = "contacts.view_mode"
+CONTACTS_FILTERED_IDS_KEY = "contacts.filtered_contact_ids"
+CONTACTS_VIEW_FICHA = "ficha"
+CONTACTS_VIEW_TABLA = "tabla"
 CONTACTS_SAVE_SUCCESS_KEY = "contacts.save_success_message"
 CONTACTS_DELETE_SUCCESS_KEY = "contacts.delete_success_message"
 CONTACTS_DELETE_TARGET_ID_KEY = "contacts.delete_target_id"
@@ -140,6 +162,33 @@ HISTORY_DELETE_CONFIRM_PREFIX = "history_delete_confirm"
 DASH_PERSONA_PROXIMA_ACCION_KEY = "dash_persona_proxima_accion"
 DASH_ESTADO_FILTER_KEY = "dash_estado_filter"
 DASH_RESPONSABLE_FILTER_KEY = "dash_responsable_cliente"
+_INCIDENCIA_ASSOC_HEADERS = frozenset(
+    {
+        "historial_sensor_id",
+        "sensor_serial_number",
+        "historial_campana_id",
+        "nombre_campana",
+    }
+)
+
+
+def _contacts_block_spacer() -> None:
+    st.markdown('<div class="sanzar-contacts-block-spacer"></div>', unsafe_allow_html=True)
+
+
+def _contact_display_name(df: pd.DataFrame, contact_id: str) -> str:
+    if not (contact_id or "").strip() or df.empty or "contact_id" not in df.columns:
+        return "Sin nombre"
+    matches = df[df["contact_id"].astype(str).str.strip() == str(contact_id).strip()]
+    if matches.empty:
+        return "Sin nombre"
+    return str(matches.iloc[0].get("nombre", "") or "").strip() or "Sin nombre"
+
+
+def _filtered_overview_display_df() -> pd.DataFrame:
+    overview = load_contact_sensor_overview_cached(st.session_state.get("history_cache_version", 0))
+    ids = st.session_state.get(CONTACTS_FILTERED_IDS_KEY, [])
+    return sort_overview_by_proxima_accion(filter_overview_by_contact_ids(overview, ids))
 
 
 def _clear_modal_flags() -> None:
@@ -271,6 +320,8 @@ def _on_dismiss_history_edit() -> None:
             row_id = str(m["row_id"])
             _clear_sensor_picker_state(f"{kind}_{row_id}")
             st.session_state.pop(_history_delete_confirm_key(kind, row_id), None)
+        if kind == "incidencias":
+            _clear_incidencia_association_state(f"{kind}_{m['row_id']}")
         modal_state.close_modal()
         _clear_history_selection(contact_id, kind)
 
@@ -280,6 +331,8 @@ def _on_dismiss_history_add() -> None:
     if m and m.get("type") == "add_history":
         if m.get("kind") == "sensores":
             _clear_sensor_picker_state("sensores_new")
+        if m.get("kind") == "incidencias":
+            _clear_incidencia_association_state("incidencias_new")
         modal_state.close_modal()
 
 
@@ -364,17 +417,24 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
         with left:
             selected_id = _render_contact_list(df)
         with right:
-            if selected_id:
-                df = _render_contact_detail(df, selected_id)
-            else:
-                st.info("Selecciona un contacto para abrir la ficha.")
+            with st.container(border=True):
+                if selected_id:
+                    st.markdown(f"##### {_contact_display_name(df, selected_id)}")
+                    df = _render_contact_detail(df, selected_id)
+                else:
+                    st.markdown("##### Ficha del contacto")
+                    st.info("Selecciona un contacto para abrir la ficha.")
         return df
 
 
 def _render_contact_list(df: pd.DataFrame) -> str:
+    if CONTACTS_VIEW_MODE_KEY not in st.session_state:
+        st.session_state[CONTACTS_VIEW_MODE_KEY] = CONTACTS_VIEW_FICHA
     acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
     df = enrich_contacts_with_proxima(df, acciones_df)
-    _render_next_action_strip(df)
+    with st.container(border=True):
+        _render_next_action_strip(df)
+    _contacts_block_spacer()
     if "contact_search_open" not in st.session_state:
         st.session_state.contact_search_open = False
     if "contact_filters_open" not in st.session_state:
@@ -383,55 +443,58 @@ def _render_contact_list(df: pd.DataFrame) -> str:
         # Soft migration from legacy filter key if present.
         st.session_state[CONTACTS_SHOW_LOST_KEY] = bool(st.session_state.get("contact_filter_show_lost", False))
 
-    st.subheader("Buscar")
-    st.toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
-    top_row = st.columns([0.16, 0.84], gap="small")
-    if top_row[0].button("🔍", key="contact_toggle_search", width="stretch"):
-        st.session_state.contact_search_open = not st.session_state.contact_search_open
-        if not st.session_state.contact_search_open:
-            st.session_state.contact_filter_text = ""
-            st.session_state.contact_filters_open = False
-        st.rerun()
-
-    query = ""
-    if st.session_state.contact_search_open:
-        search_row = top_row[1].columns([0.86, 0.14], gap="small")
-        query = search_row[0].text_input(
-            "Buscar",
-            key="contact_filter_text",
-            label_visibility="collapsed",
-            placeholder="Nombre, municipio, provincia, correo, teléfono, cultivo o contact_id",
-        )
-        if search_row[1].button("⏬", key="contact_toggle_filters", width="stretch", help="Filtros"):
-            st.session_state.contact_filters_open = not st.session_state.contact_filters_open
+    with st.container(border=True):
+        st.markdown("##### Buscar")
+        st.toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
+        st.toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
+        overview = load_contact_sensor_overview_cached(st.session_state.get("history_cache_version", 0))
+        top_row = st.columns([0.16, 0.84], gap="small")
+        if top_row[0].button("🔍", key="contact_toggle_search", width="stretch"):
+            st.session_state.contact_search_open = not st.session_state.contact_search_open
+            if not st.session_state.contact_search_open:
+                st.session_state.contact_filter_text = ""
+                st.session_state.contact_filters_open = False
             st.rerun()
 
-    province = ""
-    status = ""
-    entity_type = ""
-    municipio = ""
-    cultivos_filter = ""
-    if st.session_state.contact_filters_open:
-        filter_row_1 = st.columns([1.2, 1.2, 1.2], gap="small")
-        status = filter_row_1[0].selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
-        province = filter_row_1[1].selectbox(
-            "Provincia",
-            [""] + sorted([x for x in df.get("provincia", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
-            key="contact_filter_province",
-        )
-        entity_type = filter_row_1[2].selectbox(
-            "Tipo de entidad",
-            [""] + sorted([x for x in df.get("tipo_entidad", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
-            key="contact_filter_entity",
-        )
-        filter_row_2 = st.columns([1.2, 1.2], gap="small")
-        municipio = filter_row_2[0].selectbox(
-            "Municipio",
-            [""] + sorted([x for x in df.get("municipio", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
-            key="contact_filter_municipio",
-        )
-        cultivos_filter = filter_row_2[1].text_input("Cultivos contiene", key="contact_filter_cultivos")
+        query = ""
+        if st.session_state.contact_search_open:
+            search_row = top_row[1].columns([0.86, 0.14], gap="small")
+            query = search_row[0].text_input(
+                "Buscar",
+                key="contact_filter_text",
+                label_visibility="collapsed",
+                placeholder="Nombre, municipio, provincia, correo, teléfono, cultivo o contact_id",
+            )
+            if search_row[1].button("⏬", key="contact_toggle_filters", width="stretch", help="Filtros"):
+                st.session_state.contact_filters_open = not st.session_state.contact_filters_open
+                st.rerun()
 
+        province = ""
+        status = ""
+        entity_type = ""
+        municipio = ""
+        cultivos_filter = ""
+        if st.session_state.contact_filters_open:
+            filter_row_1 = st.columns([1.2, 1.2, 1.2], gap="small")
+            status = filter_row_1[0].selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
+            province = filter_row_1[1].selectbox(
+                "Provincia",
+                [""] + sorted([x for x in df.get("provincia", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
+                key="contact_filter_province",
+            )
+            entity_type = filter_row_1[2].selectbox(
+                "Tipo de entidad",
+                [""] + sorted([x for x in df.get("tipo_entidad", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
+                key="contact_filter_entity",
+            )
+            filter_row_2 = st.columns([1.2, 1.2], gap="small")
+            municipio = filter_row_2[0].selectbox(
+                "Municipio",
+                [""] + sorted([x for x in df.get("municipio", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
+                key="contact_filter_municipio",
+            )
+            cultivos_filter = filter_row_2[1].text_input("Cultivos contiene", key="contact_filter_cultivos")
+    _contacts_block_spacer()
     filtered = filter_dataframe(
         df,
         query,
@@ -460,42 +523,75 @@ def _render_contact_list(df: pd.DataFrame) -> str:
     dash_bucket = st.session_state.get("dash_bucket", "")
     if dash_bucket:
         filtered = apply_dash_bucket_date_filter(filtered, str(dash_bucket))
+    if bool(st.session_state.get(CONTACTS_ONLY_WITH_SENSORS_KEY, False)):
+        filtered = filter_by_sensor_overview(filtered, overview, only_with_sensors=True)
     filtered = filtered.reset_index(drop=True)
 
-    if st.button("Nuevo contacto", key="create_contact_top", width="stretch"):
-        _new_contact_flow_open()
-        st.rerun()
-    if _new_contact_flow_state_get() in {NEW_CONTACT_FLOW_OPEN, NEW_CONTACT_FLOW_SUBMITTING}:
-        _render_create_contact_confirmation(df)
+    st.session_state[CONTACTS_FILTERED_IDS_KEY] = (
+        filtered["contact_id"].fillna("").astype(str).str.strip().tolist()
+        if not filtered.empty and "contact_id" in filtered.columns
+        else []
+    )
 
-    st.caption(f"{len(filtered)} contactos encontrados")
-    st.caption("Haz click en una fila para abrir la ficha automáticamente.")
-    current = st.session_state.get("selected_contact_id", "")
-    selected_from_table = _render_contact_table(filtered, current)
-    if selected_from_table:
-        current = selected_from_table
-    selected_id = selected_from_table or current
-    if selected_id:
-        st.session_state.selected_contact_id = selected_id
-    elif st.session_state.get("selected_contact_id") and "contact_id" in filtered.columns:
-        selected_raw = str(st.session_state.get("selected_contact_id") or "")
-        exists = not filtered[filtered["contact_id"].astype(str).str.strip() == selected_raw].empty
-        if not exists:
-            st.session_state.selected_contact_id = ""
-    return selected_id
+    view_mode = st.session_state.get(CONTACTS_VIEW_MODE_KEY, CONTACTS_VIEW_FICHA)
+    with st.container(border=True):
+        st.markdown("##### Contactos")
+        if st.button("Nuevo contacto", key="create_contact_top", width="stretch"):
+            _new_contact_flow_open()
+            st.rerun()
+        view_col1, view_col2 = st.columns(2, gap="small")
+        if view_col1.button(
+            "Ver lista",
+            key="contacts_view_tabla",
+            width="stretch",
+            type="secondary",
+        ):
+            _contact_overview_list_dialog()
+        if view_col2.button(
+            "Ver ficha",
+            key="contacts_view_ficha",
+            width="stretch",
+            type="primary" if view_mode == CONTACTS_VIEW_FICHA else "secondary",
+        ):
+            st.session_state[CONTACTS_VIEW_MODE_KEY] = CONTACTS_VIEW_FICHA
+            st.rerun()
+        if _new_contact_flow_state_get() in {NEW_CONTACT_FLOW_OPEN, NEW_CONTACT_FLOW_SUBMITTING}:
+            _render_create_contact_confirmation(df)
+
+        st.caption(f"{len(filtered)} contactos encontrados")
+        st.caption("Haz click en una fila para abrir la ficha automáticamente.")
+        current = st.session_state.get("selected_contact_id", "")
+        semaforo_map = semaforo_by_contact_id(overview)
+        selected_from_table = _render_contact_table(filtered, current, semaforo_map)
+        if selected_from_table:
+            current = selected_from_table
+        selected_id = selected_from_table or current
+        if selected_id:
+            st.session_state.selected_contact_id = selected_id
+        elif st.session_state.get("selected_contact_id") and "contact_id" in filtered.columns:
+            selected_raw = str(st.session_state.get("selected_contact_id") or "")
+            exists = not filtered[filtered["contact_id"].astype(str).str.strip() == selected_raw].empty
+            if not exists:
+                st.session_state.selected_contact_id = ""
+        return selected_id
 
 
-def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> str:
+def _render_contact_table(
+    filtered: pd.DataFrame,
+    selected_contact_id: str,
+    semaforo_map: dict[str, str] | None = None,
+) -> str:
     if filtered.empty:
         st.info("No hay datos para mostrar.")
         return ""
 
+    semaforo_lookup = semaforo_map or {}
     panel_height = (
         CONTACT_LIST_PANEL_HEIGHT_WITH_DETAIL
         if (selected_contact_id or "").strip()
         else CONTACT_LIST_PANEL_HEIGHT_BASE
     )
-    with st.container(height=panel_height, border=True):
+    with st.container(height=panel_height):
         st.markdown(
             "<div class='sanzar-contact-table'>"
             "<div class='sanzar-contact-row sanzar-contact-header'>"
@@ -507,21 +603,25 @@ def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> s
         for row in filtered.fillna("").astype(str).to_dict("records"):
             contact_id = row.get("contact_id", "")
             is_lost = is_contact_perdido(str(row.get("estado", "")))
+            sem = semaforo_lookup.get(str(contact_id).strip(), "sin_sensores")
+            prefix = "🔴 " if is_lost else semaforo_display_prefix(sem, is_lost=False)
+            nombre_raw = row.get("nombre", "") or "Sin nombre"
             row_label = " | ".join(
                 [
-                    row.get("nombre", "") or "Sin nombre",
+                    nombre_raw,
                     row.get("estado", "") or "Sin estado",
                     row.get("provincia", "") or "Sin provincia",
                     row.get("municipio", "") or "Sin municipio",
                 ]
             )
-            if is_lost:
-                row_label = f"🔴 {row_label}"
+            if prefix:
+                row_label = f"{prefix}{row_label}"
             if contact_id == selected_contact_id:
                 row_class = "sanzar-contact-row selected sanzar-contact-row-lost" if is_lost else "sanzar-contact-row selected"
+                nombre_display = f"{prefix}{nombre_raw}"
                 st.markdown(
                     f"<div class='{row_class}'>"
-                    f"<span class='sanzar-contact-cell'>{html.escape(row.get('nombre', ''))}</span>"
+                    f"<span class='sanzar-contact-cell'>{html.escape(nombre_display)}</span>"
                     f"<span class='sanzar-contact-cell'>{html.escape(row.get('estado', ''))}</span>"
                     f"<span class='sanzar-contact-cell'>{html.escape(row.get('provincia', ''))}</span>"
                     f"<span class='sanzar-contact-cell'>{html.escape(row.get('municipio', ''))}</span>"
@@ -534,6 +634,11 @@ def _render_contact_table(filtered: pd.DataFrame, selected_contact_id: str) -> s
                 st.session_state.selected_contact_id = contact_id
                 st.rerun()
     return ""
+
+
+@st.dialog("Vista resumen — contactos", width="large")
+def _contact_overview_list_dialog() -> None:
+    render_contact_overview_dialog_content(_filtered_overview_display_df())
 
 
 @st.dialog("Nuevo contacto")
@@ -893,6 +998,184 @@ def _maybe_render_edit_history_modal(contact: dict[str, str]) -> None:
     _edit_history_dialog(kind, contact, row)
 
 
+def _incidencia_association_init_key(prefix: str) -> str:
+    return f"{prefix}_incidencia_assoc_initialized"
+
+
+def _clear_incidencia_association_state(prefix: str) -> None:
+    for suffix in (
+        "_incidencia_assoc_initialized",
+        "_incidencia_sensor_pick",
+        "_incidencia_campana_pick",
+        "_incidencia_sensor_label_map",
+        "_incidencia_campana_label_map",
+        "_historial_sensor_id",
+        "_sensor_serial_number",
+        "_historial_campana_id",
+        "_nombre_campana",
+        "_incidencia_sensor_closed_legacy",
+        "_incidencia_campana_closed_legacy",
+        "_incidencia_sensor_touched",
+        "_incidencia_campana_touched",
+    ):
+        st.session_state.pop(f"{prefix}{suffix}", None)
+
+
+def _incidencia_label_maps(
+    sensor_options: list[AssociationOption],
+    campana_options: list[AssociationOption],
+) -> tuple[dict[str, AssociationOption], dict[str, AssociationOption]]:
+    return (
+        {opt.label: opt for opt in sensor_options},
+        {opt.label: opt for opt in campana_options},
+    )
+
+
+def _init_incidencia_association_state(prefix: str, contact_id: str, initial: dict[str, str]) -> None:
+    init_key = _incidencia_association_init_key(prefix)
+    if st.session_state.get(init_key):
+        return
+    st.session_state[init_key] = True
+
+    sensor_rows = history_service().rows_for_contact("sensores", contact_id) if contact_id else []
+    campana_rows = history_service().rows_for_contact("campanas", contact_id) if contact_id else []
+    sensor_options = build_sensor_history_options(sensor_rows)
+    campana_options = build_campana_history_options(campana_rows)
+    sensor_label_map, campana_label_map = _incidencia_label_maps(sensor_options, campana_options)
+    st.session_state[f"{prefix}_incidencia_sensor_label_map"] = sensor_label_map
+    st.session_state[f"{prefix}_incidencia_campana_label_map"] = campana_label_map
+
+    initial_sensor_id = str(initial.get("historial_sensor_id", "") or "").strip()
+    initial_sensor_sn = str(initial.get("sensor_serial_number", "") or "").strip()
+    initial_campana_id = str(initial.get("historial_campana_id", "") or "").strip()
+    initial_campana_name = str(initial.get("nombre_campana", "") or "").strip()
+
+    sensor_opt = option_by_id(sensor_options, initial_sensor_id)
+    if sensor_opt:
+        st.session_state[f"{prefix}_incidencia_sensor_pick"] = sensor_opt.label
+        st.session_state[f"{prefix}_historial_sensor_id"] = sensor_opt.id
+        st.session_state[f"{prefix}_sensor_serial_number"] = sensor_opt.sensor_serial_number
+        st.session_state[f"{prefix}_incidencia_sensor_closed_legacy"] = False
+    else:
+        st.session_state[f"{prefix}_incidencia_sensor_pick"] = ""
+        st.session_state[f"{prefix}_historial_sensor_id"] = initial_sensor_id
+        st.session_state[f"{prefix}_sensor_serial_number"] = initial_sensor_sn
+        st.session_state[f"{prefix}_incidencia_sensor_closed_legacy"] = bool(initial_sensor_id)
+
+    campana_opt = option_by_id(campana_options, initial_campana_id)
+    if campana_opt:
+        st.session_state[f"{prefix}_incidencia_campana_pick"] = campana_opt.label
+        st.session_state[f"{prefix}_historial_campana_id"] = campana_opt.id
+        st.session_state[f"{prefix}_nombre_campana"] = campana_opt.nombre_campana
+        st.session_state[f"{prefix}_incidencia_campana_closed_legacy"] = False
+    else:
+        st.session_state[f"{prefix}_incidencia_campana_pick"] = ""
+        st.session_state[f"{prefix}_historial_campana_id"] = initial_campana_id
+        st.session_state[f"{prefix}_nombre_campana"] = initial_campana_name
+        st.session_state[f"{prefix}_incidencia_campana_closed_legacy"] = bool(initial_campana_id)
+
+    st.session_state[f"{prefix}_incidencia_sensor_touched"] = False
+    st.session_state[f"{prefix}_incidencia_campana_touched"] = False
+
+
+def _sync_incidencia_sensor_pick(prefix: str) -> None:
+    pick = str(st.session_state.get(f"{prefix}_incidencia_sensor_pick", "") or "")
+    label_map: dict[str, AssociationOption] = st.session_state.get(f"{prefix}_incidencia_sensor_label_map", {})
+    st.session_state[f"{prefix}_incidencia_sensor_touched"] = True
+    if pick and pick in label_map:
+        opt = label_map[pick]
+        st.session_state[f"{prefix}_historial_sensor_id"] = opt.id
+        st.session_state[f"{prefix}_sensor_serial_number"] = opt.sensor_serial_number
+        st.session_state[f"{prefix}_incidencia_sensor_closed_legacy"] = False
+    else:
+        st.session_state[f"{prefix}_historial_sensor_id"] = ""
+        st.session_state[f"{prefix}_sensor_serial_number"] = ""
+        st.session_state[f"{prefix}_incidencia_sensor_closed_legacy"] = False
+
+
+def _sync_incidencia_campana_pick(prefix: str) -> None:
+    pick = str(st.session_state.get(f"{prefix}_incidencia_campana_pick", "") or "")
+    label_map: dict[str, AssociationOption] = st.session_state.get(f"{prefix}_incidencia_campana_label_map", {})
+    st.session_state[f"{prefix}_incidencia_campana_touched"] = True
+    if pick and pick in label_map:
+        opt = label_map[pick]
+        st.session_state[f"{prefix}_historial_campana_id"] = opt.id
+        st.session_state[f"{prefix}_nombre_campana"] = opt.nombre_campana
+        st.session_state[f"{prefix}_incidencia_campana_closed_legacy"] = False
+    else:
+        st.session_state[f"{prefix}_historial_campana_id"] = ""
+        st.session_state[f"{prefix}_nombre_campana"] = ""
+        st.session_state[f"{prefix}_incidencia_campana_closed_legacy"] = False
+
+
+def _resolve_incidencia_assoc_field(
+    prefix: str,
+    existing: dict[str, str] | None,
+    header: str,
+) -> str:
+    if header in {"historial_sensor_id", "sensor_serial_number"}:
+        touched = bool(st.session_state.get(f"{prefix}_incidencia_sensor_touched"))
+        legacy = bool(st.session_state.get(f"{prefix}_incidencia_sensor_closed_legacy"))
+    else:
+        touched = bool(st.session_state.get(f"{prefix}_incidencia_campana_touched"))
+        legacy = bool(st.session_state.get(f"{prefix}_incidencia_campana_closed_legacy"))
+    if not touched and legacy and existing:
+        return str(existing.get(header, "") or "")
+    return str(st.session_state.get(f"{prefix}_{header}", "") or "")
+
+
+def _render_incidencia_association_block(prefix: str, contact_id: str, initial: dict[str, str]) -> None:
+    _init_incidencia_association_state(prefix, contact_id, initial)
+    sensor_label_map: dict[str, AssociationOption] = st.session_state.get(
+        f"{prefix}_incidencia_sensor_label_map", {}
+    )
+    campana_label_map: dict[str, AssociationOption] = st.session_state.get(
+        f"{prefix}_incidencia_campana_label_map", {}
+    )
+    sensor_options = [""] + list(sensor_label_map.keys())
+    campana_options = [""] + list(campana_label_map.keys())
+
+    st.markdown("**Asociaciones**")
+    with st.container(border=True):
+        st.selectbox(
+            "Histórico sensor",
+            sensor_options,
+            key=f"{prefix}_incidencia_sensor_pick",
+            on_change=_sync_incidencia_sensor_pick,
+            args=(prefix,),
+        )
+        display_sn = str(st.session_state.get(f"{prefix}_sensor_serial_number", "") or "")
+        st.text_input("Sensor serial number", value=display_sn or "—", disabled=True)
+        if (
+            st.session_state.get(f"{prefix}_incidencia_sensor_closed_legacy")
+            and not st.session_state.get(f"{prefix}_incidencia_sensor_touched")
+            and display_sn
+        ):
+            st.caption(
+                "El sensor vinculado está cerrado. Elige uno abierto para reasociar "
+                "o deja vacío para quitar la vinculación al guardar."
+            )
+
+        st.selectbox(
+            "Histórico campaña",
+            campana_options,
+            key=f"{prefix}_incidencia_campana_pick",
+            on_change=_sync_incidencia_campana_pick,
+            args=(prefix,),
+        )
+        display_camp = str(st.session_state.get(f"{prefix}_nombre_campana", "") or "")
+        st.text_input("Nombre campaña", value=display_camp or "—", disabled=True)
+        if (
+            st.session_state.get(f"{prefix}_incidencia_campana_closed_legacy")
+            and not st.session_state.get(f"{prefix}_incidencia_campana_touched")
+            and display_camp
+        ):
+            st.caption(
+                "La campaña vinculada está cerrada. Elige una abierta para reasociar "
+                "o deja vacío para quitar la vinculación al guardar."
+            )
+
+
 @st.dialog("Nuevo histórico", on_dismiss=_on_dismiss_history_add)
 def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
     spec = HISTORY_SPECS[kind]
@@ -903,18 +1186,28 @@ def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
     # supports reruns from non-form widgets, so the association panel updates
     # immediately when the user selects an asset.
     excluded: frozenset[str] = frozenset()
+    incidencia_prefix = ""
     if kind == "sensores":
         excluded = frozenset({"sensor_serial_number"})
         prefix = f"{kind}_new"
         st.markdown("**Sensor**")
         _render_sensor_serial_field("", prefix, f"{prefix}_sensor_serial_number", exclude_hist_id="")
+    elif kind == "incidencias":
+        excluded = _INCIDENCIA_ASSOC_HEADERS
+        incidencia_prefix = f"{kind}_new"
+        initial = {header: "" for header in spec.headers}
+        initial["contact_id"] = str(contact.get("contact_id", "") or "")
+        _render_incidencia_association_block(incidencia_prefix, initial["contact_id"], initial)
     elif kind == "seguimiento_comercial":
         excluded = _SEGUIMIENTO_CANAL_FIELDS
         prefix, initial = _seguimiento_modal_initial(kind, contact, None)
         _render_seguimiento_canal_block(prefix, initial)
 
     with st.form(f"history_add_modal_{kind}_{contact.get('contact_id', '')}"):
-        _render_history_form_body(kind, contact, None, excluded_headers=excluded)
+        if kind == "incidencias":
+            _render_history_form_grouped_body(kind, contact, None, excluded_headers=excluded)
+        else:
+            _render_history_form_body(kind, contact, None, excluded_headers=excluded)
         action_cols = st.columns(2)
         confirm = action_cols[0].form_submit_button("Confirmar", width="stretch")
         cancel = action_cols[1].form_submit_button("Cancelar", width="stretch")
@@ -923,11 +1216,15 @@ def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
         _clear_modal_flags()
         if kind == "sensores":
             _clear_sensor_picker_state("sensores_new")
+        if kind == "incidencias":
+            _clear_incidencia_association_state(incidencia_prefix)
         st.rerun()
 
     if confirm:
         if _submit_history_form(kind, contact, None):
             _clear_modal_flags()
+            if kind == "incidencias":
+                _clear_incidencia_association_state(incidencia_prefix)
             st.rerun()
 
 
@@ -975,6 +1272,7 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
     # For sensores, render the sensor picker OUTSIDE the form — reruns work
     # inside @st.dialog for non-form widgets.
     excluded: frozenset[str] = frozenset()
+    incidencia_prefix = ""
     if kind == "sensores":
         excluded = frozenset({"sensor_serial_number"})
         hist_id = row_id
@@ -986,6 +1284,11 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
             f"{prefix}_sensor_serial_number",
             exclude_hist_id=hist_id,
         )
+    elif kind == "incidencias":
+        excluded = _INCIDENCIA_ASSOC_HEADERS
+        incidencia_prefix = f"{kind}_{row_id}"
+        initial = {header: str(row.get(header, "") or "") for header in spec.headers}
+        _render_incidencia_association_block(incidencia_prefix, contact_id, initial)
     elif kind == "seguimiento_comercial":
         excluded = _SEGUIMIENTO_CANAL_FIELDS
         prefix, initial = _seguimiento_modal_initial(kind, contact, row)
@@ -1003,6 +1306,8 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
             _clear_sensor_picker_state(f"{kind}_{row_id}")
             st.session_state.pop(delete_confirm_key, None)
             st.session_state.pop(_sensor_close_pending_values_key(row_id), None)
+        if kind == "incidencias":
+            _clear_incidencia_association_state(incidencia_prefix)
         _clear_modal_flags()
         _clear_history_selection(contact_id, kind)
         st.rerun()
@@ -1038,6 +1343,8 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
             return
         if _submit_history_form(kind, contact, row):
             _clear_modal_flags()
+            if kind == "incidencias":
+                _clear_incidencia_association_state(incidencia_prefix)
             _clear_history_selection(contact_id, kind)
             st.rerun()
 
@@ -1777,6 +2084,10 @@ def _submit_history_form(
         else:
             values[header] = str(st.session_state.get(f"{prefix}_{header}", ""))
 
+    if kind == "incidencias":
+        for header in _INCIDENCIA_ASSOC_HEADERS:
+            values[header] = _resolve_incidencia_assoc_field(prefix, existing, header)
+
     error = _validate_history_values(kind, values, prefix=prefix)
     if error:
         st.error(error)
@@ -2135,6 +2446,8 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         selected_value = value
         if header in {"estado_cierre_sensor", "estado_cierre_campana"} and not (value or "").strip():
             selected_value = "abierto"
+        if kind == "incidencias" and header == "estado" and not (value or "").strip():
+            selected_value = "abierta"
         index = options.index(selected_value) if selected_value in options else 0
         return st.selectbox(label, options, index=index, key=key)
     if header == "red_otro":

@@ -177,6 +177,9 @@ def css_variables() -> str:
 
     radius_md = rounded("md")
     radius_lg = rounded("lg")
+    spacing_sm = spacing("sm")
+    spacing_md = spacing("md")
+    spacing_lg = spacing("lg")
 
     lines = [
         "        :root {",
@@ -229,6 +232,10 @@ def css_variables() -> str:
         "          /* Radii */",
         f"          --ui-radius-md: {radius_md};",
         f"          --ui-radius-lg: {radius_lg};",
+        "          /* Spacing */",
+        f"          --ui-spacing-sm: {spacing_sm};",
+        f"          --ui-spacing-md: {spacing_md};",
+        f"          --ui-spacing-lg: {spacing_lg};",
         "          /* Semantic status (base) */",
         f"          --ui-semantic-success: {color('semantic-success')};",
         f"          --ui-semantic-warning: {color('semantic-warning')};",

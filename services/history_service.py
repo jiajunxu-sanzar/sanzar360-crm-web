@@ -779,8 +779,9 @@ class HistoryService:
         return assignments
 
     def has_open_incidents(self, contact_id: str) -> bool:
+        from services.contact_sensor_overview import is_incidencia_abierta
+
         for row in self.rows_for_contact("incidencias", contact_id):
-            estado = row.get("estado", "").strip().lower()
-            if estado not in {"cerrada", "cerrado", "resuelta", "resuelto"}:
+            if is_incidencia_abierta(row):
                 return True
         return False

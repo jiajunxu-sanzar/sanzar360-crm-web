@@ -8,6 +8,7 @@ streamlit-folium
 geopy
 plotly
 reportlab
+openpyxl
 pillow
 jinja2
 pytest

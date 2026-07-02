@@ -28,6 +28,14 @@ def apply_theme() -> None:
         /* Typography rhythm */
         h1 { font-weight: 600 !important; letter-spacing: -0.02em; color: var(--ui-text) !important; }
         h2, h3 { font-weight: 600 !important; color: var(--ui-text) !important; }
+        h5 {
+          margin: 0 0 var(--ui-spacing-sm) 0;
+          color: var(--ui-text);
+          font-weight: 600 !important;
+        }
+        .sanzar-contacts-block-spacer {
+          margin-bottom: var(--ui-spacing-md);
+        }
 
         /* Streamlit buttons — cohesive primary / secondary */
         .stButton > button[kind="primary"],
@@ -603,6 +611,33 @@ def apply_theme() -> None:
           text-overflow: ellipsis;
           white-space: nowrap;
           font-size: 0.875rem;
+        }
+        .sanzar-overview-table .sanzar-overview-header,
+        .sanzar-overview-table .sanzar-overview-row {
+          grid-template-columns: 1.2fr 1.4fr 1fr 1.2fr 0.7fr;
+        }
+        .sanzar-overview-row--verde {
+          background: var(--ui-kpi-success-bg);
+        }
+        .sanzar-overview-row--amarillo {
+          background: var(--ui-kpi-warning-bg);
+        }
+        .sanzar-overview-row--neutral {
+          background: var(--ui-kpi-neutral-bg);
+        }
+        .sanzar-overview-table--expanded .sanzar-contact-cell {
+          white-space: normal;
+          overflow: visible;
+          text-overflow: unset;
+          word-break: break-word;
+          line-height: 1.35;
+        }
+        .sanzar-overview-table--expanded .sanzar-overview-row {
+          align-items: start;
+        }
+        .sanzar-overview-table--expanded .sanzar-overview-header,
+        .sanzar-overview-table--expanded .sanzar-overview-row {
+          grid-template-columns: 1.4fr 2fr 1.2fr 1.4fr 0.8fr;
         }
 
         /* Contact detail — operational header */

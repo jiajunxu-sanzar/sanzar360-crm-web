@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import pandas as pd
 import streamlit as st
 
 from app.telemetry import timed
 from config.settings import CONFIG
 from config.settings import ACCIONES_HEADERS
 from services.compras_service import ComprasService
+from services.contact_sensor_overview import build_contact_sensor_overview
 from services.history_service import HistoryService
 from services.inventory_service import InventoryService
 from services.sheets_service import SheetsService
@@ -86,6 +88,18 @@ def load_acciones_cached(version: int = 0):
 def load_activity_log_cached(version: int = 0):
     """Alias de ``load_acciones_cached``."""
     return load_acciones_cached(version)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_contact_sensor_overview_cached(version: int = 0) -> pd.DataFrame:
+    with timed("load_contact_sensor_overview_cached", version=version):
+        contacts = load_contacts_cached(version)
+        sensor_rows = load_history_rows_cached("sensores", version)
+        incidencia_rows = load_history_rows_cached("incidencias", version)
+        acciones_df = load_acciones_cached(version)
+        return build_contact_sensor_overview(
+            contacts, sensor_rows, incidencia_rows, acciones_df
+        )
 
 
 def clear_all_cache() -> None:
