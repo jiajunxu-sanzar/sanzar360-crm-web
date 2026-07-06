@@ -63,12 +63,21 @@ def render(_contacts_df: pd.DataFrame) -> None:
             )
         )
 
+    st.markdown("### Notas")
+    notes = st.text_area(
+        "Notas",
+        value="",
+        height=120,
+        placeholder="Opcional. Si lo dejas vacío no aparecerá en el PDF.",
+    )
+
     data = InvoiceData(
         invoice_number=invoice_number,
         customer_name=customer_name.strip(),
         customer_cif=customer_cif.strip(),
         issue_date=issue_date,
         items=items,
+        notes=notes.strip(),
     )
     pdf = generate_invoice_pdf(data)
     st.download_button(

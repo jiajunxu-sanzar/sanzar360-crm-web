@@ -15,10 +15,21 @@ BASE_EUR = 360.0
 # Layout (pts, PDF bottom-left coords; reserve space so table/summary/footer never overlap).
 _INVOICE_PAGE_BOTTOM_MARGIN = 55.0
 _INVOICE_TABLE_HEADER_H = 28.0
-_INVOICE_ITEM_ROW_H = 36.0
+_INVOICE_ITEM_ROW_MIN_H = 36.0
+_INVOICE_ITEM_LINE_H = 11.0
+_INVOICE_ITEM_CELL_PADDING = 8.0
+_INVOICE_ITEM_FONT = "Helvetica"
+_INVOICE_ITEM_FONT_SIZE = 9.0
+_INVOICE_ITEM_CELL_INSET = 4.0
 _INVOICE_GAP_TABLE_TO_SUMMARY = 24.0
 _INVOICE_SUMMARY_TOP_TO_FOOTER_TOP = 92.0  # clears TOTAL line + gap before "Condiciones:"
 _INVOICE_FOOTER_BELOW_TITLE = 290.0  # footer_top downward to lowest contact line
+_INVOICE_NOTES_TITLE_H = 16.0
+_INVOICE_NOTES_LINE_H = 12.0
+_INVOICE_NOTES_GAP_BEFORE_CONDICIONES = 24.0
+_INVOICE_NOTES_FONT = "Helvetica"
+_INVOICE_NOTES_FONT_SIZE = 10.0
+_INVOICE_NOTES_MAX_WIDTH = 510.0
 # Distance from page top (points) to table *bottom* edge on continuation pages; must clear
 # the "(continua)" banner (drawn at height-48 / height-66) so the table header does not overlap.
 _CONTINUATION_TOP_Y = 120.0
@@ -44,6 +55,7 @@ class InvoiceData:
     items: list[InvoiceItem] = field(default_factory=lambda: [InvoiceItem(description=DEFAULT_DESCRIPTION, quantity=1, unit_price_excl_vat=BASE_EUR)])
     vat_rate: float = VAT_RATE
     issue_date: date = date.today()
+    notes: str = ""
 
     @property
     def total(self) -> float:
@@ -52,9 +64,90 @@ class InvoiceData:
         return round(base + vat, 2)
 
 
-def _invoice_summary_and_footer_fit_on_page(summary_top: float) -> bool:
+def _wrap_text_to_width(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+    from reportlab.pdfbase import pdfmetrics
+
+    words = (text or "").strip().split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if pdfmetrics.stringWidth(candidate, font_name, font_size) <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _wrap_multiline_text(text: str, font_name: str, font_size: float, max_width: float) -> list[str]:
+    raw = (text or "").strip()
+    if not raw:
+        return [""]
+    lines: list[str] = []
+    for paragraph in raw.splitlines():
+        paragraph = paragraph.strip()
+        if not paragraph:
+            lines.append("")
+            continue
+        lines.extend(_wrap_text_to_width(paragraph, font_name, font_size, max_width))
+    return lines or [""]
+
+
+def _invoice_item_row_height(
+    reference: str,
+    description: str,
+    *,
+    ref_col_width: float,
+    desc_col_width: float,
+) -> float:
+    ref_lines = _wrap_multiline_text(
+        reference,
+        _INVOICE_ITEM_FONT,
+        _INVOICE_ITEM_FONT_SIZE,
+        ref_col_width - 2 * _INVOICE_ITEM_CELL_INSET,
+    )
+    desc_lines = _wrap_multiline_text(
+        description,
+        _INVOICE_ITEM_FONT,
+        _INVOICE_ITEM_FONT_SIZE,
+        desc_col_width - 2 * _INVOICE_ITEM_CELL_INSET,
+    )
+    line_count = max(len(ref_lines), len(desc_lines), 1)
+    content_h = line_count * _INVOICE_ITEM_LINE_H
+    return max(_INVOICE_ITEM_ROW_MIN_H, content_h + 2 * _INVOICE_ITEM_CELL_PADDING)
+
+
+def _notes_wrapped_lines(notes: str, max_width: float = _INVOICE_NOTES_MAX_WIDTH) -> list[str]:
+    return _wrap_multiline_text(
+        notes,
+        _INVOICE_NOTES_FONT,
+        _INVOICE_NOTES_FONT_SIZE,
+        max_width,
+    )
+
+
+def _notes_block_height(notes: str, max_width: float = _INVOICE_NOTES_MAX_WIDTH) -> float:
+    cleaned = (notes or "").strip()
+    if not cleaned:
+        return 0.0
+    line_count = len(_notes_wrapped_lines(cleaned, max_width)) or 1
+    return (
+        _INVOICE_NOTES_TITLE_H
+        + line_count * _INVOICE_NOTES_LINE_H
+        + _INVOICE_NOTES_GAP_BEFORE_CONDICIONES
+    )
+
+
+def _invoice_summary_and_footer_fit_on_page(summary_top: float, notes_extra: float = 0.0) -> bool:
     footer_top = summary_top - _INVOICE_SUMMARY_TOP_TO_FOOTER_TOP
-    lowest = footer_top - _INVOICE_FOOTER_BELOW_TITLE
+    condiciones_y = footer_top - notes_extra
+    lowest = condiciones_y - _INVOICE_FOOTER_BELOW_TITLE
     return lowest >= _INVOICE_PAGE_BOTTOM_MARGIN
 
 
@@ -78,7 +171,6 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
     right = width - 42.0
     width_table = 510.0
     row_h = _INVOICE_TABLE_HEADER_H
-    item_h = _INVOICE_ITEM_ROW_H
     col_ref = 95.0
     col_desc = 205.0
     col_qty = 60.0
@@ -158,7 +250,7 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
         return height - _CONTINUATION_TOP_Y
 
     def start_continuation_table() -> float:
-        """New page + minimal banner + column headings. Returns initial item_bottom y for next row."""
+        """New page + minimal banner + column headings. Returns y below header for next row."""
         pdf.showPage()
         pdf.setFillColor(black)
         pdf.setFont("Helvetica-Bold", 11)
@@ -167,22 +259,52 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
         pdf.drawRightString(right, height - 66, "(continua)")
         t_top = continuation_table_anchor()
         stroke_table_columns(t_top)
-        return t_top - item_h
+        return t_top
 
-    def draw_invoice_row_lines(item_bottom: float, item: InvoiceItem, line_amount: float) -> None:
+    def draw_invoice_row_lines(
+        item_bottom: float,
+        row_height: float,
+        item: InvoiceItem,
+        line_amount: float,
+    ) -> None:
         qty = max(1, int(item.quantity))
         up = max(0.0, float(item.unit_price_excl_vat))
-        pdf.setFont("Helvetica", 9)
-        pdf.rect(left, item_bottom, width_table, item_h, stroke=1, fill=0)
-        pdf.line(x_ref, item_bottom, x_ref, item_bottom + item_h)
-        pdf.line(x_desc, item_bottom, x_desc, item_bottom + item_h)
-        pdf.line(x_qty, item_bottom, x_qty, item_bottom + item_h)
-        pdf.line(x_unit, item_bottom, x_unit, item_bottom + item_h)
-        pdf.drawString(left + 4, item_bottom + 13, (item.reference or DEFAULT_REFERENCE).strip())
-        pdf.drawString(x_ref + 4, item_bottom + 13, (item.description or DEFAULT_DESCRIPTION).strip()[:45])
-        pdf.drawString(x_desc + 4, item_bottom + 13, str(qty))
-        pdf.drawRightString(x_unit - 4, item_bottom + 13, fmt_eur(up))
-        pdf.drawRightString(left + width_table - 4, item_bottom + 13, fmt_eur(line_amount))
+        reference = (item.reference or DEFAULT_REFERENCE).strip()
+        description = (item.description or DEFAULT_DESCRIPTION).strip()
+        ref_lines = _wrap_multiline_text(
+            reference,
+            _INVOICE_ITEM_FONT,
+            _INVOICE_ITEM_FONT_SIZE,
+            col_ref - 2 * _INVOICE_ITEM_CELL_INSET,
+        )
+        desc_lines = _wrap_multiline_text(
+            description,
+            _INVOICE_ITEM_FONT,
+            _INVOICE_ITEM_FONT_SIZE,
+            col_desc - 2 * _INVOICE_ITEM_CELL_INSET,
+        )
+        pdf.setFont(_INVOICE_ITEM_FONT, _INVOICE_ITEM_FONT_SIZE)
+        pdf.rect(left, item_bottom, width_table, row_height, stroke=1, fill=0)
+        pdf.line(x_ref, item_bottom, x_ref, item_bottom + row_height)
+        pdf.line(x_desc, item_bottom, x_desc, item_bottom + row_height)
+        pdf.line(x_qty, item_bottom, x_qty, item_bottom + row_height)
+        pdf.line(x_unit, item_bottom, x_unit, item_bottom + row_height)
+        first_line_y = item_bottom + row_height - _INVOICE_ITEM_CELL_PADDING - 9
+        for line_idx, line in enumerate(ref_lines):
+            pdf.drawString(
+                left + _INVOICE_ITEM_CELL_INSET,
+                first_line_y - line_idx * _INVOICE_ITEM_LINE_H,
+                line,
+            )
+        for line_idx, line in enumerate(desc_lines):
+            pdf.drawString(
+                x_ref + _INVOICE_ITEM_CELL_INSET,
+                first_line_y - line_idx * _INVOICE_ITEM_LINE_H,
+                line,
+            )
+        pdf.drawString(x_desc + _INVOICE_ITEM_CELL_INSET, first_line_y, str(qty))
+        pdf.drawRightString(x_unit - _INVOICE_ITEM_CELL_INSET, first_line_y, fmt_eur(up))
+        pdf.drawRightString(left + width_table - _INVOICE_ITEM_CELL_INSET, first_line_y, fmt_eur(line_amount))
 
     def draw_summary_block(summary_basis_top: float, base_amt: float, vat_amt: float, total_amt: float) -> None:
         pdf.setFont("Helvetica", 10)
@@ -190,6 +312,27 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
         pdf.drawRightString(right, summary_basis_top - 20, f"IVA ({int(data.vat_rate * 100)}%): {fmt_eur(vat_amt)}")
         pdf.setFont("Helvetica-Bold", 12)
         pdf.drawRightString(right, summary_basis_top - 44, f"TOTAL: {fmt_eur(total_amt)}")
+
+    def draw_notes_block(footer_anchor_y: float, notes: str) -> float:
+        """Draw optional notes above Condiciones; return y for the Condiciones: line."""
+        cleaned = (notes or "").strip()
+        if not cleaned:
+            return footer_anchor_y
+        note_lines = _notes_wrapped_lines(cleaned, width_table)
+        extra = (
+            _INVOICE_NOTES_TITLE_H
+            + len(note_lines) * _INVOICE_NOTES_LINE_H
+            + _INVOICE_NOTES_GAP_BEFORE_CONDICIONES
+        )
+        condiciones_y = footer_anchor_y - extra
+        notes_title_y = condiciones_y + extra - _INVOICE_NOTES_TITLE_H
+        pdf.setFont("Helvetica-Bold", _INVOICE_NOTES_FONT_SIZE)
+        pdf.drawString(left, notes_title_y, "Notas:")
+        pdf.setFont(_INVOICE_NOTES_FONT, _INVOICE_NOTES_FONT_SIZE)
+        body_top_y = notes_title_y - 14
+        for line_idx, line in enumerate(note_lines):
+            pdf.drawString(left, body_top_y - line_idx * _INVOICE_NOTES_LINE_H, line)
+        return condiciones_y
 
     def draw_footer_block(footer_y: float) -> None:
         right_x = 330.0
@@ -240,46 +383,51 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
     # Items table — first page
     table_top = float(y)
     stroke_table_columns(table_top)
-    item_top = table_top - item_h
+    row_cursor_y = table_top
 
     cleaned_items = data.items or [InvoiceItem(description=DEFAULT_DESCRIPTION, quantity=1, unit_price_excl_vat=BASE_EUR)]
+    notes_extra = _notes_block_height(data.notes)
 
     idx = 0
     base_amount = 0.0
     while idx < len(cleaned_items):
         item_row = cleaned_items[idx]
         is_last = idx == len(cleaned_items) - 1
-        row_bottom_after = item_top - item_h
+        row_height = _invoice_item_row_height(
+            (item_row.reference or DEFAULT_REFERENCE).strip(),
+            (item_row.description or DEFAULT_DESCRIPTION).strip(),
+            ref_col_width=col_ref,
+            desc_col_width=col_desc,
+        )
+        item_bottom = row_cursor_y - row_height
 
         need_break = False
-        if item_top < _INVOICE_PAGE_BOTTOM_MARGIN:
+        if item_bottom < _INVOICE_PAGE_BOTTOM_MARGIN:
             need_break = True
         elif is_last:
-            cand_summary = row_bottom_after - _INVOICE_GAP_TABLE_TO_SUMMARY
-            if not _invoice_summary_and_footer_fit_on_page(cand_summary):
+            cand_summary = item_bottom - _INVOICE_GAP_TABLE_TO_SUMMARY
+            if not _invoice_summary_and_footer_fit_on_page(cand_summary, notes_extra):
                 need_break = True
-        elif row_bottom_after < _INVOICE_PAGE_BOTTOM_MARGIN:
-            need_break = True
 
         if need_break:
-            item_top = start_continuation_table()
+            row_cursor_y = start_continuation_table()
             continue
 
         qty = max(1, int(item_row.quantity))
         unit_price = max(0.0, float(item_row.unit_price_excl_vat))
         line_amount = round(qty * unit_price, 2)
         base_amount += line_amount
-        draw_invoice_row_lines(item_top, item_row, line_amount)
+        draw_invoice_row_lines(item_bottom, row_height, item_row, line_amount)
 
         idx += 1
-        item_top -= item_h
+        row_cursor_y = item_bottom
 
     base_amount = round(base_amount, 2)
     vat_amount = round(base_amount * data.vat_rate, 2)
     total_amount = round(base_amount + vat_amount, 2)
 
-    summary_top = item_top - _INVOICE_GAP_TABLE_TO_SUMMARY
-    if not _invoice_summary_and_footer_fit_on_page(summary_top):
+    summary_top = row_cursor_y - _INVOICE_GAP_TABLE_TO_SUMMARY
+    if not _invoice_summary_and_footer_fit_on_page(summary_top, notes_extra):
         pdf.showPage()
         pdf.setFillColor(black)
         pdf.setFont("Helvetica-Bold", 18)
@@ -291,7 +439,8 @@ def generate_invoice_pdf(data: InvoiceData) -> bytes:
 
     draw_summary_block(summary_top, base_amount, vat_amount, total_amount)
     footer_top = summary_top - _INVOICE_SUMMARY_TOP_TO_FOOTER_TOP
-    draw_footer_block(footer_top)
+    condiciones_y = draw_notes_block(footer_top, data.notes)
+    draw_footer_block(condiciones_y)
 
     pdf.save()
     return buffer.getvalue()
