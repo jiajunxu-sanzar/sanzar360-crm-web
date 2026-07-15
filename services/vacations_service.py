@@ -224,18 +224,18 @@ class VacationsService:
         out = holidays.copy()
         out["fecha"] = out["fecha"].astype(str).str.strip()
         out["anio"] = out["anio"].astype(str).str.strip()
-        out_others = out[out["anio"] != "2026"].copy()
+        out["nombre_festivo"] = out["nombre_festivo"].astype(str).str.strip()
 
-        # Keep only the configured 2026 holiday dates (replace stale ones),
-        # then append any missing defaults.
-        allowed_dates = set(defaults_2026["fecha"].astype(str).tolist())
-        out_2026 = out[out["anio"] == "2026"].copy()
-        out_2026 = out_2026[out_2026["fecha"].isin(allowed_dates)]
-        existing_dates = set(out_2026["fecha"].astype(str).tolist())
-        missing = defaults_2026[~defaults_2026["fecha"].isin(existing_dates)]
-        if missing.empty and len(out_2026) == len(defaults_2026):
+        existing_2026_names = set(
+            out.loc[out["anio"] == "2026", "nombre_festivo"].astype(str).str.strip().tolist()
+        )
+        missing = defaults_2026[
+            ~defaults_2026["nombre_festivo"].astype(str).str.strip().isin(existing_2026_names)
+        ]
+        if missing.empty:
             return None
-        merged = pd.concat([out_others, out_2026, missing], ignore_index=True)
+
+        merged = pd.concat([out, missing], ignore_index=True)
         return merged[HOLIDAY_HEADERS].fillna("").astype(str)
 
 
@@ -375,7 +375,7 @@ def _default_leganes_holidays() -> list[dict[str, str]]:
         {"fecha": "2026-04-03", "nombre_festivo": "Viernes Santo", "ambito": "nacional", "municipio": "Leganes", "anio": "2026"},
         {"fecha": "2026-05-01", "nombre_festivo": "Dia del Trabajo", "ambito": "nacional", "municipio": "Leganes", "anio": "2026"},
         {"fecha": "2026-05-02", "nombre_festivo": "Comunidad de Madrid", "ambito": "comunidad", "municipio": "Leganes", "anio": "2026"},
-        {"fecha": "2026-08-05", "nombre_festivo": "Virgen de Butarque", "ambito": "local", "municipio": "Leganes", "anio": "2026"},
+        {"fecha": "2026-08-14", "nombre_festivo": "Virgen de Butarque", "ambito": "local", "municipio": "Leganes", "anio": "2026"},
         {"fecha": "2026-08-15", "nombre_festivo": "Asuncion", "ambito": "nacional", "municipio": "Leganes", "anio": "2026"},
         {"fecha": "2026-10-12", "nombre_festivo": "Fiesta Nacional", "ambito": "nacional", "municipio": "Leganes", "anio": "2026"},
         {"fecha": "2026-11-02", "nombre_festivo": "Dia siguiente a Todos los Santos", "ambito": "nacional", "municipio": "Leganes", "anio": "2026"},
