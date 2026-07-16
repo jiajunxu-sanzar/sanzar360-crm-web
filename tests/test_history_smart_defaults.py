@@ -1,0 +1,53 @@
+"""Tests de los valores por defecto inteligentes en históricos (Fase 3)."""
+
+from __future__ import annotations
+
+from datetime import date
+
+import pages.contacts as contacts
+
+
+def _today() -> str:
+    return date.today().strftime("%d/%m/%Y")
+
+
+def test_new_sensor_history_defaults_fecha_inicio_to_today() -> None:
+    initial = {"fecha_inicio": "", "fecha_fin": ""}
+    out = contacts._apply_smart_defaults("sensores", dict(initial), is_new=True)
+    assert out["fecha_inicio"] == _today()
+    assert out["fecha_fin"] == ""
+
+
+def test_existing_rows_are_never_touched() -> None:
+    initial = {"fecha_inicio": "", "fecha_fin": ""}
+    out = contacts._apply_smart_defaults("sensores", dict(initial), is_new=False)
+    assert out["fecha_inicio"] == ""
+
+
+def test_defaults_do_not_overwrite_user_values() -> None:
+    initial = {"fecha_inicio": "01/01/2024"}
+    out = contacts._apply_smart_defaults("sensores", dict(initial), is_new=True)
+    assert out["fecha_inicio"] == "01/01/2024"
+
+
+def test_incidencia_and_suscripcion_and_campana_defaults() -> None:
+    assert contacts._history_smart_defaults("incidencias")["fecha_apertura"] == _today()
+    assert contacts._history_smart_defaults("suscripciones")["fecha_pago"] == _today()
+    assert contacts._history_smart_defaults("campanas")["fecha_campana_inicio"] == _today()
+
+
+def test_seguimiento_defaults_use_logged_user_when_valid(monkeypatch) -> None:
+    persona_valida = list(contacts.PERSONA_COMERCIAL_OPCIONES)[0]
+    monkeypatch.setattr(contacts, "_actor_name", lambda: persona_valida)
+    defaults = contacts._history_smart_defaults("seguimiento_comercial")
+    assert defaults["fecha_contacto"] == _today()
+    assert defaults["persona_contacto"] == persona_valida
+    assert defaults["proxima_accion_persona"] == persona_valida
+    assert len(defaults["hora_contacto"].split(":")) == 2
+
+
+def test_seguimiento_defaults_blank_persona_when_unknown_user(monkeypatch) -> None:
+    monkeypatch.setattr(contacts, "_actor_name", lambda: "No Existe")
+    defaults = contacts._history_smart_defaults("seguimiento_comercial")
+    assert defaults["persona_contacto"] == ""
+    assert defaults["proxima_accion_persona"] == ""

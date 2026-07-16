@@ -425,10 +425,12 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
             st.session_state["_contacts_last_selected_id"] = current_selected
 
         render_page_header("Contactos")
+        # Toast en vez de banner: no desplaza el contenido de la página al
+        # confirmar un guardado/borrado, así la vista no "salta".
         if st.session_state.get(CONTACTS_SAVE_SUCCESS_KEY):
-            st.success(str(st.session_state.pop(CONTACTS_SAVE_SUCCESS_KEY)))
+            st.toast(str(st.session_state.pop(CONTACTS_SAVE_SUCCESS_KEY)), icon="✅")
         if st.session_state.get(CONTACTS_DELETE_SUCCESS_KEY):
-            st.success(str(st.session_state.pop(CONTACTS_DELETE_SUCCESS_KEY)))
+            st.toast(str(st.session_state.pop(CONTACTS_DELETE_SUCCESS_KEY)), icon="🗑️")
         if df.empty:
             st.warning("No hay contactos cargados. Puedes crear el primero desde el formulario inferior.")
 
@@ -454,8 +456,6 @@ def _render_contact_list(df: pd.DataFrame) -> str:
     with st.container(border=True):
         _render_next_action_strip(df)
     _contacts_block_spacer()
-    if "contact_search_open" not in st.session_state:
-        st.session_state.contact_search_open = False
     if "contact_filters_open" not in st.session_state:
         st.session_state.contact_filters_open = False
     if CONTACTS_SHOW_LOST_KEY not in st.session_state:
@@ -464,29 +464,29 @@ def _render_contact_list(df: pd.DataFrame) -> str:
 
     with st.container(border=True):
         st.markdown("##### Buscar")
-        st.toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
-        st.toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
         overview = load_contact_sensor_overview_cached(st.session_state.get("history_cache_version", 0))
-        top_row = st.columns([0.16, 0.84], gap="small")
-        if top_row[0].button("🔍", key="contact_toggle_search", width="stretch"):
-            st.session_state.contact_search_open = not st.session_state.contact_search_open
-            if not st.session_state.contact_search_open:
-                st.session_state.contact_filter_text = ""
-                st.session_state.contact_filters_open = False
+        # Búsqueda SIEMPRE visible: escribir y listo, sin abrirla antes.
+        search_row = st.columns([0.84, 0.16], gap="small")
+        query = search_row[0].text_input(
+            "Buscar",
+            key="contact_filter_text",
+            label_visibility="collapsed",
+            placeholder="Nombre, municipio, correo, teléfono, cultivo…",
+            icon=":material/search:",
+        )
+        if search_row[1].button(
+            "Filtros",
+            key="contact_toggle_filters",
+            icon=":material/tune:",
+            width="stretch",
+            help="Filtros por estado, provincia, municipio, tipo o cultivo",
+            type="primary" if st.session_state.contact_filters_open else "secondary",
+        ):
+            st.session_state.contact_filters_open = not st.session_state.contact_filters_open
             st.rerun()
-
-        query = ""
-        if st.session_state.contact_search_open:
-            search_row = top_row[1].columns([0.86, 0.14], gap="small")
-            query = search_row[0].text_input(
-                "Buscar",
-                key="contact_filter_text",
-                label_visibility="collapsed",
-                placeholder="Nombre, municipio, provincia, correo, teléfono, cultivo o contact_id",
-            )
-            if search_row[1].button("⏬", key="contact_toggle_filters", width="stretch", help="Filtros"):
-                st.session_state.contact_filters_open = not st.session_state.contact_filters_open
-                st.rerun()
+        toggles_row = st.columns(2, gap="small")
+        toggles_row[0].toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
+        toggles_row[1].toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
 
         province = ""
         status = ""
@@ -885,6 +885,7 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
             _render_form_sections(values, contact, sections_left, section_key="left")
         with col_right:
             _render_form_sections(values, contact, sections_right, section_key="right")
+        st.caption("Los cambios no se aplican hasta pulsar **Guardar ficha**.")
         col_save, col_del = st.columns(2, gap="small")
         submitted_save = col_save.form_submit_button(
             "Guardar ficha",
@@ -1900,7 +1901,45 @@ def _seguimiento_modal_initial(kind: str, contact: dict[str, str], row: dict[str
         initial = {header: str(row.get(header, "") or "") for header in spec.headers}
     initial["contact_id"] = str(contact.get("contact_id", "") or "")
     initial["nombre_cliente"] = str(contact.get("nombre", contact.get("nombre_cliente", "")) or "")
+    initial = _apply_smart_defaults(kind, initial, is_new=row is None)
     return prefix, initial
+
+
+def _history_smart_defaults(kind: str) -> dict[str, str]:
+    """Valores por defecto para un histórico NUEVO (menos clics por registro).
+
+    Fecha del día, hora actual y persona = usuario logado (si figura entre las
+    opciones comerciales). Solo se aplican sobre campos vacíos de registros
+    nuevos; nunca sobre filas existentes.
+    """
+    today = date.today().strftime("%d/%m/%Y")
+    if kind == "seguimiento_comercial":
+        actor = _actor_name().strip()
+        persona = actor if actor in PERSONA_COMERCIAL_OPCIONES else ""
+        return {
+            "fecha_contacto": today,
+            "hora_contacto": datetime.now().strftime("%H:%M"),
+            "persona_contacto": persona,
+            "proxima_accion_persona": persona,
+        }
+    if kind == "sensores":
+        return {"fecha_inicio": today}
+    if kind == "campanas":
+        return {"fecha_campana_inicio": today}
+    if kind == "suscripciones":
+        return {"fecha_pago": today}
+    if kind == "incidencias":
+        return {"fecha_apertura": today}
+    return {}
+
+
+def _apply_smart_defaults(kind: str, initial: dict[str, str], *, is_new: bool) -> dict[str, str]:
+    if not is_new:
+        return initial
+    for header, default in _history_smart_defaults(kind).items():
+        if not str(initial.get(header, "") or "").strip():
+            initial[header] = default
+    return initial
 
 
 def _render_seguimiento_comercial_fields(
@@ -1940,6 +1979,7 @@ def _render_history_form_body(
     initial = {header: (existing or {}).get(header, "") for header in spec.headers}
     initial["contact_id"] = initial.get("contact_id") or base.get("contact_id", "")
     initial["nombre_cliente"] = initial.get("nombre_cliente") or base.get("nombre", base.get("nombre_cliente", ""))
+    initial = _apply_smart_defaults(kind, initial, is_new=existing is None)
     st.markdown("**Identificación**")
     id_cols = st.columns(3)
     with id_cols[0]:
@@ -1979,6 +2019,7 @@ def _render_history_form_grouped_body(
     initial = {header: (existing or {}).get(header, "") for header in spec.headers}
     initial["contact_id"] = initial.get("contact_id") or base.get("contact_id", "")
     initial["nombre_cliente"] = initial.get("nombre_cliente") or base.get("nombre", base.get("nombre_cliente", ""))
+    initial = _apply_smart_defaults(kind, initial, is_new=existing is None)
 
     st.markdown("**Identificación**")
     with st.container(border=True):
@@ -2175,7 +2216,8 @@ def _submit_history_form(
                     previous_sensor_serial_number=previous_sensor_serial_number,
                 )
         bump_history_cache()
-        st.success("Histórico guardado correctamente.")
+        # Toast: sobrevive al rerun que cierra el diálogo (st.success no se ve).
+        st.toast("Histórico guardado correctamente.", icon="✅")
         return True
     except Exception as exc:
         st.error(f"No se pudo guardar el histórico: {exc}")
@@ -2513,6 +2555,8 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
             return st.text_area(label, value=value, key=key, height=120)
         if header == "origen_registro":
             return st.text_input(label, value=value or "manual", key=key, disabled=True)
+    if header in {col for _, col in DATE_COLUMNS_BY_KIND.get(kind, [])}:
+        return st.text_input(label, value=value, key=key, placeholder="DD/MM/AAAA")
     return st.text_input(label, value=value, key=key)
 
 
