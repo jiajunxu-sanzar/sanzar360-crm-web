@@ -643,7 +643,41 @@ def _inventory_model_options(inv_df: pd.DataFrame) -> list[str]:
     return models
 
 
-def _render_inventory_cards_section(filtered: pd.DataFrame) -> None:
+def _serials_by_inventory_id(inv_df: pd.DataFrame) -> dict[str, str]:
+    """Mapa inventory_id -> serial para mostrar seriales legibles en las cards."""
+    if inv_df.empty or "inventory_id" not in inv_df.columns:
+        return {}
+    out: dict[str, str] = {}
+    for inv_id, serial in zip(
+        inv_df["inventory_id"].fillna("").astype(str),
+        inv_df.get("serial_number", pd.Series(dtype=str)).fillna("").astype(str),
+    ):
+        key = inv_id.strip()
+        if key and serial.strip():
+            out[key] = serial.strip()
+    return out
+
+
+def _contact_names_by_id(contacts_df: pd.DataFrame) -> dict[str, str]:
+    """Mapa contact_id -> nombre para mostrar el cliente en la ubicación."""
+    if contacts_df is None or contacts_df.empty or "contact_id" not in contacts_df.columns:
+        return {}
+    out: dict[str, str] = {}
+    for cid, nombre in zip(
+        contacts_df["contact_id"].fillna("").astype(str),
+        contacts_df.get("nombre", pd.Series(dtype=str)).fillna("").astype(str),
+    ):
+        if cid.strip() and nombre.strip():
+            out[cid.strip()] = nombre.strip()
+    return out
+
+
+def _render_inventory_cards_section(
+    filtered: pd.DataFrame,
+    *,
+    serial_by_id: dict[str, str] | None = None,
+    contact_name_by_id: dict[str, str] | None = None,
+) -> None:
     total = len(filtered)
     if total == 0:
         st.info("No hay inventario que cumpla el filtro actual.")
@@ -672,7 +706,14 @@ def _render_inventory_cards_section(filtered: pd.DataFrame) -> None:
         inv_id = str(row.get("inventory_id", "") or "").strip()
         card_col, btn_col = st.columns([0.88, 0.12], gap="small")
         with card_col:
-            st.markdown(build_inventory_card_html(row), unsafe_allow_html=True)
+            st.markdown(
+                build_inventory_card_html(
+                    row,
+                    serial_by_id=serial_by_id,
+                    contact_name_by_id=contact_name_by_id,
+                ),
+                unsafe_allow_html=True,
+            )
         with btn_col:
             st.markdown('<div class="sanzar-inv-card-edit-spacer"></div>', unsafe_allow_html=True)
             if st.button("Editar", key=f"inventory_card_edit_{inv_id}", width="stretch"):
@@ -681,7 +722,7 @@ def _render_inventory_cards_section(filtered: pd.DataFrame) -> None:
                 st.rerun()
 
 
-def render(_: pd.DataFrame) -> None:
+def render(contacts_df: pd.DataFrame) -> None:
     render_page_header("Inventario")
     if INVENTORY_VIEW_MODE_KEY not in st.session_state:
         st.session_state[INVENTORY_VIEW_MODE_KEY] = "list"
@@ -752,7 +793,11 @@ def render(_: pd.DataFrame) -> None:
         st.info(str(st.session_state.pop(INVENTORY_SELECTION_MESSAGE_KEY)))
     if st.session_state.get(INVENTORY_SUCCESS_MESSAGE_KEY):
         st.success(str(st.session_state.pop(INVENTORY_SUCCESS_MESSAGE_KEY)))
-    _render_inventory_cards_section(filtered)
+    _render_inventory_cards_section(
+        filtered,
+        serial_by_id=_serials_by_inventory_id(inv_df),
+        contact_name_by_id=_contact_names_by_id(contacts_df),
+    )
 
     if st.session_state.pop(INVENTORY_NEW_DIALOG_OPEN_KEY, False):
         _inventory_new_dialog()

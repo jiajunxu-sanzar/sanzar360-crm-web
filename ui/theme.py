@@ -561,9 +561,87 @@ def apply_theme() -> None:
         .sanzar-inv-conflict-card {
           border: 1px solid var(--ui-border);
           border-radius: 12px;
-          padding: 12px 14px;
+          padding: 14px 16px;
           background: var(--ui-bg-elevated);
           margin-bottom: 10px;
+          transition: border-color 120ms ease, box-shadow 120ms ease;
+        }
+        .sanzar-inv-card:hover {
+          border-color: var(--ui-border-strong);
+          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+        }
+        .sanzar-inv-chip {
+          display: inline-block;
+          padding: 2px 9px;
+          border-radius: 999px;
+          font-size: 0.6875rem;
+          font-weight: 650;
+          letter-spacing: 0.05em;
+          border: 1px solid transparent;
+        }
+        .sanzar-inv-chip--em500     { background: #eaf4ee; color: #1e4d38; border-color: #cde5d7; }
+        .sanzar-inv-chip--uc501     { background: #eff6ff; color: #1e40af; border-color: #d4e4fb; }
+        .sanzar-inv-chip--ug67      { background: #f5f3ff; color: #5b21b6; border-color: #e4defc; }
+        .sanzar-inv-chip--sim       { background: #fffbeb; color: #92400e; border-color: #fdeec2; }
+        .sanzar-inv-chip--solenoide { background: #ecfeff; color: #155e75; border-color: #cbf3fa; }
+        .sanzar-inv-chip--probe     { background: #f0fdfa; color: #115e59; border-color: #ccf1e9; }
+        .sanzar-inv-chip--default   { background: #f4f4f5; color: #52525b; border-color: #e4e4e7; }
+        .sanzar-inv-card-pills {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin: 2px 0 10px;
+        }
+        .sanzar-inv-pill {
+          display: inline-block;
+          padding: 2px 9px;
+          border-radius: 999px;
+          font-size: 0.75rem;
+          font-weight: 550;
+          background: #fafafa;
+          border: 1px solid var(--ui-border);
+          color: var(--ui-text-body);
+        }
+        .sanzar-inv-pill--loc {
+          background: var(--sanzar-green-soft);
+          border-color: color-mix(in srgb, var(--ui-accent) 25%, #ffffff);
+          color: var(--ui-accent-hover);
+        }
+        .sanzar-inv-pill--ok {
+          background: var(--ui-kpi-success-bg);
+          border-color: var(--ui-kpi-success-border);
+          color: #166534;
+        }
+        .sanzar-inv-card-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+          gap: 4px 20px;
+        }
+        .sanzar-inv-kv {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+          min-width: 0;
+          font-size: 0.8125rem;
+        }
+        .sanzar-inv-kv-label {
+          flex-shrink: 0;
+          font-size: 0.6875rem;
+          font-weight: 650;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-inv-kv-value {
+          color: var(--ui-text);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .sanzar-inv-kv-value--mono {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+          font-size: 0.78rem;
+          letter-spacing: 0.01em;
         }
         .sanzar-inv-card-head {
           display: flex;

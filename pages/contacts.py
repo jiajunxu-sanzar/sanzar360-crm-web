@@ -245,7 +245,7 @@ def _render_contact_list(df: pd.DataFrame) -> str:
             icon=":material/search:",
         )
         if search_row[1].button(
-            "Filtros",
+            "",
             key="contact_toggle_filters",
             icon=":material/tune:",
             width="stretch",
