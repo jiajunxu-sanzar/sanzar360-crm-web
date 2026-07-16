@@ -257,12 +257,18 @@ def _selection_fingerprint_key(contact_id: str, kind: str) -> str:
     return f"hist_table_fp_{contact_id}_{kind}"
 
 
+@st.fragment
 def render_history_section(
     kind: HistoryKind,
     rows: list[dict[str, str]],
     contact_id: str,
 ) -> None:
-    """Cabecera (nuevo + buscar), tabla seleccionable y detalle de la fila marcada."""
+    """Cabecera (nuevo + buscar), tabla seleccionable y detalle de la fila marcada.
+
+    Fragment: teclear en el buscador o marcar una fila re-ejecuta solo esta
+    sección, no las cinco. «Nuevo/Editar» abre un diálogo con st.rerun() de app
+    completa para que el modal se pinte a nivel de página.
+    """
     cid = str(contact_id or "").strip()
     spec = HISTORY_SPECS[kind]
     if kind == "seguimiento_comercial":

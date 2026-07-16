@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pandas as pd
 import streamlit as st
 
@@ -8,6 +10,7 @@ from config.settings import CONFIG
 from config.settings import ACCIONES_HEADERS
 from services.compras_service import ComprasService
 from services.contact_sensor_overview import build_contact_sensor_overview
+from services.contacts_export import build_overview_pdf_bytes, build_overview_xlsx_bytes
 from services.history_service import HistoryService
 from services.inventory_service import InventoryService
 from services.sheets_service import SheetsService
@@ -100,6 +103,35 @@ def load_contact_sensor_overview_cached(version: int = 0) -> pd.DataFrame:
         return build_contact_sensor_overview(
             contacts, sensor_rows, incidencia_rows, acciones_df
         )
+
+
+def _overview_fingerprint(overview_df: pd.DataFrame) -> str:
+    """Hash estable del contenido del resumen para cachear exports."""
+    if overview_df is None or overview_df.empty:
+        return "empty"
+    return hashlib.md5(
+        pd.util.hash_pandas_object(overview_df, index=True).values.tobytes()
+    ).hexdigest()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _overview_xlsx_bytes_cached(fingerprint: str, _overview_df: pd.DataFrame):
+    # ``exported_at`` fijado en el momento de generar; el fingerprint (no la hora)
+    # decide el acierto de cache, así que el archivo no se regenera en cada rerun.
+    return build_overview_xlsx_bytes(_overview_df)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _overview_pdf_bytes_cached(fingerprint: str, _overview_df: pd.DataFrame):
+    return build_overview_pdf_bytes(_overview_df)
+
+
+def overview_xlsx_bytes_cached(overview_df: pd.DataFrame):
+    return _overview_xlsx_bytes_cached(_overview_fingerprint(overview_df), overview_df)
+
+
+def overview_pdf_bytes_cached(overview_df: pd.DataFrame):
+    return _overview_pdf_bytes_cached(_overview_fingerprint(overview_df), overview_df)
 
 
 def clear_all_cache() -> None:

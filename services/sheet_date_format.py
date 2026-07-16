@@ -81,6 +81,33 @@ def validate_contact_date_fields(values: dict[str, str]) -> str | None:
     return f"Revisa el formato de fecha en: {', '.join(bad_labels)}.\n\n{DD_MM_YYYY_HINT}"
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+# Teléfono: dígitos, espacios, +, -, (), entre 6 y 20 caracteres.
+_PHONE_RE = re.compile(r"^[+()\-\d\s]{6,20}$")
+
+
+def contact_soft_warnings(values: dict[str, str]) -> list[str]:
+    """Avisos no bloqueantes de la ficha (correo/teléfono con formato dudoso).
+
+    Solo advierte; permite guardar. Cada correo/teléfono puede venir en un
+    campo con varios valores separados por comas.
+    """
+    warnings: list[str] = []
+    correo = str(values.get("correo", "") or "").strip()
+    if correo:
+        emails = [e.strip() for e in re.split(r"[,;]", correo) if e.strip()]
+        invalid = [e for e in emails if not _EMAIL_RE.match(e)]
+        if invalid:
+            warnings.append(f"Correo con formato dudoso: {', '.join(invalid)}")
+    telefono = str(values.get("telefono", "") or "").strip()
+    if telefono:
+        phones = [t.strip() for t in re.split(r"[,;/]", telefono) if t.strip()]
+        invalid = [t for t in phones if not _PHONE_RE.match(t)]
+        if invalid:
+            warnings.append(f"Teléfono con caracteres poco habituales: {', '.join(invalid)}")
+    return warnings
+
+
 def validate_dd_mm_yyyy_fields(labels_and_values: list[tuple[str, str]]) -> str | None:
     bad_labels = [
         label

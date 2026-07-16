@@ -1,10 +1,25 @@
 from services.sheet_date_format import (
+    contact_soft_warnings,
     is_valid_dd_mm_yyyy,
     is_valid_sensor_serial_number,
     normalize_dd_mm_yyyy,
     normalize_sensor_serial_number,
     parse_sheet_date,
 )
+
+
+def test_contact_soft_warnings_flags_bad_email_and_phone() -> None:
+    warnings = contact_soft_warnings({"correo": "d", "telefono": "abc123"})
+    assert any("Correo" in w for w in warnings)
+    assert any("Teléfono" in w for w in warnings)
+
+
+def test_contact_soft_warnings_accepts_valid_and_multivalue() -> None:
+    assert contact_soft_warnings({"correo": "a@b.com", "telefono": "+34 626 784 074"}) == []
+    assert contact_soft_warnings({}) == []
+    # Un valor válido y otro inválido en el mismo campo: solo avisa del malo.
+    warnings = contact_soft_warnings({"correo": "a@b.com, mal"})
+    assert warnings == ["Correo con formato dudoso: mal"]
 
 
 def test_validates_dd_mm_yyyy_dates() -> None:

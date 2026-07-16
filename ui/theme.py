@@ -14,10 +14,18 @@ def apply_theme() -> None:
         + css_variables()
         + """
         body, .stApp { font-family: var(--ui-font) !important; }
+        /* Ocultar la barra superior de Streamlit (Deploy + menú) para un
+           aspecto de producto. Se conserva el gancho de status por si acaso. */
+        [data-testid="stToolbar"] { display: none !important; }
+        [data-testid="stDecoration"] { display: none !important; }
+        header[data-testid="stHeader"] {
+          background: transparent !important;
+          height: 0 !important;
+          min-height: 0 !important;
+        }
         /* Page */
         .block-container {
-          /* 4rem: evita que la cabecera fija de Streamlit tape el título. */
-          padding-top: 4rem;
+          padding-top: 2rem;
           padding-bottom: 2rem;
           max-width: 1480px;
         }

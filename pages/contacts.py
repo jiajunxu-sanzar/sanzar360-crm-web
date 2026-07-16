@@ -13,6 +13,8 @@ from app.cache import (
     load_acciones_cached,
     load_contact_sensor_overview_cached,
     load_users_cached,
+    overview_pdf_bytes_cached,
+    overview_xlsx_bytes_cached,
     sheets_service,
 )
 from app.state import (
@@ -44,7 +46,6 @@ from services.contact_sensor_overview import (
     semaforo_display_prefix,
 )
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
-from services.contacts_export import build_overview_pdf_bytes, build_overview_xlsx_bytes
 from services.proxima_accion_stats import (
     apply_dash_bucket_date_filter,
     filter_by_contact_estado,
@@ -53,7 +54,7 @@ from services.proxima_accion_stats import (
     next_action_bucket_counts,
 )
 from services.users_service import crm_user_names
-from services.sheet_date_format import validate_contact_date_fields
+from services.sheet_date_format import contact_soft_warnings, validate_contact_date_fields
 from ui.palette import STATUS_NEUTRAL, STATUS_SUCCESS, STATUS_WARNING
 from ui.components.customer_timeline import render_contact_timeline_block
 from ui.components.contact_detail_header import render_contact_detail_header
@@ -230,7 +231,10 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
             _render_contact_list(df)
         return df
 
+@st.fragment
 def _render_contact_list(df: pd.DataFrame) -> None:
+    # Fragment: teclear en la búsqueda o cambiar filtros re-ejecuta solo el
+    # listado; seleccionar una fila hace st.rerun() de app para abrir la ficha.
     _restore_filter_state()
     if st.session_state.get(CONTACTS_VIEW_MODE_KEY) not in (CONTACTS_VIEW_FICHA, CONTACTS_VIEW_TABLA):
         st.session_state[CONTACTS_VIEW_MODE_KEY] = CONTACTS_VIEW_FICHA
@@ -492,8 +496,8 @@ def _render_overview_table() -> None:
         st.info("No hay contactos en el resumen.")
         return
 
-    xlsx_bytes, xlsx_name = build_overview_xlsx_bytes(overview_df)
-    pdf_bytes, pdf_name = build_overview_pdf_bytes(overview_df)
+    xlsx_bytes, xlsx_name = overview_xlsx_bytes_cached(overview_df)
+    pdf_bytes, pdf_name = overview_pdf_bytes_cached(overview_df)
     export_cols = st.columns([0.2, 0.2, 0.6], gap="small")
     export_cols[0].download_button(
         "Exportar Excel",
@@ -766,6 +770,10 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
         if error:
             st.error(error)
             return None
+        # Avisos no bloqueantes (correo/teléfono): se muestran como toast pero
+        # NO impiden guardar; puede haber datos a medias a propósito.
+        for warning in contact_soft_warnings(values):
+            st.toast(warning, icon="⚠️")
         with st.spinner("Guardando ficha…"):
             cache_before = int(st.session_state.get("contacts_cache_version", 0))
             selected_before = str(st.session_state.get("selected_contact_id", "") or "")

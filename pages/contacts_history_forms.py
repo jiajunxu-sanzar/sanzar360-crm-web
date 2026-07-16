@@ -48,6 +48,9 @@ from pages.contacts_common import (
     _sensor_close_pending_values_key,
     _is_sensor_history_open,
     _apply_smart_defaults,
+    _on_dismiss_history_add,
+    _on_dismiss_history_edit,
+    _on_dismiss_sensor_close_location,
 )
 from pages.contacts_inventory_sync import (
     _extract_uc501_bundle,
@@ -304,9 +307,10 @@ def _render_incidencia_association_block(prefix: str, contact_id: str, initial: 
                 "o deja vacío para quitar la vinculación al guardar."
             )
 
+@st.dialog("Nuevo histórico", width="large", on_dismiss=_on_dismiss_history_add)
 def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
     spec = HISTORY_SPECS[kind]
-    st.markdown(f"### {spec.title}")
+    st.markdown(f"**{spec.title}** · {contact.get('nombre', '') or 'contacto'}")
     st.caption("Completa los campos y confirma para crear el nuevo registro.")
 
     # For sensores, render the sensor picker OUTSIDE the form — the dialog
@@ -363,11 +367,12 @@ def _delete_history_row_and_sync_inventory(kind: str, row: dict[str, str]) -> No
     if kind == "sensores":
         _reconcile_inventory_locations_for_sensor_serials(affected_serials, default_location_type="por_definir")
 
+@st.dialog("Editar histórico", width="large", on_dismiss=_on_dismiss_history_edit)
 def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]) -> None:
     spec = HISTORY_SPECS[kind]
     contact_id = contact.get("contact_id", "")
     row_id = str(row.get(spec.id_column, "") or "")
-    st.markdown(f"### {spec.title}")
+    st.markdown(f"**{spec.title}** · {contact.get('nombre', '') or 'contacto'}")
     st.caption("Edita la fila seleccionada. Puedes guardar, cancelar o borrar.")
 
     delete_confirm_key = _history_delete_confirm_key(kind, row_id)
@@ -472,12 +477,12 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
             _clear_history_selection(contact_id, kind)
             st.rerun()
 
+@st.dialog("Cierre de histórico sensor", on_dismiss=_on_dismiss_sensor_close_location)
 def _sensor_close_location_dialog(kind: str, contact: dict[str, str], row: dict[str, str]) -> None:
     spec = HISTORY_SPECS[kind]
     row_id = str(row.get(spec.id_column, "") or "")
     contact_id = str(contact.get("contact_id", "") or "")
     pending_values = st.session_state.get(_sensor_close_pending_values_key(row_id), None)
-    st.markdown("**Cierre de histórico sensor**")
     st.caption(
         "En inventario, los activos pasarán a **por definir** (no están asignados al cliente "
         "de este histórico). Si el equipo vuelve a almacén u oficina, regístralo con el "
