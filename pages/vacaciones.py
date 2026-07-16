@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import calendar
-from datetime import date, timedelta
+from datetime import date
 
 import pandas as pd
 import streamlit as st
 
 from app.cache import sheets_service
 from app.navigation import page_menu_title
-from services.vacations_service import VacationsService
+from services.vacations_service import VacationsService, expand_absence_day_types
 
 _VAC_OVERLAY_KEY = "vacaciones.manage_absences_open"
 
@@ -282,7 +282,7 @@ def _build_calendar_df(absences: pd.DataFrame, employees: pd.DataFrame) -> pd.Da
 
 
 def _render_year_calendar(calendar_df: pd.DataFrame, year: int, holiday_dates: set[date]) -> None:
-    day_types = _expand_day_types(calendar_df, year)
+    day_types = expand_absence_day_types(calendar_df, year, holiday_dates)
     st.markdown(
         "<div class='sanzar-legend-row'>"
         "<span class='sanzar-legend-item sanzar-legend-ausencia'>Ausencia / vacaciones</span>"
@@ -299,29 +299,6 @@ def _render_year_calendar(calendar_df: pd.DataFrame, year: int, holiday_dates: s
                 st.markdown(f"**{months[month - 1]} {year}**")
                 month_html = _month_table_html(year, month, day_types, holiday_dates)
                 st.markdown(month_html, unsafe_allow_html=True)
-
-
-def _expand_day_types(calendar_df: pd.DataFrame, year: int) -> dict[date, str]:
-    out: dict[date, str] = {}
-    if calendar_df.empty:
-        return out
-    for _, row in calendar_df.iterrows():
-        start = row["fecha_inicio"].date()
-        end = row["fecha_fin"].date()
-        if end < start:
-            start, end = end, start
-        kind = str(row.get("tipo", "")).strip().lower()
-        cursor = start
-        while cursor <= end:
-            if cursor.year == year:
-                existing = out.get(cursor, "")
-                if kind == "teletrabajo":
-                    if existing == "":
-                        out[cursor] = "teletrabajo"
-                else:
-                    out[cursor] = "ausencia"
-            cursor += timedelta(days=1)
-    return out
 
 
 def _month_table_html(year: int, month: int, day_types: dict[date, str], holiday_dates: set[date]) -> str:

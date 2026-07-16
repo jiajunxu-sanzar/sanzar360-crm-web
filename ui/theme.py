@@ -640,6 +640,88 @@ def apply_theme() -> None:
           grid-template-columns: 1.4fr 2fr 1.2fr 1.4fr 0.8fr;
         }
 
+        /* Clientes — daily board cards */
+        .sanzar-cliente-card {
+          padding: 4px 2px 8px;
+          margin-bottom: 4px;
+        }
+        .sanzar-cliente-card.visto .sanzar-cliente-card__title {
+          color: var(--ui-text);
+        }
+        .sanzar-cliente-card--cliente.visto,
+        .sanzar-cliente-card--potencial.visto {
+          border-radius: 10px;
+          padding: 10px 12px 8px;
+          background: var(--ui-kpi-success-bg);
+          border: 1px solid color-mix(in srgb, var(--ui-kpi-success-bg) 70%, #16a34a);
+          margin-bottom: 8px;
+        }
+        .sanzar-cliente-card__top {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 6px;
+        }
+        .sanzar-cliente-badge {
+          display: inline-block;
+          font-size: 0.7rem;
+          font-weight: 650;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          padding: 3px 8px;
+          border-radius: 6px;
+          border: 1px solid var(--ui-border);
+          color: var(--ui-text-muted);
+          background: #fafafa;
+        }
+        .sanzar-cliente-badge--cliente {
+          color: #166534;
+          border-color: #bbf7d0;
+          background: #f0fdf4;
+        }
+        .sanzar-cliente-badge--potencial {
+          color: #1e40af;
+          border-color: #bfdbfe;
+          background: #eff6ff;
+        }
+        .sanzar-cliente-card__title {
+          margin: 0 0 10px 0 !important;
+          padding: 0 !important;
+          font-size: 1.05rem !important;
+          font-weight: 650 !important;
+          color: var(--ui-text) !important;
+          line-height: 1.3 !important;
+        }
+        .sanzar-cliente-card__meta {
+          margin: 0;
+          display: grid;
+          gap: 8px;
+        }
+        .sanzar-cliente-card__meta > div {
+          display: grid;
+          gap: 2px;
+        }
+        .sanzar-cliente-card__meta dt {
+          margin: 0;
+          font-size: 0.7rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--ui-text-muted);
+        }
+        .sanzar-cliente-card__meta dd {
+          margin: 0;
+          font-size: 0.875rem;
+          color: var(--ui-text);
+          line-height: 1.35;
+          word-break: break-word;
+        }
+        @media (max-width: 768px) {
+          .sanzar-cliente-card__title {
+            font-size: 1rem !important;
+          }
+        }
+
         /* Contact detail — operational header */
         .sanzar-detail-header {
           position: sticky;

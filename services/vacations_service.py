@@ -271,6 +271,11 @@ def _holiday_dates_for_year(holidays: pd.DataFrame, year: int) -> set[date]:
     return out
 
 
+def is_business_day(day: date, holidays: set[date]) -> bool:
+    """True for Mon–Fri that are not in the Leganés holiday set."""
+    return day.weekday() < 5 and day not in holidays
+
+
 def _business_days_between(start_raw: str, end_raw: str, holidays: set[date], half_day: bool = False) -> float:
     start = _to_date(start_raw)
     end = _to_date(end_raw)
@@ -284,12 +289,77 @@ def _business_days_between(start_raw: str, end_raw: str, holidays: set[date], ha
     count = 0.0
     cursor = start
     while cursor <= end:
-        if cursor.weekday() < 5 and cursor not in holidays:
+        if is_business_day(cursor, holidays):
             count += 1.0
         cursor += timedelta(days=1)
     if half_day and count > 0:
         return 0.5
     return count
+
+
+def _coerce_to_date(value: object) -> date | None:
+    """Normalize Timestamp/datetime/str to a pure datetime.date (not a Timestamp)."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if type(value) is date:
+        return value
+    # pd.Timestamp / datetime.datetime are subclasses of date; always unwrap.
+    if hasattr(value, "date") and callable(getattr(value, "date", None)):
+        try:
+            coerced = value.date()  # type: ignore[union-attr]
+            if type(coerced) is date:
+                return coerced
+        except Exception:
+            pass
+    return _to_date(str(value or ""))
+
+
+def expand_absence_day_types(
+    absences: list[dict[str, object]] | pd.DataFrame,
+    year: int,
+    holiday_dates: set[date],
+) -> dict[date, str]:
+    """Map calendar days to ausencia/teletrabajo, skipping weekends and holidays.
+
+    Vacaciones wins over teletrabajo when both mark the same day.
+    Keys are always pure datetime.date so calendar HTML lookups work.
+    """
+    out: dict[date, str] = {}
+    if isinstance(absences, pd.DataFrame):
+        if absences.empty:
+            return out
+        rows = absences.to_dict("records")
+    else:
+        rows = list(absences)
+        if not rows:
+            return out
+
+    for row in rows:
+        start = _coerce_to_date(row.get("fecha_inicio"))
+        end = _coerce_to_date(row.get("fecha_fin"))
+        if not start:
+            continue
+        if not end:
+            end = start
+        if end < start:
+            start, end = end, start
+        kind = str(row.get("tipo", "") or "").strip().lower()
+        cursor = start
+        while cursor <= end:
+            if cursor.year == year and is_business_day(cursor, holiday_dates):
+                existing = out.get(cursor, "")
+                if kind == "teletrabajo":
+                    if existing == "":
+                        out[cursor] = "teletrabajo"
+                else:
+                    out[cursor] = "ausencia"
+            cursor += timedelta(days=1)
+    return out
 
 
 def _demo_employees() -> list[dict[str, str]]:

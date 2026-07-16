@@ -22,6 +22,7 @@ PAGES: Final[tuple[str, ...]] = (
     "Acciones",
     "Centro de alarmas",
     "Contactos",
+    "Clientes",
     "Usuarios",
     "Vacaciones",
     "Buscador sensores/SIM",
@@ -40,6 +41,7 @@ PAGE_MENU_LABELS: Final[dict[str, str]] = {
     "Acciones": "⚡ Acciones",
     "Centro de alarmas": "🚨 Centro de alarmas",
     "Contactos": "👥 Contactos",
+    "Clientes": "🏢 Clientes",
     "Usuarios": "🔐 Usuarios",
     "Vacaciones": "🏖️ Vacaciones",
     "Buscador sensores/SIM": "🔎 Buscador sensores/SIM",
@@ -109,7 +111,7 @@ def normalize_role(role: str) -> str:
 
 # Pages that load the main Contacts dataframe from Google Sheets (skip on other pages).
 PAGES_REQUIRING_CONTACTS: Final[frozenset[str]] = frozenset(
-    {"Dashboard", "Contactos", "Centro de alarmas", "Mapa", "Email", "Facturas", "Inventario"}
+    {"Dashboard", "Contactos", "Clientes", "Centro de alarmas", "Mapa", "Email", "Facturas", "Inventario"}
 )
 
 # ── Integrity (fail fast si alguien añade pestañas incoherentes) ────────────

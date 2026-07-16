@@ -44,6 +44,7 @@ from config.settings import (
     CANAL_CONTACTO_OPCIONES,
     EMAIL_CLASIFICACION_OPCIONES,
     RESULTADO_CONTACTO_OPCIONES,
+    TIPO_RELACION_OPCIONES,
     VALOR_OPCIONES,
 )
 from services.commercial_action_validation import validate_commercial_action_values
@@ -170,6 +171,23 @@ _INCIDENCIA_ASSOC_HEADERS = frozenset(
         "nombre_campana",
     }
 )
+OFICINA_CONTACT_NAME = "oficina"
+
+
+def pin_oficina_contact_first(df: pd.DataFrame) -> pd.DataFrame:
+    """Put contact(s) named Oficina at the top; preserve relative order otherwise."""
+    if df is None or df.empty or "nombre" not in df.columns:
+        return df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    names = df["nombre"].fillna("").astype(str).str.strip().str.lower()
+    is_oficina = names == OFICINA_CONTACT_NAME
+    if not bool(is_oficina.any()):
+        return df.reset_index(drop=True)
+    return pd.concat([df.loc[is_oficina], df.loc[~is_oficina]], ignore_index=True)
+
+
+def filter_open_sensor_history(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Keep sensor history rows that are not explicitly cerrado."""
+    return [row for row in rows if _is_sensor_history_open(row)]
 
 
 def _contacts_block_spacer() -> None:
@@ -525,6 +543,7 @@ def _render_contact_list(df: pd.DataFrame) -> str:
         filtered = apply_dash_bucket_date_filter(filtered, str(dash_bucket))
     if bool(st.session_state.get(CONTACTS_ONLY_WITH_SENSORS_KEY, False)):
         filtered = filter_by_sensor_overview(filtered, overview, only_with_sensors=True)
+    filtered = pin_oficina_contact_first(filtered)
     filtered = filtered.reset_index(drop=True)
 
     st.session_state[CONTACTS_FILTERED_IDS_KEY] = (
@@ -813,7 +832,7 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
         updated = _render_contact_form(df, row_idx, contact)
     else:
         updated = None
-        _render_history_kind_section(contact, "seguimiento_comercial", expanded=True)
+        _render_history_kind_section(contact, "seguimiento_comercial")
         for kind in ("sensores", "campanas", "suscripciones", "incidencias"):
             _render_history_kind_section(contact, kind)
         _maybe_render_sensor_close_location_modal(contact)
@@ -840,7 +859,10 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
         ),
     ]
     sections_right: list[tuple[str, list[str]]] = [
-        ("Estado y oportunidad", ["estado", "fecha_estado", "razon_perdida", "valor", "responsable_cliente"]),
+        (
+            "Estado y oportunidad",
+            ["estado", "fecha_estado", "razon_perdida", "valor", "responsable_cliente", "tipo_relacion"],
+        ),
         ("Operativa y suscripción", ["cuenta_usuario", "digital_maps", "iot_module", "sowing_module"]),
     ]
 
@@ -1689,6 +1711,14 @@ def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
     if column == "valor":
         opts = [""] + list(VALOR_OPCIONES)
         return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
+    if column == "tipo_relacion":
+        opts = [""] + list(TIPO_RELACION_OPCIONES)
+        return st.selectbox(
+            "Tipo de relación",
+            opts,
+            index=opts.index(value) if value in opts else 0,
+            key=key,
+        )
     if column == "responsable_cliente":
         opts = [""] + crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
         return st.selectbox(
@@ -1722,7 +1752,24 @@ def _render_operative_history_cards_section(
     rows: list[dict[str, str]],
 ) -> None:
     contact_id = str(contact.get("contact_id", "") or "")
-    st.caption(f"{len(rows)} registro{'s' if len(rows) != 1 else ''}")
+    display_rows = rows
+    if kind == "sensores":
+        toggle_key = f"hist_sensors_open_only_{contact_id}"
+        if toggle_key not in st.session_state:
+            st.session_state[toggle_key] = True
+        only_open = st.toggle("Solo abiertos", key=toggle_key)
+        if only_open:
+            display_rows = filter_open_sensor_history(rows)
+            n_open = len(display_rows)
+            n_total = len(rows)
+            if n_open < n_total:
+                st.caption(f"{n_open} abierto{'s' if n_open != 1 else ''} · {n_total} en total")
+            else:
+                st.caption(f"{n_open} abierto{'s' if n_open != 1 else ''}")
+        else:
+            st.caption(f"{len(rows)} registro{'s' if len(rows) != 1 else ''}")
+    else:
+        st.caption(f"{len(rows)} registro{'s' if len(rows) != 1 else ''}")
     if st.button(
         "Nuevo histórico",
         type="primary",
@@ -1731,7 +1778,7 @@ def _render_operative_history_cards_section(
     ):
         modal_state.open_add_history_modal(kind, contact_id)
         st.rerun()
-    render_paginated_history_cards(kind, rows, contact_id)
+    render_paginated_history_cards(kind, display_rows, contact_id)
 
 
 def _render_history_kind_section(
@@ -1743,11 +1790,7 @@ def _render_history_kind_section(
     contact_id = contact.get("contact_id", "")
     spec = HISTORY_SPECS[kind]
     rows = history_service().rows_for_contact(kind, contact_id)
-    expanded_default = (
-        expanded
-        if expanded is not None
-        else kind in {"seguimiento_comercial", "sensores", "suscripciones", "incidencias"}
-    )
+    expanded_default = False if expanded is None else expanded
     with st.expander(spec.title, expanded=expanded_default):
         if kind == "seguimiento_comercial":
             _render_seguimiento_comercial_section(contact, rows)

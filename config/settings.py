@@ -82,6 +82,10 @@ CANONICAL_COLUMNS = [
     "razon_perdida",
     "valor",
     "responsable_cliente",
+    "tipo_relacion",
+    "umbrales_activadas",
+    "suelo_seco",
+    "visto_cliente_fecha",
 ]
 
 CONTACT_ESTADO_OPCIONES: tuple[str, ...] = (
@@ -123,6 +127,12 @@ FUENTE_LEAD_OPCIONES: tuple[str, ...] = (
 )
 
 VALOR_OPCIONES: tuple[str, ...] = ("Bajo", "Medio", "Alto")
+
+TIPO_RELACION_OPCIONES: tuple[str, ...] = (
+    "Captación",
+    "Potencial cliente",
+    "Cliente",
+)
 
 PERSONA_ULTIMO_CONTACTO_OPCIONES: tuple[str, ...] = (
     "Jiajun Xu",
@@ -171,6 +181,11 @@ _TEMPLATE_LABEL_ALIASES_EXTRA: dict[str, str] = {
     "Razón pérdida": "razon_perdida",
     "Responsable del cliente": "responsable_cliente",
     "Responsable cliente": "responsable_cliente",
+    "Tipo relación": "tipo_relacion",
+    "Tipo relacion": "tipo_relacion",
+    "Umbrales activadas": "umbrales_activadas",
+    "Suelo seco": "suelo_seco",
+    "Visto cliente fecha": "visto_cliente_fecha",
 }
 TEMPLATE_LABEL_ALIASES: dict[str, str] = {
     c: c for c in CANONICAL_COLUMNS
