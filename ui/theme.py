@@ -16,9 +16,10 @@ def apply_theme() -> None:
         body, .stApp { font-family: var(--ui-font) !important; }
         /* Page */
         .block-container {
-          padding-top: 1.5rem;
+          /* 4rem: evita que la cabecera fija de Streamlit tape el título. */
+          padding-top: 4rem;
           padding-bottom: 2rem;
-          max-width: 1200px;
+          max-width: 1480px;
         }
         .main .block-container { background: var(--ui-bg-page); }
         div[data-testid="stSidebar"] {
@@ -893,6 +894,26 @@ def apply_theme() -> None:
           font-size: 0.8125rem !important;
           color: var(--ui-text-muted) !important;
           line-height: 1.45;
+        }
+
+        /* Botón destructivo: confirmación de borrado en rojo, no verde corporativo.
+           Selectores con button[kind] para superar la regla global de primarios. */
+        .st-key-btn_confirm_delete_contact button[kind="primary"] {
+          background: #dc2626 !important;
+          border-color: #dc2626 !important;
+          color: #ffffff !important;
+        }
+        .st-key-btn_confirm_delete_contact button[kind="primary"]:hover {
+          background: #b91c1c !important;
+          border-color: #b91c1c !important;
+        }
+        .st-key-btn_destruct_contact_ficha button[kind="secondary"] {
+          color: #b91c1c !important;
+          border-color: #fecaca !important;
+        }
+        .st-key-btn_destruct_contact_ficha button[kind="secondary"]:hover {
+          background: #fef2f2 !important;
+          border-color: #fca5a5 !important;
         }
 
         /* Contact list */

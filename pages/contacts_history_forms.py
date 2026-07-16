@@ -560,8 +560,13 @@ def _render_history_kind_section(
     contact_id = contact.get("contact_id", "")
     spec = HISTORY_SPECS[kind]
     rows = history_service().rows_for_contact(kind, contact_id)
-    expanded_default = False if expanded is None else expanded
-    with st.expander(spec.title, expanded=expanded_default):
+    # Contador en el título: se ve qué secciones tienen datos sin abrirlas.
+    title = f"{spec.title} ({len(rows)})"
+    if expanded is None:
+        expanded_default = kind == "seguimiento_comercial" and bool(rows)
+    else:
+        expanded_default = expanded
+    with st.expander(title, expanded=expanded_default):
         if kind == "seguimiento_comercial":
             _render_seguimiento_comercial_section(contact, rows)
             return

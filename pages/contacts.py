@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import zlib
 
 import pandas as pd
 import streamlit as st
@@ -43,6 +44,7 @@ from services.contact_sensor_overview import (
     semaforo_display_prefix,
 )
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
+from services.contacts_export import build_overview_pdf_bytes, build_overview_xlsx_bytes
 from services.proxima_accion_stats import (
     apply_dash_bucket_date_filter,
     filter_by_contact_estado,
@@ -52,11 +54,15 @@ from services.proxima_accion_stats import (
 )
 from services.users_service import crm_user_names
 from services.sheet_date_format import validate_contact_date_fields
-from ui.components.cards import chip
-from ui.palette import contact_status_style
+from ui.palette import STATUS_NEUTRAL, STATUS_SUCCESS, STATUS_WARNING
 from ui.components.customer_timeline import render_contact_timeline_block
 from ui.components.contact_detail_header import render_contact_detail_header
-from ui.components.contact_overview_table import render_contact_overview_dialog_content
+from ui.components.contact_overview_table import (
+    format_incidencias_cell,
+    format_proxima_accion_cell,
+    format_sensors_cell,
+    format_ultimo_contacto_cell,
+)
 from ui.components.tables import filter_dataframe
 
 from pages.contacts_common import (  # noqa: F401
@@ -172,6 +178,16 @@ from pages.contacts_history_forms import (  # noqa: F401
     _validate_history_values,
 )
 
+_BUCKET_KEYS = ("past", "today", "tomorrow", "future")
+_BUCKET_LABELS = {
+    "past": "Atrasadas",
+    "today": "Hoy",
+    "tomorrow": "Mañana",
+    "future": "Futuras",
+}
+_DETAIL_VIEW_OPTIONS = ("Datos", "Históricos", "Actividad")
+_LOST_ROW_CSS = "color:#b91c1c"
+
 
 def render(df: pd.DataFrame) -> pd.DataFrame:
     with timed("contacts.render"):
@@ -203,103 +219,172 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
         if st.session_state.get(CONTACTS_DELETE_SUCCESS_KEY):
             st.toast(str(st.session_state.pop(CONTACTS_DELETE_SUCCESS_KEY)), icon="🗑️")
         if df.empty:
-            st.warning("No hay contactos cargados. Puedes crear el primero desde el formulario inferior.")
+            st.warning("No hay contactos cargados. Puedes crear el primero con «Nuevo contacto».")
 
-        left, right = st.columns([0.38, 0.62], gap="large")
-        with left:
-            selected_id = _render_contact_list(df)
-        with right:
-            with st.container(border=True):
-                if selected_id:
-                    st.markdown(f"##### {_contact_display_name(df, selected_id)}")
-                    df = _render_contact_detail(df, selected_id)
-                else:
-                    st.markdown("##### Ficha del contacto")
-                    st.info("Selecciona un contacto para abrir la ficha.")
+        if current_selected:
+            # Maestro-detalle: lista compacta a la izquierda, ficha a la derecha.
+            left, right = st.columns([0.32, 0.68], gap="large")
+            with left:
+                selected_id = _render_contact_list(df, compact=True)
+            if not selected_id:
+                # La selección se limpió al filtrar: volver al listado a ancho completo.
+                st.rerun()
+            with right:
+                with st.container(border=True):
+                    if selected_id:
+                        df = _render_contact_detail(df, selected_id)
+                    else:
+                        st.markdown("##### Ficha del contacto")
+                        st.info("Selecciona un contacto para abrir la ficha.")
+        else:
+            # Sin selección: la lista ocupa todo el ancho.
+            _render_contact_list(df, compact=False)
         return df
 
-def _render_contact_list(df: pd.DataFrame) -> str:
-    if CONTACTS_VIEW_MODE_KEY not in st.session_state:
+def _render_contact_list(df: pd.DataFrame, *, compact: bool) -> str:
+    if st.session_state.get(CONTACTS_VIEW_MODE_KEY) not in (CONTACTS_VIEW_FICHA, CONTACTS_VIEW_TABLA):
         st.session_state[CONTACTS_VIEW_MODE_KEY] = CONTACTS_VIEW_FICHA
-    acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
-    df = enrich_contacts_with_proxima(df, acciones_df)
-    with st.container(border=True):
-        _render_next_action_strip(df)
-    _contacts_block_spacer()
-    if "contact_filters_open" not in st.session_state:
-        st.session_state.contact_filters_open = False
     if CONTACTS_SHOW_LOST_KEY not in st.session_state:
         # Soft migration from legacy filter key if present.
         st.session_state[CONTACTS_SHOW_LOST_KEY] = bool(st.session_state.get("contact_filter_show_lost", False))
 
-    with st.container(border=True):
-        st.markdown("##### Buscar")
-        overview = load_contact_sensor_overview_cached(st.session_state.get("history_cache_version", 0))
-        # Búsqueda SIEMPRE visible: escribir y listo, sin abrirla antes.
-        search_row = st.columns([0.84, 0.16], gap="small")
-        query = search_row[0].text_input(
-            "Buscar",
-            key="contact_filter_text",
-            label_visibility="collapsed",
-            placeholder="Nombre, municipio, correo, teléfono, cultivo…",
-            icon=":material/search:",
-        )
-        if search_row[1].button(
-            "",
-            key="contact_toggle_filters",
-            icon=":material/tune:",
-            width="stretch",
-            help="Filtros por estado, provincia, municipio, tipo o cultivo",
-            type="primary" if st.session_state.contact_filters_open else "secondary",
-        ):
-            st.session_state.contact_filters_open = not st.session_state.contact_filters_open
-            st.rerun()
-        toggles_row = st.columns(2, gap="small")
-        toggles_row[0].toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
-        toggles_row[1].toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
+    acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
+    df = enrich_contacts_with_proxima(df, acciones_df)
+    overview = load_contact_sensor_overview_cached(st.session_state.get("history_cache_version", 0))
+    semaforo_map = semaforo_by_contact_id(overview)
 
-        province = ""
-        status = ""
-        entity_type = ""
-        municipio = ""
-        cultivos_filter = ""
-        if st.session_state.contact_filters_open:
-            filter_row_1 = st.columns([1.2, 1.2, 1.2], gap="small")
-            status = filter_row_1[0].selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
-            province = filter_row_1[1].selectbox(
-                "Provincia",
-                [""] + sorted([x for x in df.get("provincia", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
-                key="contact_filter_province",
-            )
-            entity_type = filter_row_1[2].selectbox(
-                "Tipo de entidad",
-                [""] + sorted([x for x in df.get("tipo_entidad", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
-                key="contact_filter_entity",
-            )
-            filter_row_2 = st.columns([1.2, 1.2], gap="small")
-            municipio = filter_row_2[0].selectbox(
-                "Municipio",
-                [""] + sorted([x for x in df.get("municipio", pd.Series(dtype=str)).fillna("").astype(str).unique() if x]),
-                key="contact_filter_municipio",
-            )
-            cultivos_filter = filter_row_2[1].text_input("Cultivos contiene", key="contact_filter_cultivos")
+    if compact:
+        with st.container(border=True):
+            if st.button("Nuevo contacto", key="create_contact_top", width="stretch", icon=":material/person_add:"):
+                _create_contact_dialog(df)
+            query = _render_search_input()
+            with st.expander("Filtros", expanded=False, icon=":material/tune:"):
+                _render_next_action_strip(df, stacked=True)
+                _render_list_toggles(stacked=True)
+                advanced = _render_advanced_filters(df, stacked=True)
+            filtered = _apply_contact_filters(df, overview, query, advanced)
+            _store_filtered_ids(filtered)
+            st.caption(f"{len(filtered)} contactos")
+            _render_contact_table(filtered, semaforo_map, compact=True)
+        return _reconcile_selection_with_filtered(filtered)
+
+    with st.container(border=True):
+        _render_next_action_strip(df, stacked=False)
     _contacts_block_spacer()
+    with st.container(border=True):
+        head_cols = st.columns([0.34, 0.38, 0.28], gap="small")
+        head_cols[0].markdown("##### Contactos")
+        with head_cols[1]:
+            # El radio no se renderiza con la ficha abierta, así que su estado de
+            # widget se pierde; persistimos el modo en una clave propia.
+            if "_contacts_view_mode_widget" not in st.session_state:
+                st.session_state["_contacts_view_mode_widget"] = st.session_state[CONTACTS_VIEW_MODE_KEY]
+            view_mode = st.radio(
+                "Vista",
+                options=(CONTACTS_VIEW_FICHA, CONTACTS_VIEW_TABLA),
+                format_func=lambda v: "Lista" if v == CONTACTS_VIEW_FICHA else "Seguimiento",
+                horizontal=True,
+                key="_contacts_view_mode_widget",
+                label_visibility="collapsed",
+            )
+            st.session_state[CONTACTS_VIEW_MODE_KEY] = view_mode
+        with head_cols[2]:
+            if st.button("Nuevo contacto", key="create_contact_top", width="stretch", icon=":material/person_add:"):
+                _create_contact_dialog(df)
+
+        search_cols = st.columns([0.56, 0.22, 0.22], gap="small", vertical_alignment="center")
+        with search_cols[0]:
+            query = _render_search_input()
+        with search_cols[1]:
+            st.toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
+        with search_cols[2]:
+            st.toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
+        with st.expander("Más filtros (estado, provincia, municipio, tipo, cultivo)", icon=":material/tune:"):
+            advanced = _render_advanced_filters(df, stacked=False)
+
+        filtered = _apply_contact_filters(df, overview, query, advanced)
+        _store_filtered_ids(filtered)
+
+        info_cols = st.columns([0.4, 0.6], gap="small")
+        info_cols[0].caption(f"{len(filtered)} contactos encontrados · click en una fila para abrir la ficha")
+        info_cols[1].caption(
+            "<div style='text-align:right'>🟢 sensores al día · 🟡 sensores con seguimiento · 🔴 perdido</div>",
+            unsafe_allow_html=True,
+        )
+        if view_mode == CONTACTS_VIEW_TABLA:
+            _render_overview_table()
+        else:
+            _render_contact_table(filtered, semaforo_map, compact=False)
+    return _reconcile_selection_with_filtered(filtered)
+
+def _render_search_input() -> str:
+    return st.text_input(
+        "Buscar",
+        key="contact_filter_text",
+        label_visibility="collapsed",
+        placeholder="Nombre, municipio, correo, teléfono, cultivo…",
+        icon=":material/search:",
+    )
+
+def _render_list_toggles(*, stacked: bool) -> None:
+    if stacked:
+        st.toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
+        st.toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
+        return
+    toggles_row = st.columns(2, gap="small")
+    toggles_row[0].toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
+    toggles_row[1].toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
+
+def _render_advanced_filters(df: pd.DataFrame, *, stacked: bool) -> dict[str, str]:
+    def _options(column: str) -> list[str]:
+        return [""] + sorted(
+            [x for x in df.get(column, pd.Series(dtype=str)).fillna("").astype(str).unique() if x]
+        )
+
+    if stacked:
+        status = st.selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
+        province = st.selectbox("Provincia", _options("provincia"), key="contact_filter_province")
+        entity_type = st.selectbox("Tipo de entidad", _options("tipo_entidad"), key="contact_filter_entity")
+        municipio = st.selectbox("Municipio", _options("municipio"), key="contact_filter_municipio")
+        cultivos = st.text_input("Cultivos contiene", key="contact_filter_cultivos")
+    else:
+        filter_row_1 = st.columns(3, gap="small")
+        status = filter_row_1[0].selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
+        province = filter_row_1[1].selectbox("Provincia", _options("provincia"), key="contact_filter_province")
+        entity_type = filter_row_1[2].selectbox("Tipo de entidad", _options("tipo_entidad"), key="contact_filter_entity")
+        filter_row_2 = st.columns(2, gap="small")
+        municipio = filter_row_2[0].selectbox("Municipio", _options("municipio"), key="contact_filter_municipio")
+        cultivos = filter_row_2[1].text_input("Cultivos contiene", key="contact_filter_cultivos")
+    return {
+        "status": status,
+        "province": province,
+        "entity_type": entity_type,
+        "municipio": municipio,
+        "cultivos": cultivos,
+    }
+
+def _apply_contact_filters(
+    df: pd.DataFrame,
+    overview: pd.DataFrame,
+    query: str,
+    advanced: dict[str, str],
+) -> pd.DataFrame:
     filtered = filter_dataframe(
         df,
         query,
         ["nombre", "municipio", "provincia", "correo", "telefono", "cultivos", "contact_id"],
     )
-    if province:
-        filtered = filtered[filtered["provincia"].astype(str) == province]
-    if status:
-        filtered = filtered[filtered["estado"].astype(str) == status]
-    if entity_type:
-        filtered = filtered[filtered["tipo_entidad"].astype(str) == entity_type]
-    if municipio:
-        filtered = filtered[filtered["municipio"].astype(str) == municipio]
-    if (cultivos_filter or "").strip():
+    if advanced.get("province"):
+        filtered = filtered[filtered["provincia"].astype(str) == advanced["province"]]
+    if advanced.get("status"):
+        filtered = filtered[filtered["estado"].astype(str) == advanced["status"]]
+    if advanced.get("entity_type"):
+        filtered = filtered[filtered["tipo_entidad"].astype(str) == advanced["entity_type"]]
+    if advanced.get("municipio"):
+        filtered = filtered[filtered["municipio"].astype(str) == advanced["municipio"]]
+    if (advanced.get("cultivos") or "").strip():
         filtered = filtered[
-            filtered["cultivos"].fillna("").astype(str).str.contains(cultivos_filter.strip(), case=False, na=False)
+            filtered["cultivos"].fillna("").astype(str).str.contains(advanced["cultivos"].strip(), case=False, na=False)
         ]
     if not bool(st.session_state.get(CONTACTS_SHOW_LOST_KEY, True)):
         filtered = filtered[~filtered["estado"].astype(str).map(is_contact_perdido)]
@@ -309,162 +394,195 @@ def _render_contact_list(df: pd.DataFrame) -> str:
     filtered = filter_by_responsable_cliente(filtered, dash_responsable)
     dash_estado = str(st.session_state.get(DASH_ESTADO_FILTER_KEY, "") or "")
     filtered = filter_by_contact_estado(filtered, dash_estado)
-    dash_bucket = st.session_state.get("dash_bucket", "")
+    dash_bucket = st.session_state.get("dash_bucket") or ""
     if dash_bucket:
         filtered = apply_dash_bucket_date_filter(filtered, str(dash_bucket))
     if bool(st.session_state.get(CONTACTS_ONLY_WITH_SENSORS_KEY, False)):
         filtered = filter_by_sensor_overview(filtered, overview, only_with_sensors=True)
     filtered = pin_oficina_contact_first(filtered)
-    filtered = filtered.reset_index(drop=True)
+    return filtered.reset_index(drop=True)
 
+def _store_filtered_ids(filtered: pd.DataFrame) -> None:
     st.session_state[CONTACTS_FILTERED_IDS_KEY] = (
         filtered["contact_id"].fillna("").astype(str).str.strip().tolist()
         if not filtered.empty and "contact_id" in filtered.columns
         else []
     )
 
-    view_mode = st.session_state.get(CONTACTS_VIEW_MODE_KEY, CONTACTS_VIEW_FICHA)
-    with st.container(border=True):
-        st.markdown("##### Contactos")
-        if st.button("Nuevo contacto", key="create_contact_top", width="stretch"):
-            _new_contact_flow_open()
-            st.rerun()
-        view_col1, view_col2 = st.columns(2, gap="small")
-        if view_col1.button(
-            "Ver lista",
-            key="contacts_view_tabla",
-            width="stretch",
-            type="secondary",
-        ):
-            _contact_overview_list_dialog()
-        if view_col2.button(
-            "Ver ficha",
-            key="contacts_view_ficha",
-            width="stretch",
-            type="primary" if view_mode == CONTACTS_VIEW_FICHA else "secondary",
-        ):
-            st.session_state[CONTACTS_VIEW_MODE_KEY] = CONTACTS_VIEW_FICHA
-            st.rerun()
-        if _new_contact_flow_state_get() in {NEW_CONTACT_FLOW_OPEN, NEW_CONTACT_FLOW_SUBMITTING}:
-            _render_create_contact_confirmation(df)
+def _reconcile_selection_with_filtered(filtered: pd.DataFrame) -> str:
+    selected = str(st.session_state.get("selected_contact_id", "") or "")
+    if not selected:
+        return ""
+    if filtered.empty or "contact_id" not in filtered.columns:
+        return selected
+    exists = not filtered[filtered["contact_id"].astype(str).str.strip() == selected].empty
+    if not exists:
+        st.session_state["selected_contact_id"] = ""
+        return ""
+    return selected
 
-        st.caption(f"{len(filtered)} contactos encontrados")
-        st.caption("Haz click en una fila para abrir la ficha automáticamente.")
-        current = st.session_state.get("selected_contact_id", "")
-        semaforo_map = semaforo_by_contact_id(overview)
-        selected_from_table = _render_contact_table(filtered, current, semaforo_map)
-        if selected_from_table:
-            current = selected_from_table
-        selected_id = selected_from_table or current
-        if selected_id:
-            st.session_state.selected_contact_id = selected_id
-        elif st.session_state.get("selected_contact_id") and "contact_id" in filtered.columns:
-            selected_raw = str(st.session_state.get("selected_contact_id") or "")
-            exists = not filtered[filtered["contact_id"].astype(str).str.strip() == selected_raw].empty
-            if not exists:
-                st.session_state.selected_contact_id = ""
-        return selected_id
+def _ids_signature(ids: list[str], *, prefix: str) -> str:
+    joined = "|".join(ids)
+    return f"{prefix}_{zlib.crc32(joined.encode('utf-8')):08x}"
+
+def _table_height(nrows: int, cap: int) -> int:
+    # ~35px por fila + cabecera; con tope para no crear scroll de página.
+    return int(min(cap, 35 * nrows + 40))
 
 def _render_contact_table(
     filtered: pd.DataFrame,
-    selected_contact_id: str,
     semaforo_map: dict[str, str] | None = None,
-) -> str:
+    *,
+    compact: bool = False,
+) -> None:
     if filtered.empty:
         st.info("No hay datos para mostrar.")
-        return ""
+        return
 
     semaforo_lookup = semaforo_map or {}
-    panel_height = (
-        CONTACT_LIST_PANEL_HEIGHT_WITH_DETAIL
-        if (selected_contact_id or "").strip()
-        else CONTACT_LIST_PANEL_HEIGHT_BASE
+    records = filtered.fillna("").astype(str).to_dict("records")
+    ids: list[str] = []
+    icons: list[str] = []
+    lost_flags: list[bool] = []
+    data: dict[str, list[str]] = {"Nombre": [], "Estado": [], "Provincia": [], "Municipio": []}
+    for row in records:
+        contact_id = str(row.get("contact_id", "")).strip()
+        ids.append(contact_id)
+        is_lost = is_contact_perdido(str(row.get("estado", "")))
+        lost_flags.append(is_lost)
+        sem = semaforo_lookup.get(contact_id, "sin_sensores")
+        icon = "🔴" if is_lost else semaforo_display_prefix(sem, is_lost=False).strip()
+        icons.append(icon)
+        data["Nombre"].append(row.get("nombre", "") or "Sin nombre")
+        data["Estado"].append(row.get("estado", "") or "Sin estado")
+        data["Provincia"].append(row.get("provincia", "") or "—")
+        data["Municipio"].append(row.get("municipio", "") or "—")
+
+    if compact:
+        # Solo semáforo + nombre: el estado completo ya se ve en la ficha abierta.
+        disp = pd.DataFrame({"sem": icons, "Nombre": data["Nombre"]})
+    else:
+        disp = pd.DataFrame({"sem": icons, **data})
+
+    styler = disp.style.apply(
+        lambda r: [_LOST_ROW_CSS if lost_flags[r.name] else ""] * len(r),
+        axis=1,
     )
-    with st.container(height=panel_height):
-        st.markdown(
-            "<div class='sanzar-contact-table'>"
-            "<div class='sanzar-contact-row sanzar-contact-header'>"
-            "<span>Nombre</span><span>Estado</span><span>Provincia</span><span>Municipio</span>"
-            "</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        for row in filtered.fillna("").astype(str).to_dict("records"):
-            contact_id = row.get("contact_id", "")
-            is_lost = is_contact_perdido(str(row.get("estado", "")))
-            sem = semaforo_lookup.get(str(contact_id).strip(), "sin_sensores")
-            prefix = "🔴 " if is_lost else semaforo_display_prefix(sem, is_lost=False)
-            nombre_raw = row.get("nombre", "") or "Sin nombre"
-            row_label = " | ".join(
-                [
-                    nombre_raw,
-                    row.get("estado", "") or "Sin estado",
-                    row.get("provincia", "") or "Sin provincia",
-                    row.get("municipio", "") or "Sin municipio",
-                ]
-            )
-            if prefix:
-                row_label = f"{prefix}{row_label}"
-            if contact_id == selected_contact_id:
-                row_class = "sanzar-contact-row selected sanzar-contact-row-lost" if is_lost else "sanzar-contact-row selected"
-                nombre_display = f"{prefix}{nombre_raw}"
-                estado_html = (
-                    chip(row.get("estado", "") or "Sin estado", contact_status_style(row.get("estado", "")))
-                    if row.get("estado", "")
-                    else html.escape(row.get("estado", ""))
-                )
-                st.markdown(
-                    f"<div class='{row_class}'>"
-                    f"<span class='sanzar-contact-cell'>{html.escape(nombre_display)}</span>"
-                    f"<span class='sanzar-contact-cell'>{estado_html}</span>"
-                    f"<span class='sanzar-contact-cell'>{html.escape(row.get('provincia', ''))}</span>"
-                    f"<span class='sanzar-contact-cell'>{html.escape(row.get('municipio', ''))}</span>"
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-                continue
-            if st.button(row_label, key=f"contact_row_{contact_id}", width="stretch"):
-                _clear_modal_flags()
-                st.session_state.selected_contact_id = contact_id
-                st.rerun()
-    return ""
-
-def _contact_overview_list_dialog() -> None:
-    render_contact_overview_dialog_content(_filtered_overview_display_df())
-
-def _create_contact_dialog(df: pd.DataFrame) -> None:
-    flow_state = _new_contact_flow_state_get()
-    if flow_state == NEW_CONTACT_FLOW_IDLE:
-        return
-    if flow_state == NEW_CONTACT_FLOW_SUBMITTING:
-        try:
-            with st.spinner("Creando nuevo contacto..."):
-                nombre_crear = st.session_state.pop("_create_contact_nombre", "").strip()
-                new_df, new_contact_id, verify = create_empty_contact(
-                    df,
-                    sheets_service(),
-                    nombre=nombre_crear,
-                )
-                set_pending_created_contact_id(new_contact_id)
-                bump_contacts_cache()
-                set_contacts_df_override(new_df)
-                if verify.status != "confirmed":
-                    set_contacts_write_status(
-                        verify.status,
-                        message=verify.message or "Contacto creado pero pendiente de verificación remota.",
-                    )
-                select_contact(new_contact_id)
-                _new_contact_flow_finish(clear_inputs=True)
+    column_config = {
+        "sem": st.column_config.TextColumn("", width=34, help="Semáforo de sensores / perdido"),
+        "Nombre": st.column_config.TextColumn("Nombre", width=None if compact else "large"),
+        "Estado": st.column_config.TextColumn("Estado", width="medium"),
+        "Provincia": st.column_config.TextColumn("Provincia", width="medium"),
+        "Municipio": st.column_config.TextColumn("Municipio", width="medium"),
+    }
+    event = st.dataframe(
+        styler,
+        hide_index=True,
+        width="stretch",
+        height=_table_height(len(records), 560 if compact else 600),
+        on_select="rerun",
+        selection_mode="single-row",
+        key=_ids_signature(ids, prefix="contacts_df_c" if compact else "contacts_df_f"),
+        column_config=column_config,
+    )
+    rows = list(getattr(event.selection, "rows", []) or [])
+    if rows:
+        picked = ids[rows[0]]
+        if picked and picked != str(st.session_state.get("selected_contact_id", "") or ""):
+            _clear_modal_flags()
+            st.session_state["selected_contact_id"] = picked
             st.rerun()
-        except Exception as exc:
-            st.session_state.pop("_create_contact_nombre", None)
-            _new_contact_flow_set(NEW_CONTACT_FLOW_OPEN)
-            st.error(
-                "No se pudo crear el contacto de forma consistente. "
-                "Comprueba conexión/cuota y vuelve a confirmar. "
-                f"Detalle: {exc}"
-            )
 
+def _overview_row_css(semaforo: str) -> str:
+    sem = (semaforo or "").strip().lower()
+    style = STATUS_SUCCESS if sem == "verde" else STATUS_WARNING if sem == "amarillo" else STATUS_NEUTRAL
+    return f"background-color:{style.bg};color:{style.fg}"
+
+def _render_overview_table() -> None:
+    overview_df = _filtered_overview_display_df()
+    if overview_df.empty:
+        st.info("No hay contactos en el resumen.")
+        return
+
+    records = [
+        row
+        for row in overview_df.fillna("").to_dict("records")
+        if str(row.get("contact_id", "") or "").strip()
+    ]
+    if not records:
+        st.info("No hay contactos en el resumen.")
+        return
+
+    xlsx_bytes, xlsx_name = build_overview_xlsx_bytes(overview_df)
+    pdf_bytes, pdf_name = build_overview_pdf_bytes(overview_df)
+    export_cols = st.columns([0.2, 0.2, 0.6], gap="small")
+    export_cols[0].download_button(
+        "Exportar Excel",
+        data=xlsx_bytes,
+        file_name=xlsx_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="contacts_export_overview_xlsx",
+        width="stretch",
+    )
+    export_cols[1].download_button(
+        "Exportar PDF",
+        data=pdf_bytes,
+        file_name=pdf_name,
+        mime="application/pdf",
+        key="contacts_export_overview_pdf",
+        width="stretch",
+    )
+    export_cols[2].caption("<div style='text-align:right'>Ordenados por próxima acción</div>", unsafe_allow_html=True)
+
+    ids = [str(row.get("contact_id", "")).strip() for row in records]
+    disp = pd.DataFrame(
+        {
+            "Contacto": [str(r.get("nombre", "") or "Sin nombre") for r in records],
+            "Sensores": [format_sensors_cell(r.get("num_sensores"), r.get("sensor_sns")) for r in records],
+            "Último contacto": [
+                format_ultimo_contacto_cell(
+                    r.get("ultimo_contacto"), r.get("ultimo_contacto_canal"), r.get("ultimo_contacto_detalle")
+                )
+                for r in records
+            ],
+            "Próxima acción": [
+                format_proxima_accion_cell(r.get("proxima_accion_fecha"), r.get("proxima_accion_detalle"))
+                for r in records
+            ],
+            "Incidencias": [
+                format_incidencias_cell(r.get("incidencias_abiertas"), r.get("incidencias_detalle"))
+                for r in records
+            ],
+        }
+    )
+    row_css = [_overview_row_css(str(r.get("semaforo", "") or "")) for r in records]
+    styler = disp.style.apply(lambda r: [row_css[r.name]] * len(r), axis=1)
+    event = st.dataframe(
+        styler,
+        hide_index=True,
+        width="stretch",
+        height=_table_height(len(records), 600),
+        on_select="rerun",
+        selection_mode="single-row",
+        key=_ids_signature(ids, prefix="contacts_df_ov"),
+        column_config={
+            "Contacto": st.column_config.TextColumn("Contacto", width="medium"),
+            "Sensores": st.column_config.TextColumn("Sensores", width="medium"),
+            "Último contacto": st.column_config.TextColumn("Último contacto", width="large"),
+            "Próxima acción": st.column_config.TextColumn("Próxima acción", width="large"),
+            "Incidencias": st.column_config.TextColumn("Incidencias", width="small"),
+        },
+    )
+    rows = list(getattr(event.selection, "rows", []) or [])
+    if rows:
+        picked = ids[rows[0]]
+        if picked and picked != str(st.session_state.get("selected_contact_id", "") or ""):
+            _clear_modal_flags()
+            st.session_state["selected_contact_id"] = picked
+            st.rerun()
+
+@st.dialog("Nuevo contacto")
+def _create_contact_dialog(df: pd.DataFrame) -> None:
     st.markdown("Introduce el **nombre** del nuevo contacto y confirma para crear la ficha.")
     similar_candidates = st.session_state.get(NEW_CONTACT_SIMILAR_CANDIDATES_KEY, [])
     if similar_candidates:
@@ -480,35 +598,52 @@ def _create_contact_dialog(df: pd.DataFrame) -> None:
         placeholder="Ej. Cooperativa San José",
     )
     col_confirm, col_cancel = st.columns(2)
-    with col_confirm:
-        if st.button("Confirmar", width="stretch", key="btn_save_create_contact"):
-            nombre_val = str(st.session_state.get("dialog_new_contact_nombre", "")).strip()
-            if not nombre_val:
-                st.error("Introduce un nombre para el contacto.")
-                return
-            exact_match, similars = _find_similar_contact_names(df, nombre_val)
-            if exact_match:
-                st.error("Ya existe este contacto.")
-                return
-            require_second = bool(st.session_state.get(NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY, False))
-            override_ok = bool(st.session_state.get(NEW_CONTACT_CONFIRM_OVERRIDE_KEY, False))
-            if similars and not (require_second and override_ok):
-                st.session_state[NEW_CONTACT_SIMILAR_CANDIDATES_KEY] = similars
-                st.session_state[NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY] = True
-                st.session_state[NEW_CONTACT_CONFIRM_OVERRIDE_KEY] = True
-                st.rerun()
-            st.session_state.pop(NEW_CONTACT_SIMILAR_CANDIDATES_KEY, None)
-            st.session_state.pop(NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY, None)
-            st.session_state.pop(NEW_CONTACT_CONFIRM_OVERRIDE_KEY, None)
-            _new_contact_flow_start_submit(nombre_val)
-            st.rerun()
-    with col_cancel:
-        if st.button("Cancelar", width="stretch", key="cancel_create_contact_dialog"):
-            _new_contact_flow_cancel()
-            st.rerun()
+    confirm_clicked = col_confirm.button("Confirmar", type="primary", width="stretch", key="btn_save_create_contact")
+    cancel_clicked = col_cancel.button("Cancelar", width="stretch", key="cancel_create_contact_dialog")
 
-def _render_create_contact_confirmation(df: pd.DataFrame) -> None:
-    _create_contact_dialog(df)
+    if cancel_clicked:
+        _new_contact_flow_cancel()
+        st.rerun()
+
+    if not confirm_clicked:
+        return
+    nombre_val = str(st.session_state.get("dialog_new_contact_nombre", "")).strip()
+    if not nombre_val:
+        st.error("Introduce un nombre para el contacto.")
+        return
+    exact_match, similars = _find_similar_contact_names(df, nombre_val)
+    if exact_match:
+        st.error("Ya existe este contacto.")
+        return
+    require_second = bool(st.session_state.get(NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY, False))
+    if similars and not require_second:
+        st.session_state[NEW_CONTACT_SIMILAR_CANDIDATES_KEY] = similars
+        st.session_state[NEW_CONTACT_REQUIRE_SECOND_CONFIRM_KEY] = True
+        st.rerun(scope="fragment")
+    try:
+        with st.spinner("Creando nuevo contacto..."):
+            new_df, new_contact_id, verify = create_empty_contact(
+                df,
+                sheets_service(),
+                nombre=nombre_val,
+            )
+            set_pending_created_contact_id(new_contact_id)
+            bump_contacts_cache()
+            set_contacts_df_override(new_df)
+            if verify.status != "confirmed":
+                set_contacts_write_status(
+                    verify.status,
+                    message=verify.message or "Contacto creado pero pendiente de verificación remota.",
+                )
+            select_contact(new_contact_id)
+        _new_contact_flow_finish(clear_inputs=True)
+        st.rerun()
+    except Exception as exc:
+        st.error(
+            "No se pudo crear el contacto de forma consistente. "
+            "Comprueba conexión/cuota y vuelve a confirmar. "
+            f"Detalle: {exc}"
+        )
 
 def _log_contact_save_actions(
     original: dict[str, str],
@@ -518,33 +653,29 @@ def _log_contact_save_actions(
     """Reserved for future audit; seguimiento comercial ya no se registra desde la ficha Contactos."""
     _ = (original, values, actor)
 
-def _render_delete_contact_confirmation(*, contact_id: str, nombre: str) -> None:
-    """Panel de confirmación tras pulsar «Eliminar contacto» en el formulario."""
-    target_id = str(st.session_state.get(CONTACTS_DELETE_TARGET_ID_KEY, "") or "")
-    target_name = str(st.session_state.get(CONTACTS_DELETE_TARGET_NAME_KEY, "") or "").strip() or nombre
-    if target_id and target_id == str(contact_id):
-        st.warning(
-            f"**Vas a eliminar permanentemente** a «**{html.escape(target_name)}**» (`{html.escape(target_id)}`). "
-            "Se borrarán la fila en **Contactos**, todas las filas de histórico ligadas a este id y las entradas en "
-            "**Acciones**. **No se puede deshacer.**"
-        )
-        c_yes, c_no = st.columns(2)
-        if c_yes.button("Confirmar eliminación", type="primary", key=f"btn_destruct_contact_del_{target_id}"):
-            try:
-                with st.spinner("Eliminando en Google Sheets…"):
-                    delete_contact_and_related_data(sheets_service(), target_id)
-                clear_all_cache()
-                bump_contacts_cache()
-                bump_history_cache()
-                _clear_delete_target()
-                select_contact("")
-                st.session_state[CONTACTS_DELETE_SUCCESS_KEY] = "Contacto y datos relacionados eliminados."
-                st.rerun()
-            except Exception as exc:
-                st.error(f"No se pudo eliminar el contacto: {exc}")
-        if c_no.button("Cancelar", key=f"btn_delete_no_{target_id}"):
+@st.dialog("Eliminar contacto")
+def _delete_contact_dialog(contact_id: str, nombre: str) -> None:
+    st.warning(
+        f"**Vas a eliminar permanentemente** a «**{html.escape(nombre)}**» (`{html.escape(contact_id)}`). "
+        "Se borrarán la fila en **Contactos**, todas las filas de histórico ligadas a este id y las entradas en "
+        "**Acciones**. **No se puede deshacer.**"
+    )
+    c_yes, c_no = st.columns(2)
+    if c_yes.button("Eliminar definitivamente", type="primary", width="stretch", key="btn_confirm_delete_contact"):
+        try:
+            with st.spinner("Eliminando en Google Sheets…"):
+                delete_contact_and_related_data(sheets_service(), contact_id)
+            clear_all_cache()
+            bump_contacts_cache()
+            bump_history_cache()
             _clear_delete_target()
+            st.session_state[CONTACTS_DELETE_SUCCESS_KEY] = "Contacto y datos relacionados eliminados."
+            st.session_state["selected_contact_id"] = ""
             st.rerun()
+        except Exception as exc:
+            st.error(f"No se pudo eliminar el contacto: {exc}")
+    if c_no.button("Cancelar", width="stretch", key="btn_cancel_delete_contact"):
+        st.rerun()
 
 def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     matches = df[df["contact_id"].astype(str) == str(contact_id)]
@@ -565,6 +696,14 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     header_contact = enriched.iloc[0].fillna("").astype(str).to_dict() if not enriched.empty else contact
     last_contact = latest_commercial_contact_row(acciones_df, contact_id)
 
+    bar = st.columns([0.76, 0.24], gap="small")
+    with bar[1]:
+        if st.button("Cerrar ficha", key=f"close_ficha_{contact_id}", width="stretch", icon=":material/close:"):
+            _clear_contact_overlay_state()
+            st.session_state["selected_contact_id"] = ""
+            st.session_state["_contacts_last_selected_id"] = ""
+            st.rerun()
+
     render_contact_detail_header(
         contact=header_contact,
         contact_id=contact_id,
@@ -572,27 +711,29 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
         open_incidents=open_incidents,
         last_contact=last_contact,
     )
-    if st.toggle(
-        "Mostrar línea de tiempo (sensores, campañas, pagos e incidencias)",
-        value=False,
-        key=f"contact_timeline_visible_{contact_id}",
-    ):
-        render_contact_timeline_block(contact_id)
-    st.divider()
+
+    mode_key = f"contact_detail_view_mode_{contact_id}"
+    if st.session_state.get(mode_key) not in _DETAIL_VIEW_OPTIONS:
+        st.session_state[mode_key] = "Datos"
     view_mode = st.radio(
         "Vista de ficha",
-        ("Datos", "Históricos"),
+        _DETAIL_VIEW_OPTIONS,
         horizontal=True,
-        key=f"contact_detail_view_mode_{contact_id}",
+        key=mode_key,
+        label_visibility="collapsed",
     )
+    st.divider()
     if view_mode == "Datos":
         updated = _render_contact_form(df, row_idx, contact)
-    else:
+    elif view_mode == "Históricos":
         updated = None
         _render_history_kind_section(contact, "seguimiento_comercial")
         for kind in ("sensores", "campanas", "suscripciones", "incidencias"):
             _render_history_kind_section(contact, kind)
         _maybe_render_sensor_close_location_modal(contact)
+    else:
+        updated = None
+        render_contact_timeline_block(contact_id)
     _maybe_render_add_history_modal(contact)
     _maybe_render_edit_history_modal(contact)
     return updated if updated is not None else df
@@ -624,39 +765,22 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
 
     with st.form(f"contact_form_{contact['contact_id']}"):
         values: dict[str, str] = {}
-        values["contact_id"] = st.text_input(
-            "Contact id",
-            value=contact.get("contact_id", ""),
-            disabled=True,
-            key=f"{contact.get('contact_id', 'new')}_contact_id",
-        )
+        values["contact_id"] = contact.get("contact_id", "")
         col_left, col_right = st.columns(2, gap="large")
         with col_left:
             _render_form_sections(values, contact, sections_left, section_key="left")
         with col_right:
             _render_form_sections(values, contact, sections_right, section_key="right")
         st.caption("Los cambios no se aplican hasta pulsar **Guardar ficha**.")
-        col_save, col_del = st.columns(2, gap="small")
-        submitted_save = col_save.form_submit_button(
+        submitted_save = st.form_submit_button(
             "Guardar ficha",
             type="primary",
             width="stretch",
             key="btn_save_contact_ficha",
         )
-        submitted_delete = col_del.form_submit_button(
-            "Eliminar contacto…",
-            type="secondary",
-            width="stretch",
-            key="btn_destruct_contact_ficha",
-            help="Borra la ficha, históricos (seguimiento comercial en Acciones, sensores, campañas, suscripciones, incidencias).",
-        )
 
     cid = str(contact.get("contact_id", "") or "")
     nombre_ficha = str(contact.get("nombre", "") or "").strip() or "(sin nombre)"
-
-    if submitted_delete:
-        _set_delete_target(cid, nombre_ficha)
-        st.rerun()
 
     if submitted_save:
         error = validate_contact_date_fields(values)
@@ -702,7 +826,16 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
         st.rerun()
         return new_df
 
-    _render_delete_contact_confirmation(contact_id=cid, nombre=nombre_ficha)
+    st.divider()
+    danger_cols = st.columns([0.66, 0.34], gap="small", vertical_alignment="center")
+    danger_cols[0].caption("Eliminar borra la ficha y todos sus históricos (acciones, sensores, campañas, suscripciones e incidencias).")
+    if danger_cols[1].button(
+        "Eliminar contacto…",
+        key="btn_destruct_contact_ficha",
+        width="stretch",
+        icon=":material/delete:",
+    ):
+        _delete_contact_dialog(cid, nombre_ficha)
     return None
 
 def _render_form_sections(
@@ -717,15 +850,13 @@ def _render_form_sections(
             unsafe_allow_html=True,
         )
         with st.container(border=True):
-            col_count = 1 if title == "Operativa y suscripción" else 2
-            cols = st.columns(col_count)
-            for idx, column in enumerate(columns):
-                with cols[idx % col_count]:
-                    values[column] = _render_contact_field_input(
-                        column,
-                        contact.get(column, ""),
-                        key=f"contact_{contact.get('contact_id', 'new')}_{section_key}_{column}",
-                    )
+            # Un campo por fila: inputs anchos y selects legibles sin truncar.
+            for column in columns:
+                values[column] = _render_contact_field_input(
+                    column,
+                    contact.get(column, ""),
+                    key=f"contact_{contact.get('contact_id', 'new')}_{section_key}_{column}",
+                )
 
 def _persona_proxima_accion_filter_options(df: pd.DataFrame) -> list[str]:
     opts = list(PERSONA_COMERCIAL_OPCIONES)
@@ -741,20 +872,51 @@ def _persona_proxima_accion_filter_options(df: pd.DataFrame) -> list[str]:
         opts = opts + extra
     return [""] + opts
 
-def _render_next_action_strip(df: pd.DataFrame) -> None:
-    if "dash_bucket" not in st.session_state:
-        st.session_state.dash_bucket = ""
-    st.markdown("##### Próximas acciones")
+def _render_next_action_strip(df: pd.DataFrame, *, stacked: bool) -> None:
+    if st.session_state.get("dash_bucket") not in _BUCKET_KEYS:
+        st.session_state["dash_bucket"] = None
+
+    if not stacked:
+        st.markdown("##### Filtros")
+
     persona_opts = _persona_proxima_accion_filter_options(df)
     current_persona = str(st.session_state.get(DASH_PERSONA_PROXIMA_ACCION_KEY, "") or "")
     persona_index = persona_opts.index(current_persona) if current_persona in persona_opts else 0
-    st.selectbox(
+    estado_opts = [""] + list(CONTACT_ESTADO_OPCIONES)
+    current_estado = str(st.session_state.get(DASH_ESTADO_FILTER_KEY, "") or "")
+    estado_index = estado_opts.index(current_estado) if current_estado in estado_opts else 0
+    responsable_opts = [""] + crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+    current_responsable = str(st.session_state.get(DASH_RESPONSABLE_FILTER_KEY, "") or "")
+    responsable_index = responsable_opts.index(current_responsable) if current_responsable in responsable_opts else 0
+
+    if stacked:
+        persona_col = estado_col = responsable_col = st
+    else:
+        select_cols = st.columns(3, gap="small")
+        persona_col, estado_col, responsable_col = select_cols[0], select_cols[1], select_cols[2]
+
+    persona_col.selectbox(
         "Persona próxima acción",
         options=persona_opts,
         index=persona_index,
         format_func=lambda v: "Todas" if not v else v,
         key=DASH_PERSONA_PROXIMA_ACCION_KEY,
     )
+    estado_col.selectbox(
+        "Estado",
+        options=estado_opts,
+        index=estado_index,
+        format_func=lambda v: "Todos" if not v else v,
+        key=DASH_ESTADO_FILTER_KEY,
+    )
+    responsable_col.selectbox(
+        "Responsable del cliente",
+        options=responsable_opts,
+        index=responsable_index,
+        format_func=lambda v: "Todos" if not v else v,
+        key=DASH_RESPONSABLE_FILTER_KEY,
+    )
+
     persona_proxima = str(st.session_state.get(DASH_PERSONA_PROXIMA_ACCION_KEY, "") or "")
     scoped = filter_by_persona_proxima_accion(df, persona_proxima)
     dash_responsable = str(st.session_state.get(DASH_RESPONSABLE_FILTER_KEY, "") or "")
@@ -762,42 +924,15 @@ def _render_next_action_strip(df: pd.DataFrame) -> None:
     dash_estado = str(st.session_state.get(DASH_ESTADO_FILTER_KEY, "") or "")
     scoped = filter_by_contact_estado(scoped, dash_estado)
     counts = next_action_bucket_counts(scoped)
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    for col, key, label in (
-        (c1, "past", "Fecha anterior"),
-        (c2, "today", "Hoy"),
-        (c3, "tomorrow", "Mañana"),
-        (c4, "future", "Fecha futura"),
-    ):
-        active = st.session_state.dash_bucket == key
-        if col.button(
-            f"{label}\n{counts[key]}",
-            key=f"dash_bucket_{key}",
-            width="stretch",
-            type="primary" if active else "secondary",
-        ):
-            _clear_modal_flags()
-            st.session_state.dash_bucket = "" if active else key
-            st.rerun()
-    estado_opts = [""] + list(CONTACT_ESTADO_OPCIONES)
-    current_estado = str(st.session_state.get(DASH_ESTADO_FILTER_KEY, "") or "")
-    estado_index = estado_opts.index(current_estado) if current_estado in estado_opts else 0
-    st.selectbox(
-        "Estado",
-        options=estado_opts,
-        index=estado_index,
-        format_func=lambda v: "Todos" if not v else v,
-        key=DASH_ESTADO_FILTER_KEY,
-    )
-    responsable_opts = [""] + crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
-    current_responsable = str(st.session_state.get(DASH_RESPONSABLE_FILTER_KEY, "") or "")
-    responsable_index = responsable_opts.index(current_responsable) if current_responsable in responsable_opts else 0
-    st.selectbox(
-        "Responsable del cliente",
-        options=responsable_opts,
-        index=responsable_index,
-        format_func=lambda v: "Todos" if not v else v,
-        key=DASH_RESPONSABLE_FILTER_KEY,
+
+    st.segmented_control(
+        "Próxima acción",
+        options=_BUCKET_KEYS,
+        format_func=lambda k: f"{_BUCKET_LABELS[k]} · {counts[k]}",
+        selection_mode="single",
+        key="dash_bucket",
+        on_change=_clear_modal_flags,
+        help="Filtra por la fecha de la próxima acción. Vuelve a pulsar para quitar el filtro.",
     )
 
 def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
