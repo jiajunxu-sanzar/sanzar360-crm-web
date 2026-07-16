@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from config.contact_estado import is_contact_perdido
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from app.state import select_contact
 from services.map_service import build_contacts_map, resolve_row_coordinates
 from ui.components.map import render_folium_map
@@ -13,7 +13,7 @@ MAP_SHOW_LOST_KEY = "map.show_lost"
 
 
 def render(df: pd.DataFrame) -> None:
-    st.title(page_menu_title("Mapa"))
+    render_page_header("Mapa")
     st.caption(
         "Ubicación por prioridad: `coordenadas` (`lat, lon`), si faltan `municipio`, y si falta `provincia`."
     )

@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import load_history_rows_cached
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from app.state import select_contact
 from app.telemetry import timed
 from services.history_service import parse_sensor_asset_occurrences
@@ -13,7 +13,7 @@ from ui.components.asset_search import asset_occurrences_df
 
 def render(_: pd.DataFrame) -> None:
     with timed("asset_search.render"):
-        st.title(page_menu_title("Buscador sensores/SIM"))
+        render_page_header("Buscador sensores/SIM")
         query = st.text_input("Buscar por serial, SIM, cliente, AWS user ID o asociación", key="asset_query")
         asset_type = st.selectbox("Tipo de activo", ["", "uc501", "teros10", "sim", "ug67", "em500", "em300", "uc512"])
 

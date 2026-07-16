@@ -8,7 +8,7 @@ import streamlit as st
 
 from app import auth
 from app.cache import load_contact_sensor_overview_cached, load_users_cached, sheets_service
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from app.state import bump_contacts_cache, select_contact, set_contacts_df_override
 from services.clientes_board import (
     VER_TODOS,
@@ -127,7 +127,7 @@ def _render_cliente_card(df: pd.DataFrame, payload, *, cache_ver: int) -> pd.Dat
 
 
 def render(df: pd.DataFrame) -> None:
-    st.title(page_menu_title("Clientes"))
+    render_page_header("Clientes")
     today = date.today()
     st.caption(today.strftime("%d/%m/%Y"))
 

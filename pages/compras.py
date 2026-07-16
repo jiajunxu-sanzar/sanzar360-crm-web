@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import compras_service, load_compras_cached
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from app.state import bump_compras_cache
 from config.settings import COMPRAS_ESTADOS, COMPRAS_HEADERS, PERSONA_COMERCIAL_OPCIONES
 from services.compras_service import (
@@ -625,7 +625,7 @@ def _render_links_row(row: pd.Series) -> None:
 
 
 def render(_: pd.DataFrame) -> None:
-    st.title(page_menu_title("Compras"))
+    render_page_header("Compras")
     st.caption("Seguimiento de compras, PIs comparativas y generación de Purchase Orders.")
 
     success = str(st.session_state.pop(COMPRAS_SUCCESS_KEY, "") or "").strip()

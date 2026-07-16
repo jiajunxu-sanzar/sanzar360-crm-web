@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from services.pricing_calculator import (
     compare_annual_vs_monthly,
     compute_quote,
@@ -48,7 +48,7 @@ def render(_: pd.DataFrame) -> None:
         """,
         unsafe_allow_html=True,
     )
-    st.title(page_menu_title("Pricing"))
+    render_page_header("Pricing")
 
     c1, c2 = st.columns([0.6, 0.4], gap="large")
 

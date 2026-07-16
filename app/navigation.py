@@ -60,6 +60,91 @@ def page_menu_title(canonical_page: str) -> str:
     return PAGE_MENU_LABELS[canonical_page]
 
 
+# Iconos Material Symbols para la navegación (Streamlit ``icon=":material/...:"``).
+PAGE_ICONS: Final[dict[str, str]] = {
+    "Dashboard": ":material/monitoring:",
+    "Acciones": ":material/bolt:",
+    "Centro de alarmas": ":material/notifications_active:",
+    "Contactos": ":material/group:",
+    "Clientes": ":material/potted_plant:",
+    "Usuarios": ":material/admin_panel_settings:",
+    "Vacaciones": ":material/beach_access:",
+    "Buscador sensores/SIM": ":material/search:",
+    "Mapa": ":material/map:",
+    "Email": ":material/mail:",
+    "Inventario": ":material/inventory_2:",
+    "Compras": ":material/shopping_cart:",
+    "Facturas": ":material/receipt_long:",
+    "Pricing": ":material/payments:",
+    "Referidos": ":material/handshake:",
+}
+
+# Subtítulo mostrado bajo el título en la cabecera de cada página.
+PAGE_DESCRIPTIONS: Final[dict[str, str]] = {
+    "Dashboard": "Visión general del pipeline y próximas acciones",
+    "Acciones": "Actividad comercial del equipo por semana y canal",
+    "Centro de alarmas": "Bandeja de trabajo: incidencias y seguimientos pendientes",
+    "Contactos": "Fichas, seguimiento comercial e históricos",
+    "Clientes": "Tablero diario de clientes y potenciales",
+    "Usuarios": "Gestión de usuarios y roles del CRM",
+    "Vacaciones": "Ausencias, teletrabajo y festivos del equipo",
+    "Buscador sensores/SIM": "Localiza un activo por serial o SIM y consulta su disponibilidad",
+    "Mapa": "Contactos geolocalizados sobre el mapa",
+    "Email": "Envío de emails con plantillas y seguimiento",
+    "Inventario": "Sensores, SIMs, gateways y sus asociaciones",
+    "Compras": "Pedidos de compra y proveedores",
+    "Facturas": "Generación de facturas en PDF",
+    "Pricing": "Calculadora de precios",
+    "Referidos": "Programa de referidos",
+}
+
+# Agrupación visual del menú lateral (no afecta a permisos: cada sección se
+# filtra por rol y las secciones vacías se ocultan).
+NAV_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
+    (
+        "Comercial",
+        (
+            "Dashboard",
+            "Acciones",
+            "Contactos",
+            "Clientes",
+            "Centro de alarmas",
+            "Mapa",
+            "Email",
+            "Referidos",
+        ),
+    ),
+    (
+        "Operaciones",
+        (
+            "Inventario",
+            "Buscador sensores/SIM",
+            "Compras",
+            "Facturas",
+            "Pricing",
+        ),
+    ),
+    (
+        "Equipo",
+        (
+            "Vacaciones",
+            "Usuarios",
+        ),
+    ),
+)
+
+
+def nav_sections_for_role(role: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Secciones del menú con solo las páginas visibles para el rol (vacías fuera)."""
+    allowed = frozenset(pages_for_role(role))
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for section_title, section_pages in NAV_SECTIONS:
+        visible = tuple(p for p in section_pages if p in allowed)
+        if visible:
+            out.append((section_title, visible))
+    return tuple(out)
+
+
 _PAGES_SET: Final[frozenset[str]] = frozenset(PAGES)
 
 ACCIONES_PAGE: Final[str] = "Acciones"
@@ -141,6 +226,15 @@ def _assert_navigation_contract() -> None:
         raise AssertionError("Las pestañas de employee deben ser visibles también para sales.")
     if frozenset(PAGE_MENU_LABELS.keys()) != _PAGES_SET:
         raise AssertionError("PAGE_MENU_LABELS keys must match PAGES exactly")
+    if frozenset(PAGE_ICONS.keys()) != _PAGES_SET:
+        raise AssertionError("PAGE_ICONS keys must match PAGES exactly")
+    if frozenset(PAGE_DESCRIPTIONS.keys()) != _PAGES_SET:
+        raise AssertionError("PAGE_DESCRIPTIONS keys must match PAGES exactly")
+    section_pages_flat = [p for _, pages in NAV_SECTIONS for p in pages]
+    if len(section_pages_flat) != len(set(section_pages_flat)):
+        raise AssertionError("NAV_SECTIONS must not repeat pages")
+    if frozenset(section_pages_flat) != _PAGES_SET:
+        raise AssertionError("NAV_SECTIONS must cover PAGES exactly")
 
 
 def pages_for_role(role: str) -> tuple[str, ...]:

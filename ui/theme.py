@@ -75,6 +75,211 @@ def apply_theme() -> None:
           border-color: var(--ui-border-strong) !important;
         }
 
+        /* ── Sidebar shell (Linear-style) ─────────────────────────────────── */
+        div[data-testid="stSidebar"] .block-container,
+        div[data-testid="stSidebar"] > div:first-child {
+          padding-top: 1.1rem;
+        }
+        .sanzar-brand {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 2px 4px 10px;
+        }
+        .sanzar-brand-mark {
+          width: 28px;
+          height: 28px;
+          border-radius: 8px;
+          background: var(--ui-accent);
+          color: var(--ui-accent-contrast);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: 700;
+          font-size: 0.9375rem;
+          letter-spacing: -0.02em;
+          flex-shrink: 0;
+        }
+        .sanzar-brand-name {
+          font-size: 1rem;
+          font-weight: 650;
+          letter-spacing: -0.02em;
+          color: var(--ui-text);
+          line-height: 1.1;
+        }
+        .sanzar-brand-sub {
+          font-size: 0.6875rem;
+          color: var(--ui-text-muted);
+          margin-top: 1px;
+        }
+        div[data-testid="stSidebar"] img { border-radius: 6px; }
+
+        /* User chip */
+        .sanzar-user-chip {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 8px 10px;
+          margin: 2px 0 10px;
+          border: 1px solid var(--ui-border);
+          border-radius: 10px;
+          background: var(--ui-bg-elevated);
+        }
+        .sanzar-user-avatar {
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          background: var(--sanzar-green-soft);
+          color: var(--ui-accent-hover);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 0.75rem;
+          font-weight: 700;
+          flex-shrink: 0;
+        }
+        .sanzar-user-name {
+          font-size: 0.8438rem;
+          font-weight: 600;
+          color: var(--ui-text);
+          line-height: 1.2;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .sanzar-user-role {
+          font-size: 0.6875rem;
+          color: var(--ui-text-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+
+        /* Nav sections + items (buttons restyled as nav rows) */
+        .sanzar-nav-section {
+          margin: 10px 0 2px;
+          padding: 0 4px;
+          font-size: 0.6875rem;
+          font-weight: 650;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: var(--ui-text-muted);
+        }
+        [class*="st-key-sanzar_nav"] div[data-testid="stVerticalBlock"] {
+          gap: 0.14rem;
+        }
+        [class*="st-key-nav_btn_"] button {
+          width: 100%;
+          justify-content: flex-start !important;
+          text-align: left !important;
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          border-radius: 8px !important;
+          padding: 0.3rem 0.55rem !important;
+          min-height: 2.05rem !important;
+          font-weight: 500 !important;
+          font-size: 0.875rem !important;
+          color: var(--ui-text-body) !important;
+        }
+        [class*="st-key-nav_btn_"] button:hover {
+          background: var(--ui-hairline-soft) !important;
+          color: var(--ui-text) !important;
+        }
+        [class*="st-key-nav_btn_"] button [data-testid="stIconMaterial"] {
+          font-size: 1.05rem;
+          color: var(--ui-text-muted);
+        }
+        [class*="st-key-nav_btn_"] button[kind="primary"] {
+          background: var(--sanzar-green-soft) !important;
+          color: var(--ui-accent-hover) !important;
+          font-weight: 600 !important;
+        }
+        [class*="st-key-nav_btn_"] button[kind="primary"] [data-testid="stIconMaterial"] {
+          color: var(--ui-accent) !important;
+        }
+        [class*="st-key-nav_btn_"] button:focus:not(:focus-visible) {
+          box-shadow: none !important;
+        }
+
+        /* Sidebar utilities (reload / reset / logout) */
+        [class*="st-key-nav_util_"] button {
+          background: transparent !important;
+          border: 1px solid var(--ui-border) !important;
+          border-radius: 8px !important;
+          color: var(--ui-text-muted) !important;
+          font-size: 0.8125rem !important;
+          font-weight: 500 !important;
+          min-height: 1.9rem !important;
+          padding: 0.2rem 0.5rem !important;
+        }
+        [class*="st-key-nav_util_"] button:hover {
+          background: var(--ui-hairline-soft) !important;
+          color: var(--ui-text) !important;
+          border-color: var(--ui-border-strong) !important;
+        }
+        .sanzar-sidebar-divider {
+          border: none;
+          border-top: 1px solid var(--ui-border);
+          margin: 10px 0 8px;
+        }
+
+        /* Login card */
+        .sanzar-login-title {
+          margin: 4px 0 0 !important;
+          font-size: 1.05rem !important;
+          font-weight: 650 !important;
+          color: var(--ui-text) !important;
+        }
+        .sanzar-login-sub {
+          font-size: 0.8125rem;
+          color: var(--ui-text-muted);
+          margin: 2px 0 8px;
+        }
+
+        /* ── Page header (todas las páginas) ──────────────────────────────── */
+        .sanzar-page-header {
+          margin: 0 0 1.1rem;
+          padding-bottom: 0.85rem;
+          border-bottom: 1px solid var(--ui-border);
+        }
+        .sanzar-page-title {
+          margin: 0 !important;
+          padding: 0 !important;
+          font-size: 1.55rem !important;
+          font-weight: 650 !important;
+          letter-spacing: -0.025em !important;
+          line-height: 1.2 !important;
+          color: var(--ui-text) !important;
+        }
+        .sanzar-page-desc {
+          margin: 4px 0 0 !important;
+          padding: 0 !important;
+          font-size: 0.875rem;
+          color: var(--ui-text-muted);
+          line-height: 1.45;
+        }
+
+        /* Contact list rows (buttons) — table-like, quiet */
+        [class*="st-key-contact_row_"] button {
+          width: 100%;
+          justify-content: flex-start !important;
+          text-align: left !important;
+          background: transparent !important;
+          border: none !important;
+          border-bottom: 1px solid var(--ui-hairline-soft) !important;
+          border-radius: 6px !important;
+          padding: 0.34rem 0.6rem !important;
+          min-height: 2rem !important;
+          font-size: 0.8438rem !important;
+          font-weight: 450 !important;
+          color: var(--ui-text-body) !important;
+          box-shadow: none !important;
+        }
+        [class*="st-key-contact_row_"] button:hover {
+          background: var(--ui-hairline-soft) !important;
+          color: var(--ui-text) !important;
+        }
+
         /* Sidebar — blocked/unavailable pages */
         .sanzar-nav-blocked-label {
           margin: 6px 0 4px;
@@ -91,6 +296,52 @@ def apply_theme() -> None:
           background: var(--ui-bg-page);
           font-size: 0.85rem;
         }
+
+        /* ── Global input/control refinements (Linear-style) ─────────────── */
+        div[data-baseweb="input"] > div,
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="textarea"] > div {
+          border-radius: 8px !important;
+          border-color: var(--ui-border) !important;
+          background: var(--ui-bg-elevated) !important;
+        }
+        div[data-baseweb="input"] > div:focus-within,
+        div[data-baseweb="select"] > div:focus-within,
+        div[data-baseweb="textarea"] > div:focus-within {
+          border-color: var(--ui-accent) !important;
+          box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 14%, transparent) !important;
+        }
+        .stTextInput input, .stNumberInput input, .stTextArea textarea,
+        .stSelectbox div[data-baseweb="select"] {
+          font-size: 0.875rem !important;
+        }
+        div[data-testid="stWidgetLabel"] p {
+          font-size: 0.8125rem !important;
+          font-weight: 500;
+          color: var(--ui-text-body);
+        }
+        details[data-testid="stExpander"] {
+          border: 1px solid var(--ui-border) !important;
+          border-radius: 10px !important;
+          background: var(--ui-bg-elevated);
+        }
+        details[data-testid="stExpander"] summary {
+          font-size: 0.875rem;
+          font-weight: 550;
+        }
+        div[data-testid="stDialog"] > div:first-child {
+          border-radius: 14px !important;
+        }
+        div[data-testid="stForm"] {
+          border: 1px solid var(--ui-border) !important;
+          border-radius: 12px !important;
+        }
+        button[data-baseweb="tab"] {
+          font-size: 0.875rem !important;
+          font-weight: 500 !important;
+        }
+        div[data-testid="stToolbar"] { opacity: 0.35; }
+        div[data-testid="stToolbar"]:hover { opacity: 1; }
 
         /* Cards & chips */
         .sanzar-card {

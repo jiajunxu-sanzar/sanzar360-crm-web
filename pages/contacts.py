@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from app.cache import (
     clear_all_cache,
     history_service,
@@ -92,6 +92,7 @@ from services.sheet_date_format import (
     validate_dd_mm_yyyy_fields,
 )
 from ui.components.cards import card, chip
+from ui.palette import contact_status_style
 from ui.components.customer_timeline import render_contact_timeline_block
 from ui.components.commercial_followup import render_commercial_followup_list
 from ui.components.contact_detail_header import render_contact_detail_header
@@ -423,7 +424,7 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
             _clear_contact_overlay_state(keep_contact_id=current_selected)
             st.session_state["_contacts_last_selected_id"] = current_selected
 
-        st.title(page_menu_title("Contactos"))
+        render_page_header("Contactos")
         if st.session_state.get(CONTACTS_SAVE_SUCCESS_KEY):
             st.success(str(st.session_state.pop(CONTACTS_SAVE_SUCCESS_KEY)))
         if st.session_state.get(CONTACTS_DELETE_SUCCESS_KEY):
@@ -638,10 +639,15 @@ def _render_contact_table(
             if contact_id == selected_contact_id:
                 row_class = "sanzar-contact-row selected sanzar-contact-row-lost" if is_lost else "sanzar-contact-row selected"
                 nombre_display = f"{prefix}{nombre_raw}"
+                estado_html = (
+                    chip(row.get("estado", "") or "Sin estado", contact_status_style(row.get("estado", "")))
+                    if row.get("estado", "")
+                    else html.escape(row.get("estado", ""))
+                )
                 st.markdown(
                     f"<div class='{row_class}'>"
                     f"<span class='sanzar-contact-cell'>{html.escape(nombre_display)}</span>"
-                    f"<span class='sanzar-contact-cell'>{html.escape(row.get('estado', ''))}</span>"
+                    f"<span class='sanzar-contact-cell'>{estado_html}</span>"
                     f"<span class='sanzar-contact-cell'>{html.escape(row.get('provincia', ''))}</span>"
                     f"<span class='sanzar-contact-cell'>{html.escape(row.get('municipio', ''))}</span>"
                     "</div>",

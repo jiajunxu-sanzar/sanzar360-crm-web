@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from app.cache import load_acciones_cached, load_users_cached
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from app.telemetry import timed
 from services.actions_dashboard_stats import (
     commercial_team_roster,
@@ -85,7 +85,7 @@ def _render_person_view(df) -> None:
 
 
 def render() -> None:
-    st.title(page_menu_title("Acciones"))
+    render_page_header("Acciones")
     st.caption(
         "Seguimiento comercial por contacto (email, llamada, en persona). "
         "Una fila por touchpoint en la hoja Acciones."

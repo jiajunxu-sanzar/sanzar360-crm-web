@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 
 # ── Modelo económico ────────────────────────────────────────────────────────
 ANNUAL_SUBSCRIPTION_EUR = 360
@@ -323,7 +323,7 @@ def build_referidos_figure() -> go.Figure:
 
 
 def render(_: pd.DataFrame) -> None:
-    st.title(page_menu_title("Referidos"))
+    render_page_header("Referidos")
 
     paid_by_new_farmer = ANNUAL_SUBSCRIPTION_EUR - MONTH_DISCOUNT_NEW_EUR
 

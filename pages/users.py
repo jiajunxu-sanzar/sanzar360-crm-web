@@ -4,11 +4,11 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import load_users_cached
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 
 
 def render(_: pd.DataFrame) -> None:
-    st.title(page_menu_title("Usuarios"))
+    render_page_header("Usuarios")
     st.caption("Roles y acceso por pestañas.")
     users = load_users_cached(st.session_state.get("users_cache_version", 0))
     df = pd.DataFrame(

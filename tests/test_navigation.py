@@ -91,3 +91,26 @@ def test_unblocked_list_ordered_like_pages() -> None:
     unavailable = navigation.unavailable_pages_for_role("employee")
     idx = [navigation.PAGES.index(p) for p in unavailable]
     assert idx == sorted(idx)
+
+
+def test_nav_sections_cover_pages_exactly() -> None:
+    flat = [p for _, pages in navigation.NAV_SECTIONS for p in pages]
+    assert sorted(flat) == sorted(navigation.PAGES)
+    assert len(flat) == len(set(flat))
+
+
+def test_nav_sections_for_role_match_pages_for_role() -> None:
+    for role in ("admin", "sales", "agro_team", "employee"):
+        visible = [p for _, pages in navigation.nav_sections_for_role(role) for p in pages]
+        assert sorted(visible) == sorted(navigation.pages_for_role(role))
+
+
+def test_nav_sections_for_role_hides_empty_sections() -> None:
+    sections = navigation.nav_sections_for_role("employee")
+    assert all(pages for _, pages in sections)
+
+
+def test_page_icons_and_descriptions_complete() -> None:
+    for page in navigation.PAGES:
+        assert navigation.PAGE_ICONS[page].startswith(":material/")
+        assert navigation.PAGE_DESCRIPTIONS[page].strip()

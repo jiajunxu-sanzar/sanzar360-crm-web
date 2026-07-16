@@ -14,7 +14,8 @@ import streamlit as st
 
 from app import auth
 from app.cache import history_service, load_users_cached
-from app.navigation import ROLE_SALES, normalize_role, page_menu_title
+from app.navigation import ROLE_SALES, normalize_role
+from ui.components.page_header import render_page_header
 from app.smtp_profiles import SmtpResolved, resolve_smtp_detail
 from app.state import bump_contacts_cache, bump_history_cache, set_contacts_df_override
 from config.settings import (
@@ -434,7 +435,7 @@ def _render_email_password_gate() -> bool:
 
 
 def render(df: pd.DataFrame) -> None:
-    st.title(page_menu_title("Email"))
+    render_page_header("Email")
     if df.empty:
         st.info("No hay contactos cargados.")
         return

@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import history_service, load_acciones_cached
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from services.contact_proxima_index import enrich_contacts_with_proxima
 from app.state import select_contact
 from config.contact_estado import is_terminal_contact_estado, normalize_contact_estado
@@ -376,7 +376,7 @@ def _campaigns_items(contacts_df: pd.DataFrame, hs: HistoryService) -> list[Work
 
 
 def render(contacts_df: pd.DataFrame) -> None:
-    st.title(page_menu_title("Centro de alarmas"))
+    render_page_header("Centro de alarmas")
     st.caption("Bandeja de trabajo: prioridad, plazos y siguiente acción sobre la ficha del contacto")
 
     contacts_df = enrich_contacts_with_proxima(

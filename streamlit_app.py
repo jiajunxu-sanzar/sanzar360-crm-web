@@ -7,13 +7,13 @@ from app import auth
 from app.cache import load_contacts_cached, load_users_cached, sheets_service
 from app.navigation import (
     ACCIONES_PAGE,
+    PAGE_ICONS,
     PAGES_REQUIRING_CONTACTS,
     ROLE_ADMIN,
     ROLES_WITH_ACCIONES_PAGE,
+    nav_sections_for_role,
     normalize_role,
-    page_menu_title,
     pages_for_role,
-    unavailable_pages_for_role,
 )
 from app.remote_sync import check_remote_changes, reset_remote_sync_state
 from app.telemetry import timed
@@ -47,7 +47,7 @@ from pages import (
 from ui.theme import apply_theme
 
 
-st.set_page_config(page_title="Sanzar CRM", page_icon="S", layout="wide")
+st.set_page_config(page_title="Sanzar CRM", page_icon="🌱", layout="wide")
 apply_theme()
 init_state()
 
@@ -99,9 +99,33 @@ def _close_all_overlays() -> None:
         ):
             st.session_state.pop(key, None)
 
+def _page_key_slug(page: str) -> str:
+    """Clave estable y segura para widgets/CSS a partir del nombre de página."""
+    return "".join(ch if ch.isalnum() else "_" for ch in page).lower()
+
+
+def _user_initials(nombre: str) -> str:
+    parts = [p for p in str(nombre or "").split() if p]
+    if not parts:
+        return "?"
+    if len(parts) == 1:
+        return parts[0][:2].upper()
+    return (parts[0][0] + parts[-1][0]).upper()
+
+
+def _render_sidebar_brand() -> None:
+    st.markdown(
+        "<div class='sanzar-brand'>"
+        "<div class='sanzar-brand-mark'>S</div>"
+        "<div><div class='sanzar-brand-name'>Sanzar CRM</div>"
+        "<div class='sanzar-brand-sub'>sanzar360</div></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 with st.sidebar:
-    st.title("Sanzar CRM")
-    st.caption("Web · Streamlit")
+    _render_sidebar_brand()
 
     users_cache_version = st.session_state.get("users_cache_version", 0)
     app_users = load_users_cached(users_cache_version)
@@ -122,6 +146,11 @@ with st.sidebar:
             # User list changed under us — force a clean logout.
             auth.logout()
 
+        st.markdown("<p class='sanzar-login-title'>Inicia sesión</p>", unsafe_allow_html=True)
+        st.markdown(
+            "<p class='sanzar-login-sub'>Selecciona tu usuario e introduce la contraseña.</p>",
+            unsafe_allow_html=True,
+        )
         with st.form("login_form", clear_on_submit=False):
             # Use a key that is NEVER the same as the auth identity key so
             # Streamlit's widget machinery cannot overwrite the logged-in user.
@@ -144,45 +173,49 @@ with st.sidebar:
 
         if st.session_state.get("login_error"):
             st.error(st.session_state["login_error"])
-
-        st.info("Selecciona tu usuario e introduce la contraseña para acceder.")
         st.stop()
 
     # --- Authenticated from here onwards ---
     selected_user = user_by_id[auth.get_authenticated_user_id()]
-    st.caption(f"Usuario: {selected_user.nombre}  ·  Rol: {selected_user.role}")
+    st.markdown(
+        "<div class='sanzar-user-chip'>"
+        f"<div class='sanzar-user-avatar'>{_user_initials(selected_user.nombre)}</div>"
+        f"<div><div class='sanzar-user-name'>{selected_user.nombre}</div>"
+        f"<div class='sanzar-user-role'>{selected_user.role}</div></div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     available_pages = pages_for_role(selected_user.role)
-    blocked_pages = unavailable_pages_for_role(selected_user.role)
 
     pending_nav_page = st.session_state.get("pending_nav_page", "")
     if pending_nav_page in available_pages:
         st.session_state["active_page"] = pending_nav_page
-        st.session_state["nav_page"] = pending_nav_page
         st.session_state["pending_nav_page"] = ""
 
     active_page = st.session_state.get("active_page", available_pages[0])
     if active_page not in available_pages:
         active_page = available_pages[0]
-    if "nav_page" not in st.session_state or st.session_state.get("nav_page") not in available_pages:
-        st.session_state["nav_page"] = active_page
 
-    page = st.radio(
-        "Navegación",
-        available_pages,
-        key="nav_page",
-        format_func=page_menu_title,
-    )
-    if blocked_pages:
-        st.markdown(
-            "<p class='sanzar-nav-blocked-label'>No disponible para tu rol</p>",
-            unsafe_allow_html=True,
-        )
-        blocked_html = "".join(
-            f"<div class='sanzar-nav-blocked-item'>{page_menu_title(p)}</div>"
-            for p in blocked_pages
-        )
-        st.markdown(blocked_html, unsafe_allow_html=True)
+    # Navegación agrupada por secciones (botones estilizados como items de menú).
+    with st.container(key="sanzar_nav"):
+        for section_title, section_pages in nav_sections_for_role(selected_user.role):
+            st.markdown(
+                f"<p class='sanzar-nav-section'>{section_title}</p>",
+                unsafe_allow_html=True,
+            )
+            for nav_page_name in section_pages:
+                is_active = nav_page_name == active_page
+                if st.button(
+                    nav_page_name,
+                    key=f"nav_btn_{_page_key_slug(nav_page_name)}",
+                    icon=PAGE_ICONS.get(nav_page_name),
+                    type="primary" if is_active else "tertiary",
+                    width="stretch",
+                ) and not is_active:
+                    st.session_state["active_page"] = nav_page_name
+                    st.rerun()
+    page = active_page
 
     st.session_state["_last_page"] = st.session_state.get("_last_page", page)
     if st.session_state["_last_page"] != page:
@@ -194,9 +227,13 @@ with st.sidebar:
     if page != "Email":
         st.session_state.pop("_email_portal_unlocked_uid", None)
 
+    st.markdown("<hr class='sanzar-sidebar-divider'/>", unsafe_allow_html=True)
+
     reload_col, reset_col = st.columns(2, gap="small")
     if reload_col.button(
-        "🔄 Recargar datos",
+        "Recargar",
+        key="nav_util_reload",
+        icon=":material/refresh:",
         width="stretch",
         help="Vuelve a leer desde Google Sheets sin perder filtros ni selección.",
     ):
@@ -206,9 +243,10 @@ with st.sidebar:
         st.rerun()
 
     if reset_col.button(
-        "🧹 Reiniciar sesión",
+        "Reiniciar",
+        key="nav_util_reset",
+        icon=":material/mop:",
         width="stretch",
-        type="secondary",
         help="Limpia toda la sesión (filtros, selección, diálogos) manteniendo el login.",
     ):
         _close_all_overlays()
@@ -217,7 +255,12 @@ with st.sidebar:
         st.toast("Sesión reiniciada", icon="🧹")
         st.rerun()
 
-    if st.button("Cerrar sesión", width="stretch", type="secondary"):
+    if st.button(
+        "Cerrar sesión",
+        key="nav_util_logout",
+        icon=":material/logout:",
+        width="stretch",
+    ):
         auth.logout()
         st.rerun()
 

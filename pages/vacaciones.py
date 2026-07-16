@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import sheets_service
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from services.vacations_service import VacationsService, expand_absence_day_types
 
 _VAC_OVERLAY_KEY = "vacaciones.manage_absences_open"
@@ -31,7 +31,7 @@ def load_vacations_bundle(_version: int = 0) -> tuple[pd.DataFrame, pd.DataFrame
 
 
 def render(_: pd.DataFrame) -> None:
-    st.title(page_menu_title("Vacaciones"))
+    render_page_header("Vacaciones")
     st.caption("Control de ausencias, teletrabajo y festivos (Leganes por defecto).")
 
     reload_key = st.session_state.get("vacations_cache_version", 0)

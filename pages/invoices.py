@@ -5,7 +5,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from services.invoice_pdf_web import (
     BASE_EUR,
     DEFAULT_DESCRIPTION,
@@ -17,7 +17,7 @@ from services.invoice_pdf_web import (
 
 
 def render(_contacts_df: pd.DataFrame) -> None:
-    st.title(page_menu_title("Facturas"))
+    render_page_header("Facturas")
     customer_name = st.text_input(
         "Nombre cliente (en la factura)",
         value="",

@@ -8,7 +8,7 @@ import streamlit as st
 
 from app.cache import history_service, inventory_service, load_inventory_cached, load_inventory_model_fields_cached
 from services.inventory_export import build_association_map_pdf_bytes
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from app.state import bump_inventory_cache
 from config.settings import INVENTORY_HEADERS, INVENTORY_MODEL_FIELD_HEADERS
 from services.inventory_service import normalize_model_name
@@ -682,7 +682,7 @@ def _render_inventory_cards_section(filtered: pd.DataFrame) -> None:
 
 
 def render(_: pd.DataFrame) -> None:
-    st.title(page_menu_title("Inventario"))
+    render_page_header("Inventario")
     if INVENTORY_VIEW_MODE_KEY not in st.session_state:
         st.session_state[INVENTORY_VIEW_MODE_KEY] = "list"
     try:

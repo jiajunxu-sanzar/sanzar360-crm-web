@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app.cache import load_acciones_cached
-from app.navigation import page_menu_title
+from ui.components.page_header import render_page_header
 from app.telemetry import timed
 from services.contact_proxima_index import enrich_contacts_with_proxima
 from services.dashboard_stats import funnel_counts, kpi_summary, value_counts
@@ -16,7 +16,7 @@ from ui.components.dashboard_cards import (
 
 
 def render(df: pd.DataFrame) -> None:
-    st.title(page_menu_title("Dashboard"))
+    render_page_header("Dashboard")
     st.caption("Resumen del CRM: contactos, embudo comercial y distribución geográfica y agrícola.")
 
     acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
