@@ -481,28 +481,66 @@ class HistoryService:
         self._sensor_occurrences_cache = None
 
     def load_all(self) -> None:
-        for kind in HISTORY_SPECS:
-            self.load_kind(kind, force=True)
+        self._load_kinds_batch(list(HISTORY_SPECS.keys()))
 
     def load_kind(self, kind: HistoryKind, *, force: bool = False) -> None:
         if not force and kind in self._loaded:
             return
+        if force:
+            spec = HISTORY_SPECS[kind]
+            with timed("history.load_kind", kind=kind):
+                df = self._sheets_service.read_worksheet_df(spec.worksheet_name, list(spec.headers))
+                self._set_frame(kind, df)
+            return
+        # Carga perezosa: las páginas suelen necesitar varios históricos en el
+        # mismo render, así que se traen TODOS los pendientes en una única
+        # llamada API (values.batchGet) en vez de hoja a hoja.
+        pending = [k for k in HISTORY_SPECS if k not in self._loaded]
+        self._load_kinds_batch(pending or [kind])
+
+    def _load_kinds_batch(self, kinds: list[HistoryKind]) -> None:
+        if not kinds:
+            return
+        specs = {kind: HISTORY_SPECS[kind] for kind in kinds}
+        batch_reader = getattr(self._sheets_service, "read_worksheets_batch", None)
+        frames: dict[str, pd.DataFrame] | None = None
+        if callable(batch_reader):
+            try:
+                with timed("history.load_kinds_batch", kinds=len(kinds)):
+                    frames = batch_reader(
+                        [spec.worksheet_name for spec in specs.values()],
+                        {spec.worksheet_name: list(spec.headers) for spec in specs.values()},
+                    )
+            except Exception:
+                # P.ej. alguna pestaña todavía no existe: fallback hoja a hoja
+                # (read_worksheet_df la crea si falta).
+                frames = None
+        if frames is None:
+            for kind in kinds:
+                self.load_kind(kind, force=True)
+            return
+        for kind, spec in specs.items():
+            df = frames.get(spec.worksheet_name)
+            if df is None:
+                self.load_kind(kind, force=True)
+                continue
+            self._set_frame(kind, df)
+
+    def _set_frame(self, kind: HistoryKind, df: pd.DataFrame) -> None:
         spec = HISTORY_SPECS[kind]
-        with timed("history.load_kind", kind=kind):
-            df = self._sheets_service.read_worksheet_df(spec.worksheet_name, list(spec.headers))
-            self._frames[kind] = self._normalize_dataframe(df, spec)
-            framed = self._frames[kind]
-            if spec.id_column in framed.columns:
-                mapping: dict[str, int] = {}
-                for idx, row_id in enumerate(framed[spec.id_column].astype(str).tolist(), start=2):
-                    if row_id:
-                        mapping[row_id] = idx
-                self._row_numbers[kind] = mapping
-            else:
-                self._row_numbers[kind] = {}
-            if kind == "sensores":
-                self._sensor_occurrences_cache = None
-            self._loaded.add(kind)
+        self._frames[kind] = self._normalize_dataframe(df, spec)
+        framed = self._frames[kind]
+        if spec.id_column in framed.columns:
+            mapping: dict[str, int] = {}
+            for idx, row_id in enumerate(framed[spec.id_column].astype(str).tolist(), start=2):
+                if row_id:
+                    mapping[row_id] = idx
+            self._row_numbers[kind] = mapping
+        else:
+            self._row_numbers[kind] = {}
+        if kind == "sensores":
+            self._sensor_occurrences_cache = None
+        self._loaded.add(kind)
 
     def _normalize_dataframe(self, df: pd.DataFrame, spec: HistorySpec) -> pd.DataFrame:
         if df.empty:
@@ -550,10 +588,15 @@ class HistoryService:
             row["dias_campana"] = self._campaign_days(row)
         if kind == "seguimiento_comercial" and not str(row.get("origen_registro", "") or "").strip():
             row["origen_registro"] = "manual"
-        self._sheets_service.append_worksheet_row(spec.worksheet_name, list(spec.headers), row)
+        appended_row = self._sheets_service.append_worksheet_row(spec.worksheet_name, list(spec.headers), row)
         df = pd.concat([self._frames[kind], pd.DataFrame([row])], ignore_index=True)
         self._frames[kind] = self._normalize_dataframe(df, spec)
-        self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
+        if isinstance(appended_row, int) and appended_row > 1:
+            # La respuesta del append ya trae la fila exacta: sin relecturas.
+            self._row_numbers[kind][str(row[spec.id_column])] = appended_row
+        else:
+            # Fallback (stubs de test o respuesta sin updatedRange).
+            self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
         if kind == "sensores":
             self._sensor_occurrences_cache = None
         self._loaded.add(kind)
@@ -615,7 +658,19 @@ class HistoryService:
         if removed < 1:
             raise ValueError(f"No existe {row_id}")
         self._frames[kind] = self._normalize_dataframe(df, spec)
-        self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
+        deleted_row_number = self._row_numbers.get(kind, {}).get(str(row_id))
+        if removed == 1 and deleted_row_number:
+            # Ajuste local del índice: la fila borrada desaparece y las
+            # posteriores suben una posición. Evita releer la hoja entera.
+            mapping = self._row_numbers.get(kind, {})
+            mapping.pop(str(row_id), None)
+            self._row_numbers[kind] = {
+                rid: (num - 1 if num > deleted_row_number else num)
+                for rid, num in mapping.items()
+            }
+        else:
+            # Varias filas borradas o fila desconocida: reconstrucción segura.
+            self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
         if kind == "sensores":
             self._sensor_occurrences_cache = None
         self._loaded.add(kind)

@@ -33,6 +33,12 @@ class _FakeWorksheet:
     def get_all_values(self) -> list[list[str]]:
         return [list(self._row1), *self._data_rows]
 
+    def row_values(self, row: int) -> list[str]:
+        if row == 1:
+            return list(self._row1)
+        idx = row - 2
+        return list(self._data_rows[idx]) if 0 <= idx < len(self._data_rows) else []
+
 
 class _FakeSheetsService:
     def __init__(self, ws: _FakeWorksheet) -> None:

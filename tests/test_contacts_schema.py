@@ -20,7 +20,14 @@ class _FakeWorksheet:
         self.update = update or MagicMock()
 
     def get_all_values(self) -> list[list[str]]:
+        self.get_all_values_calls = getattr(self, "get_all_values_calls", 0) + 1
         return [list(self._row1), *self._data_rows]
+
+    def row_values(self, row: int) -> list[str]:
+        if row == 1:
+            return list(self._row1)
+        idx = row - 2
+        return list(self._data_rows[idx]) if 0 <= idx < len(self._data_rows) else []
 
 
 class _FakeSheetsService:
@@ -63,3 +70,5 @@ def test_no_op_when_header_already_complete() -> None:
     ensure_contacts_schema(sheets)  # type: ignore[arg-type]
 
     ws.update.assert_not_called()
+    # Camino rápido: con el esquema correcto NO debe descargarse la hoja entera.
+    assert getattr(ws, "get_all_values_calls", 0) == 0

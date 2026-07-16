@@ -52,14 +52,18 @@ def create_empty_contact(
         row_dict["fecha_estado"] = _today_estado()
     aligned = _aligned_contact_row(df.columns, row_dict)
 
-    hdr = sheets.worksheet().row_values(1)
+    headers_reader = getattr(sheets, "worksheet_headers", None)
+    hdr = headers_reader() if callable(headers_reader) else sheets.worksheet().row_values(1)
     contact_id = str(row_dict["contact_id"])
     if not hdr:
         new_df = pd.concat([df, aligned], ignore_index=True)
         sheets.save_contacts_df(new_df)
     else:
-        sheets.append_contact_row(row_dict)
-        if not sheets.contact_id_exists_on_contacts_sheet(contact_id):
+        appended_row = sheets.append_contact_row(row_dict)
+        # La respuesta del append ya confirma la fila escrita (updatedRange):
+        # sólo si no se pudo parsear (stubs / respuestas antiguas) se relee.
+        confirmed_by_response = isinstance(appended_row, int) and appended_row > 1
+        if not confirmed_by_response and not sheets.contact_id_exists_on_contacts_sheet(contact_id):
             raise RuntimeError("No se pudo confirmar el nuevo contacto en Google Sheets. Inténtalo de nuevo.")
         new_df = pd.concat([df, aligned], ignore_index=True)
     verify = verify_contact_write_with_retry(

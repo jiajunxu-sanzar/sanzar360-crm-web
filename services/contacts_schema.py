@@ -29,6 +29,13 @@ def ensure_contacts_schema(sheets: SheetsService) -> None:
     """Append missing canonical columns to row 1; never clear existing contact rows."""
     expected = list(CANONICAL_COLUMNS)
     ws = sheets.worksheet()
+    # Camino rápido: solo la fila 1 (1 llamada ligera). El caso habitual es que
+    # el esquema ya esté correcto; antes se descargaba la hoja COMPLETA aquí.
+    head = _normalize_header_row(ws.row_values(1))
+    if head == expected:
+        return
+
+    # Solo si hay discrepancia se lee la hoja completa para decidir con datos.
     all_values = ws.get_all_values()
     head = _normalize_header_row(all_values[0] if all_values else [])
     if head == expected:

@@ -51,10 +51,22 @@ st.set_page_config(page_title="Sanzar CRM", page_icon="S", layout="wide")
 apply_theme()
 init_state()
 
+@st.cache_resource(show_spinner=False)
+def _ensure_sheet_schemas_once() -> bool:
+    """Valida/repara esquemas UNA vez por proceso.
+
+    Antes se ejecutaba en cada rerun de Streamlit (cada interacción de cada
+    usuario), y ``ensure_contacts_schema`` descargaba la hoja de contactos
+    completa: una fuga silenciosa de cuota de la API.
+    """
+    init_activity_sheet(sheets_service())
+    init_contacts_schema(sheets_service())
+    return True
+
+
 if CONFIG.google_sheet_id:
     try:
-        init_activity_sheet(sheets_service())
-        init_contacts_schema(sheets_service())
+        _ensure_sheet_schemas_once()
     except Exception:
         pass
 

@@ -60,6 +60,10 @@ class SheetsService:
         self._spreadsheet: Any | None = None
         self._contacts_row_by_cid: dict[str, int] = {}
         self._worksheet_headers_cache: dict[str, list[str]] = {}
+        # Cache de objetos Worksheet: ``spreadsheet.worksheet(name)`` de gspread
+        # dispara una petición de metadatos en CADA llamada. Cachear el objeto
+        # ahorra ~1 llamada API por operación de lectura/escritura.
+        self._worksheet_cache: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Retry infrastructure
@@ -84,6 +88,7 @@ class SheetsService:
                 last_exc = exc
                 # Drop the cached spreadsheet so the next attempt reconnects.
                 self._spreadsheet = None
+                self._worksheet_cache = {}
         raise last_exc  # type: ignore[misc]
 
     # ------------------------------------------------------------------
@@ -142,18 +147,47 @@ class SheetsService:
 
     def worksheet(self, name: str | None = None):
         name = name or self.config.google_worksheet_name
-        return self.spreadsheet().worksheet(name)
+        cached = self._worksheet_cache.get(name)
+        if cached is not None:
+            return cached
+        ws = self._with_retry(lambda: self.spreadsheet().worksheet(name))
+        self._worksheet_cache[name] = ws
+        return ws
+
+    def worksheet_headers(self, name: str | None = None, *, force: bool = False) -> list[str]:
+        """Cabeceras (fila 1) de una pestaña, cacheadas en memoria.
+
+        Con ``force=True`` relee la fila 1 (1 llamada ligera) y refresca la caché.
+        """
+        name = name or self.config.google_worksheet_name
+        if not force:
+            cached = self._worksheet_headers_cache.get(name)
+            if cached:
+                return list(cached)
+        ws = self.worksheet(name)
+        headers = [str(h) for h in self._with_retry(lambda: ws.row_values(1))]
+        if headers:
+            self._worksheet_headers_cache[name] = list(headers)
+        return headers
 
     def get_or_create_worksheet(self, name: str, headers: list[str]):
+        # Fast path sin llamadas API: pestaña y cabeceras ya conocidas.
+        cached_ws = self._worksheet_cache.get(name)
+        cached_headers = self._worksheet_headers_cache.get(name, [])
+        if cached_ws is not None and headers and cached_headers and all(h in cached_headers for h in headers):
+            return cached_ws
+
         def _open() -> Any:
             sp = self.spreadsheet()
             try:
-                ws = sp.worksheet(name)
+                ws = self._worksheet_cache.get(name) or sp.worksheet(name)
             except gspread.WorksheetNotFound:
                 ws = sp.add_worksheet(title=name, rows=1000, cols=max(1, len(headers)))
                 ws.update([headers], "A1")
                 self._worksheet_headers_cache[name] = list(headers)
+                self._worksheet_cache[name] = ws
                 return ws
+            self._worksheet_cache[name] = ws
             cached = self._worksheet_headers_cache.get(name, [])
             if headers and cached and all(h in cached for h in headers):
                 return ws
@@ -192,6 +226,83 @@ class SheetsService:
             if contact_id:
                 self._contacts_row_by_cid[contact_id] = idx
 
+    @staticmethod
+    def _row_number_from_append_response(response: Any) -> int:
+        """Extrae el número de fila (1-based) de la respuesta de ``append_row``.
+
+        La API devuelve ``updates.updatedRange`` con formato ``'Hoja'!A42:R42``.
+        Devuelve ``-1`` si no se puede determinar (p.ej. stubs de test).
+        """
+        try:
+            rng = str(((response or {}).get("updates") or {}).get("updatedRange") or "")
+        except AttributeError:
+            return -1
+        cell = rng.split("!")[-1].split(":")[0]
+        digits = "".join(ch for ch in cell if ch.isdigit())
+        try:
+            return int(digits) if digits else -1
+        except ValueError:
+            return -1
+
+    def refresh_contacts_row_index(self) -> dict[str, int]:
+        """Reconstruye ``contact_id -> nº de fila`` leyendo SOLO la columna de ids.
+
+        1 llamada API ligera (una columna) frente a ``get_all_values`` de la hoja
+        completa. Es la fuente del índice usado por guardados y verificaciones.
+        """
+        headers = self.worksheet_headers()
+        col_idx = self._column_index_in_header(headers, "contact_id")
+        if col_idx is None:
+            self._contacts_row_by_cid = {}
+            return {}
+        ws = self.worksheet()
+        with timed("sheets.refresh_contacts_row_index"):
+            column = self._with_retry(lambda: ws.col_values(col_idx + 1))
+        mapping: dict[str, int] = {}
+        for row_number, value in enumerate(column[1:], start=2):
+            cid = str(value).strip()
+            if cid:
+                mapping[cid] = row_number
+        self._contacts_row_by_cid = mapping
+        return mapping
+
+    def get_contact_row_fast(self, contact_id: str) -> dict[str, str] | None:
+        """Lee UNA fila de contacto por id sin recorrer la hoja completa.
+
+        Usa el índice en memoria (refrescándolo con una lectura de columna si
+        hace falta) y valida que la fila leída corresponde al id pedido; si el
+        índice quedó obsoleto (filas movidas por otra sesión), lo reconstruye
+        una vez y reintenta.
+        """
+        target = str(contact_id or "").strip()
+        if not target:
+            return None
+        headers = self.worksheet_headers()
+        if not headers:
+            return None
+
+        def _read_row(row_number: int) -> dict[str, str]:
+            ws = self.worksheet()
+            with timed("sheets.get_contact_row_fast"):
+                values = self._with_retry(lambda: ws.row_values(row_number))
+            return {
+                header: str(values[i]) if i < len(values) else ""
+                for i, header in enumerate(headers)
+            }
+
+        row_number = self._contacts_row_by_cid.get(target) or self.refresh_contacts_row_index().get(target)
+        if not row_number:
+            return None
+        row = _read_row(row_number)
+        if str(row.get("contact_id", "")).strip() != target:
+            row_number = self.refresh_contacts_row_index().get(target)
+            if not row_number:
+                return None
+            row = _read_row(row_number)
+            if str(row.get("contact_id", "")).strip() != target:
+                return None
+        return row
+
     def save_contacts_df(self, df: pd.DataFrame) -> None:
         df = df.fillna("").astype(str)
         for column in CANONICAL_COLUMNS:
@@ -204,28 +315,40 @@ class SheetsService:
             self._with_retry(lambda: (ws.clear(), ws.update(rows, "A1")))
         self._rebuild_contact_index(df)
 
-    def append_contact_row(self, row: dict[str, str]) -> None:
+    def append_contact_row(self, row: dict[str, str]) -> int:
         """Append a single Contacts row aligned to worksheet row 1 headers.
 
-        Does not clear the sheet. Caller must ensure headers already exist."""
+        Does not clear the sheet. Caller must ensure headers already exist.
+        Returns the appended 1-based row number (``-1`` if unknown) parsed from
+        the API response, updating the in-memory contact index without extra reads.
+        """
         worksheet = self.worksheet()
-        headers = self._with_retry(lambda: worksheet.row_values(1))
+        headers = self.worksheet_headers()
         if not headers:
             raise RuntimeError("append_contact_row requires an existing header row.")
         values = [str(row.get(header, "") or "") for header in headers]
         with timed("sheets.append_contact_row"):
-            self._with_retry(lambda: worksheet.append_row(values, value_input_option="USER_ENTERED"))
+            response = self._with_retry(
+                lambda: worksheet.append_row(values, value_input_option="USER_ENTERED")
+            )
+        row_number = self._row_number_from_append_response(response)
+        contact_id = str(row.get("contact_id", "") or "").strip()
+        if contact_id and row_number > 1:
+            self._contacts_row_by_cid[contact_id] = row_number
+        return row_number
 
     def save_contact_rows_by_ids(self, df: pd.DataFrame, contact_ids: set[str]) -> None:
         if not contact_ids:
             return
         worksheet = self.worksheet()
-        headers = self._with_retry(lambda: worksheet.row_values(1))
+        # Cabeceras SIEMPRE frescas antes de escribir una fila completa: una
+        # columna añadida a mano por el admin desalinearía la escritura.
+        headers = self.worksheet_headers(force=True)
         if not headers:
             self.save_contacts_df(df)
             return
-        row_map = self.row_numbers_by_id(self.config.google_worksheet_name, "contact_id")
-        self._contacts_row_by_cid = row_map
+        # Índice de filas con una lectura de columna (ligera), no toda la hoja.
+        row_map = self.refresh_contacts_row_index()
         updates: list[dict[str, Any]] = []
         for contact_id in contact_ids:
             matches = df[df["contact_id"].astype(str) == str(contact_id)]
@@ -279,13 +402,19 @@ class SheetsService:
         self._worksheet_headers_cache[name] = list(headers)
 
     def append_worksheet_row(self, name: str, headers: list[str], row: dict[str, Any]) -> int:
+        """Añade una fila y devuelve su número (1-based) parseado de la respuesta.
+
+        No hace ninguna lectura extra: la propia respuesta del append incluye
+        ``updates.updatedRange``. Devuelve ``-1`` si no se pudo determinar.
+        """
         worksheet = self.get_or_create_worksheet(name, headers)
         sheet_headers = self._worksheet_headers_cache.get(name, []) or headers
         values = [str(row.get(header, "") or "") for header in sheet_headers]
         with timed("sheets.append_worksheet_row", worksheet=name):
-            self._with_retry(lambda: worksheet.append_row(values, value_input_option="USER_ENTERED"))
-            # Avoid an immediate extra read after append (can trigger quota 429).
-            return -1
+            response = self._with_retry(
+                lambda: worksheet.append_row(values, value_input_option="USER_ENTERED")
+            )
+            return self._row_number_from_append_response(response)
 
     def update_worksheet_row(self, name: str, headers: list[str], row_number: int, row: dict[str, Any]) -> None:
         worksheet = self.get_or_create_worksheet(name, headers)
@@ -295,28 +424,36 @@ class SheetsService:
             self._with_retry(lambda: worksheet.update(f"A{row_number}", [values]))
 
     def row_numbers_by_id(self, name: str, id_column: str) -> dict[str, int]:
+        """Mapa ``id -> nº de fila`` leyendo SOLO la columna de ids.
+
+        Antes descargaba la hoja completa (``get_all_values``); ahora cuesta una
+        lectura de una columna, con las cabeceras cacheadas en memoria.
+        """
         worksheet = self.get_or_create_worksheet(name, [id_column])
+        headers = self._worksheet_headers_cache.get(name) or self.worksheet_headers(name)
+        idx = self._column_index_in_header([str(h) for h in headers], id_column)
+        if idx is None:
+            return {}
         with timed("sheets.row_numbers_by_id", worksheet=name):
-            values = self._with_retry(lambda: worksheet.get_all_values())
-        if not values:
-            return {}
-        header = values[0]
-        if id_column not in header:
-            return {}
-        idx = header.index(id_column)
+            column = self._with_retry(lambda: worksheet.col_values(idx + 1))
         out: dict[str, int] = {}
-        for row_number, row in enumerate(values[1:], start=2):
-            row_id = str(row[idx] if idx < len(row) else "").strip()
+        for row_number, value in enumerate(column[1:], start=2):
+            row_id = str(value).strip()
             if row_id:
                 out[row_id] = row_number
         return out
 
     def _get_worksheet_existing(self, title: str) -> Any | None:
         """Return the tab or ``None`` if it does not exist (does not create a new sheet)."""
+        cached = self._worksheet_cache.get(title)
+        if cached is not None:
+            return cached
         try:
-            return self.spreadsheet().worksheet(title)
+            ws = self.spreadsheet().worksheet(title)
         except gspread.WorksheetNotFound:
             return None
+        self._worksheet_cache[title] = ws
+        return ws
 
     @staticmethod
     def _column_index_in_header(header_row: list[str], column_name: str) -> int | None:
@@ -386,23 +523,15 @@ class SheetsService:
         return len(rows_to_delete)
 
     def contact_id_exists_on_contacts_sheet(self, contact_id: str) -> bool:
-        """Una sola lectura ligera para comprobar si el id está en la pestaña de contactos."""
-        ws = self._get_worksheet_existing(self.config.google_worksheet_name)
-        if ws is None:
-            return False
+        """Comprueba si el id existe leyendo solo la columna de ids (1 llamada ligera)."""
         target = str(contact_id).strip()
+        if not target:
+            return False
+        if self._get_worksheet_existing(self.config.google_worksheet_name) is None:
+            return False
         with timed("sheets.contact_id_exists", worksheet=self.config.google_worksheet_name):
-            values = self._with_retry(lambda: ws.get_all_values())
-        if len(values) < 2:
-            return False
-        col_idx = self._column_index_in_header([str(h) for h in values[0]], "contact_id")
-        if col_idx is None:
-            return False
-        for row in values[1:]:
-            cell = str(row[col_idx] if col_idx < len(row) else "").strip()
-            if cell == target:
-                return True
-        return False
+            mapping = self.refresh_contacts_row_index()
+        return target in mapping
 
     def get_contact_row_by_id(self, contact_id: str) -> dict[str, str] | None:
         df = self.load_contacts_df()
@@ -415,10 +544,68 @@ class SheetsService:
         return matches.iloc[0].fillna("").astype(str).to_dict()
 
     def verify_contact_subset(self, contact_id: str, expected_subset: dict[str, str]) -> bool:
-        row = self.get_contact_row_by_id(contact_id)
+        # Lectura de UNA fila (get_contact_row_fast) en vez de recargar la hoja
+        # completa: antes cada verificación costaba una lectura de 350+ filas y
+        # el guardado podía repetirla hasta 4 veces.
+        row = self.get_contact_row_fast(contact_id)
         if row is None:
             return False
         for key, value in expected_subset.items():
             if str(row.get(str(key), "") or "").strip() != str(value or "").strip():
                 return False
         return True
+
+    # ------------------------------------------------------------------
+    # Lectura multi-hoja en una sola llamada
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _values_to_df(values: list[list[Any]], headers: list[str] | None = None) -> pd.DataFrame:
+        """Convierte la matriz de ``values.batchGet`` en DataFrame de strings.
+
+        Replica la semántica de ``read_worksheet_df``: fila 1 como cabecera,
+        celdas faltantes como cadena vacía y columnas requeridas garantizadas.
+        """
+        if not values:
+            return pd.DataFrame(columns=list(headers or []))
+        raw_header = [str(h) for h in values[0]]
+        width = len(raw_header)
+        rows: list[list[str]] = []
+        for row in values[1:]:
+            cells = [str(cell) for cell in row[:width]]
+            cells.extend([""] * (width - len(cells)))
+            rows.append(cells)
+        df = pd.DataFrame(rows, columns=raw_header) if rows else pd.DataFrame(columns=raw_header)
+        if headers:
+            for header in headers:
+                if header not in df.columns:
+                    df[header] = ""
+        return df.astype(str)
+
+    def read_worksheets_batch(
+        self,
+        names: list[str],
+        headers_by_name: dict[str, list[str]] | None = None,
+    ) -> dict[str, pd.DataFrame]:
+        """Lee varias pestañas en UNA llamada API (``values.batchGet``).
+
+        Antes cada pestaña costaba 1-2 llamadas; los históricos (4-6 hojas) se
+        leían en serie. No crea pestañas que falten: si alguna no existe la
+        llamada falla y el llamador debe hacer fallback a ``read_worksheet_df``.
+        """
+        if not names:
+            return {}
+        headers_by_name = headers_by_name or {}
+        ranges = [f"'{name}'" for name in names]
+        sp = self.spreadsheet()
+        with timed("sheets.read_worksheets_batch", worksheets=len(names)):
+            response = self._with_retry(lambda: sp.values_batch_get(ranges))
+        value_ranges = (response or {}).get("valueRanges", []) or []
+        out: dict[str, pd.DataFrame] = {}
+        for name, value_range in zip(names, value_ranges):
+            values = (value_range or {}).get("values", []) or []
+            out[name] = self._values_to_df(values, headers_by_name.get(name))
+        for name in names:
+            if name not in out:
+                out[name] = pd.DataFrame(columns=list(headers_by_name.get(name, [])))
+        return out
