@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-import pages.contacts as contacts
+import pages.contacts_common as contacts
 
 
 def _today() -> str:
