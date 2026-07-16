@@ -8,3 +8,6 @@ __pycache__/
 build/
 dist/
 *.pyc
+
+_to_delete/
+.DS_Store
