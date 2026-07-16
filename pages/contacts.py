@@ -222,26 +222,16 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
             st.warning("No hay contactos cargados. Puedes crear el primero con «Nuevo contacto».")
 
         if current_selected:
-            # Maestro-detalle: lista compacta a la izquierda, ficha a la derecha.
-            left, right = st.columns([0.32, 0.68], gap="large")
-            with left:
-                selected_id = _render_contact_list(df, compact=True)
-            if not selected_id:
-                # La selección se limpió al filtrar: volver al listado a ancho completo.
-                st.rerun()
-            with right:
-                with st.container(border=True):
-                    if selected_id:
-                        df = _render_contact_detail(df, selected_id)
-                    else:
-                        st.markdown("##### Ficha del contacto")
-                        st.info("Selecciona un contacto para abrir la ficha.")
+            # Ficha a pantalla completa; «Cerrar ficha» devuelve al listado.
+            with st.container(border=True):
+                df = _render_contact_detail(df, current_selected)
         else:
             # Sin selección: la lista ocupa todo el ancho.
-            _render_contact_list(df, compact=False)
+            _render_contact_list(df)
         return df
 
-def _render_contact_list(df: pd.DataFrame, *, compact: bool) -> str:
+def _render_contact_list(df: pd.DataFrame) -> None:
+    _restore_filter_state()
     if st.session_state.get(CONTACTS_VIEW_MODE_KEY) not in (CONTACTS_VIEW_FICHA, CONTACTS_VIEW_TABLA):
         st.session_state[CONTACTS_VIEW_MODE_KEY] = CONTACTS_VIEW_FICHA
     if CONTACTS_SHOW_LOST_KEY not in st.session_state:
@@ -253,23 +243,8 @@ def _render_contact_list(df: pd.DataFrame, *, compact: bool) -> str:
     overview = load_contact_sensor_overview_cached(st.session_state.get("history_cache_version", 0))
     semaforo_map = semaforo_by_contact_id(overview)
 
-    if compact:
-        with st.container(border=True):
-            if st.button("Nuevo contacto", key="create_contact_top", width="stretch", icon=":material/person_add:"):
-                _create_contact_dialog(df)
-            query = _render_search_input()
-            with st.expander("Filtros", expanded=False, icon=":material/tune:"):
-                _render_next_action_strip(df, stacked=True)
-                _render_list_toggles(stacked=True)
-                advanced = _render_advanced_filters(df, stacked=True)
-            filtered = _apply_contact_filters(df, overview, query, advanced)
-            _store_filtered_ids(filtered)
-            st.caption(f"{len(filtered)} contactos")
-            _render_contact_table(filtered, semaforo_map, compact=True)
-        return _reconcile_selection_with_filtered(filtered)
-
     with st.container(border=True):
-        _render_next_action_strip(df, stacked=False)
+        _render_next_action_strip(df)
     _contacts_block_spacer()
     with st.container(border=True):
         head_cols = st.columns([0.34, 0.38, 0.28], gap="small")
@@ -300,7 +275,7 @@ def _render_contact_list(df: pd.DataFrame, *, compact: bool) -> str:
         with search_cols[2]:
             st.toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
         with st.expander("Más filtros (estado, provincia, municipio, tipo, cultivo)", icon=":material/tune:"):
-            advanced = _render_advanced_filters(df, stacked=False)
+            advanced = _render_advanced_filters(df)
 
         filtered = _apply_contact_filters(df, overview, query, advanced)
         _store_filtered_ids(filtered)
@@ -314,8 +289,36 @@ def _render_contact_list(df: pd.DataFrame, *, compact: bool) -> str:
         if view_mode == CONTACTS_VIEW_TABLA:
             _render_overview_table()
         else:
-            _render_contact_table(filtered, semaforo_map, compact=False)
-    return _reconcile_selection_with_filtered(filtered)
+            _render_contact_table(filtered, semaforo_map)
+    _persist_filter_state()
+
+_PERSISTED_FILTER_KEYS = (
+    "contact_filter_text",
+    "contact_filter_status",
+    "contact_filter_province",
+    "contact_filter_entity",
+    "contact_filter_municipio",
+    "contact_filter_cultivos",
+    CONTACTS_SHOW_LOST_KEY,
+    CONTACTS_ONLY_WITH_SENSORS_KEY,
+    DASH_PERSONA_PROXIMA_ACCION_KEY,
+    DASH_ESTADO_FILTER_KEY,
+    DASH_RESPONSABLE_FILTER_KEY,
+    "dash_bucket",
+)
+
+def _restore_filter_state() -> None:
+    """Streamlit descarta el estado de widgets no renderizados (p. ej. con la
+    ficha abierta a pantalla completa); restaurar desde las claves espejo."""
+    for key in _PERSISTED_FILTER_KEYS:
+        mirror = f"_persist_{key}"
+        if key not in st.session_state and mirror in st.session_state:
+            st.session_state[key] = st.session_state[mirror]
+
+def _persist_filter_state() -> None:
+    for key in _PERSISTED_FILTER_KEYS:
+        if key in st.session_state:
+            st.session_state[f"_persist_{key}"] = st.session_state[key]
 
 def _render_search_input() -> str:
     return st.text_input(
@@ -326,35 +329,29 @@ def _render_search_input() -> str:
         icon=":material/search:",
     )
 
-def _render_list_toggles(*, stacked: bool) -> None:
-    if stacked:
-        st.toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
-        st.toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
-        return
-    toggles_row = st.columns(2, gap="small")
-    toggles_row[0].toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
-    toggles_row[1].toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
-
-def _render_advanced_filters(df: pd.DataFrame, *, stacked: bool) -> dict[str, str]:
+def _render_advanced_filters(df: pd.DataFrame) -> dict[str, str]:
     def _options(column: str) -> list[str]:
         return [""] + sorted(
             [x for x in df.get(column, pd.Series(dtype=str)).fillna("").astype(str).unique() if x]
         )
 
-    if stacked:
-        status = st.selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
-        province = st.selectbox("Provincia", _options("provincia"), key="contact_filter_province")
-        entity_type = st.selectbox("Tipo de entidad", _options("tipo_entidad"), key="contact_filter_entity")
-        municipio = st.selectbox("Municipio", _options("municipio"), key="contact_filter_municipio")
-        cultivos = st.text_input("Cultivos contiene", key="contact_filter_cultivos")
-    else:
-        filter_row_1 = st.columns(3, gap="small")
-        status = filter_row_1[0].selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
-        province = filter_row_1[1].selectbox("Provincia", _options("provincia"), key="contact_filter_province")
-        entity_type = filter_row_1[2].selectbox("Tipo de entidad", _options("tipo_entidad"), key="contact_filter_entity")
-        filter_row_2 = st.columns(2, gap="small")
-        municipio = filter_row_2[0].selectbox("Municipio", _options("municipio"), key="contact_filter_municipio")
-        cultivos = filter_row_2[1].text_input("Cultivos contiene", key="contact_filter_cultivos")
+    # Descartar valores restaurados que ya no estén entre las opciones.
+    for key, opts in (
+        ("contact_filter_status", [""] + list(CONTACT_ESTADO_OPCIONES)),
+        ("contact_filter_province", _options("provincia")),
+        ("contact_filter_entity", _options("tipo_entidad")),
+        ("contact_filter_municipio", _options("municipio")),
+    ):
+        if key in st.session_state and st.session_state[key] not in opts:
+            st.session_state[key] = ""
+
+    filter_row_1 = st.columns(3, gap="small")
+    status = filter_row_1[0].selectbox("Estado", [""] + list(CONTACT_ESTADO_OPCIONES), key="contact_filter_status")
+    province = filter_row_1[1].selectbox("Provincia", _options("provincia"), key="contact_filter_province")
+    entity_type = filter_row_1[2].selectbox("Tipo de entidad", _options("tipo_entidad"), key="contact_filter_entity")
+    filter_row_2 = st.columns(2, gap="small")
+    municipio = filter_row_2[0].selectbox("Municipio", _options("municipio"), key="contact_filter_municipio")
+    cultivos = filter_row_2[1].text_input("Cultivos contiene", key="contact_filter_cultivos")
     return {
         "status": status,
         "province": province,
@@ -409,18 +406,6 @@ def _store_filtered_ids(filtered: pd.DataFrame) -> None:
         else []
     )
 
-def _reconcile_selection_with_filtered(filtered: pd.DataFrame) -> str:
-    selected = str(st.session_state.get("selected_contact_id", "") or "")
-    if not selected:
-        return ""
-    if filtered.empty or "contact_id" not in filtered.columns:
-        return selected
-    exists = not filtered[filtered["contact_id"].astype(str).str.strip() == selected].empty
-    if not exists:
-        st.session_state["selected_contact_id"] = ""
-        return ""
-    return selected
-
 def _ids_signature(ids: list[str], *, prefix: str) -> str:
     joined = "|".join(ids)
     return f"{prefix}_{zlib.crc32(joined.encode('utf-8')):08x}"
@@ -432,8 +417,6 @@ def _table_height(nrows: int, cap: int) -> int:
 def _render_contact_table(
     filtered: pd.DataFrame,
     semaforo_map: dict[str, str] | None = None,
-    *,
-    compact: bool = False,
 ) -> None:
     if filtered.empty:
         st.info("No hay datos para mostrar.")
@@ -458,11 +441,7 @@ def _render_contact_table(
         data["Provincia"].append(row.get("provincia", "") or "—")
         data["Municipio"].append(row.get("municipio", "") or "—")
 
-    if compact:
-        # Solo semáforo + nombre: el estado completo ya se ve en la ficha abierta.
-        disp = pd.DataFrame({"sem": icons, "Nombre": data["Nombre"]})
-    else:
-        disp = pd.DataFrame({"sem": icons, **data})
+    disp = pd.DataFrame({"sem": icons, **data})
 
     styler = disp.style.apply(
         lambda r: [_LOST_ROW_CSS if lost_flags[r.name] else ""] * len(r),
@@ -470,7 +449,7 @@ def _render_contact_table(
     )
     column_config = {
         "sem": st.column_config.TextColumn("", width=34, help="Semáforo de sensores / perdido"),
-        "Nombre": st.column_config.TextColumn("Nombre", width=None if compact else "large"),
+        "Nombre": st.column_config.TextColumn("Nombre", width="large"),
         "Estado": st.column_config.TextColumn("Estado", width="medium"),
         "Provincia": st.column_config.TextColumn("Provincia", width="medium"),
         "Municipio": st.column_config.TextColumn("Municipio", width="medium"),
@@ -479,10 +458,10 @@ def _render_contact_table(
         styler,
         hide_index=True,
         width="stretch",
-        height=_table_height(len(records), 560 if compact else 600),
+        height=_table_height(len(records), 600),
         on_select="rerun",
         selection_mode="single-row",
-        key=_ids_signature(ids, prefix="contacts_df_c" if compact else "contacts_df_f"),
+        key=_ids_signature(ids, prefix="contacts_df_f"),
         column_config=column_config,
     )
     rows = list(getattr(event.selection, "rows", []) or [])
@@ -872,47 +851,41 @@ def _persona_proxima_accion_filter_options(df: pd.DataFrame) -> list[str]:
         opts = opts + extra
     return [""] + opts
 
-def _render_next_action_strip(df: pd.DataFrame, *, stacked: bool) -> None:
+def _render_next_action_strip(df: pd.DataFrame) -> None:
     if st.session_state.get("dash_bucket") not in _BUCKET_KEYS:
         st.session_state["dash_bucket"] = None
 
-    if not stacked:
-        st.markdown("##### Filtros")
+    st.markdown("##### Filtros")
 
     persona_opts = _persona_proxima_accion_filter_options(df)
-    current_persona = str(st.session_state.get(DASH_PERSONA_PROXIMA_ACCION_KEY, "") or "")
-    persona_index = persona_opts.index(current_persona) if current_persona in persona_opts else 0
     estado_opts = [""] + list(CONTACT_ESTADO_OPCIONES)
-    current_estado = str(st.session_state.get(DASH_ESTADO_FILTER_KEY, "") or "")
-    estado_index = estado_opts.index(current_estado) if current_estado in estado_opts else 0
     responsable_opts = [""] + crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
-    current_responsable = str(st.session_state.get(DASH_RESPONSABLE_FILTER_KEY, "") or "")
-    responsable_index = responsable_opts.index(current_responsable) if current_responsable in responsable_opts else 0
+    # Si el valor restaurado ya no existe entre las opciones, descartarlo antes
+    # de instanciar el widget (evita excepciones de Streamlit).
+    for key, opts in (
+        (DASH_PERSONA_PROXIMA_ACCION_KEY, persona_opts),
+        (DASH_ESTADO_FILTER_KEY, estado_opts),
+        (DASH_RESPONSABLE_FILTER_KEY, responsable_opts),
+    ):
+        if key in st.session_state and st.session_state[key] not in opts:
+            st.session_state[key] = ""
 
-    if stacked:
-        persona_col = estado_col = responsable_col = st
-    else:
-        select_cols = st.columns(3, gap="small")
-        persona_col, estado_col, responsable_col = select_cols[0], select_cols[1], select_cols[2]
-
-    persona_col.selectbox(
+    select_cols = st.columns(3, gap="small")
+    select_cols[0].selectbox(
         "Persona próxima acción",
         options=persona_opts,
-        index=persona_index,
         format_func=lambda v: "Todas" if not v else v,
         key=DASH_PERSONA_PROXIMA_ACCION_KEY,
     )
-    estado_col.selectbox(
+    select_cols[1].selectbox(
         "Estado",
         options=estado_opts,
-        index=estado_index,
         format_func=lambda v: "Todos" if not v else v,
         key=DASH_ESTADO_FILTER_KEY,
     )
-    responsable_col.selectbox(
+    select_cols[2].selectbox(
         "Responsable del cliente",
         options=responsable_opts,
-        index=responsable_index,
         format_func=lambda v: "Todos" if not v else v,
         key=DASH_RESPONSABLE_FILTER_KEY,
     )

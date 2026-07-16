@@ -916,6 +916,23 @@ def apply_theme() -> None:
           border-color: #fca5a5 !important;
         }
 
+        /* Panel de detalle de históricos (tabla + fila seleccionada) */
+        .sanzar-detail-field {
+          margin-bottom: 10px;
+        }
+        .sanzar-detail-label {
+          color: var(--ui-text-muted);
+          font-size: 0.72rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .sanzar-detail-value {
+          font-size: 0.875rem;
+          color: var(--ui-text);
+          word-break: break-word;
+        }
+
         /* Contact list */
         .sanzar-contact-table {
           border: 1px solid var(--ui-border);

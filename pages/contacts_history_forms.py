@@ -33,8 +33,7 @@ from services.sheet_date_format import (
     normalize_sensor_serial_number,
     validate_dd_mm_yyyy_fields,
 )
-from ui.components.commercial_followup import render_commercial_followup_list
-from ui.components.history_cards import render_paginated_history_cards
+from ui.components.history_tables import render_history_section
 from ui import modal_state
 
 from pages.contacts_common import (
@@ -506,16 +505,7 @@ def _sensor_close_location_dialog(kind: str, contact: dict[str, str], row: dict[
 
 def _render_seguimiento_comercial_section(contact: dict[str, str], rows: list[dict[str, str]]) -> None:
     contact_id = str(contact.get("contact_id", "") or "")
-    st.caption(f"{len(rows)} registro{'s' if len(rows) != 1 else ''} de seguimiento comercial")
-    if st.button(
-        "Nuevo seguimiento",
-        type="primary",
-        key=f"seg_new_followup_{contact_id}",
-        width="stretch",
-    ):
-        modal_state.open_add_history_modal("seguimiento_comercial", contact_id)
-        st.rerun()
-    render_commercial_followup_list(rows, contact_id)
+    render_history_section("seguimiento_comercial", rows, contact_id)
 
 def _render_operative_history_cards_section(
     contact: dict[str, str],
@@ -535,21 +525,7 @@ def _render_operative_history_cards_section(
             n_total = len(rows)
             if n_open < n_total:
                 st.caption(f"{n_open} abierto{'s' if n_open != 1 else ''} · {n_total} en total")
-            else:
-                st.caption(f"{n_open} abierto{'s' if n_open != 1 else ''}")
-        else:
-            st.caption(f"{len(rows)} registro{'s' if len(rows) != 1 else ''}")
-    else:
-        st.caption(f"{len(rows)} registro{'s' if len(rows) != 1 else ''}")
-    if st.button(
-        "Nuevo histórico",
-        type="primary",
-        key=f"hist_new_{kind}_{contact_id}",
-        width="stretch",
-    ):
-        modal_state.open_add_history_modal(kind, contact_id)
-        st.rerun()
-    render_paginated_history_cards(kind, display_rows, contact_id)
+    render_history_section(kind, display_rows, contact_id)
 
 def _render_history_kind_section(
     contact: dict[str, str],
