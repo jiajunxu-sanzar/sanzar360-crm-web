@@ -206,6 +206,14 @@ def apply_theme() -> None:
         [class*="st-key-nav_btn_"] button[kind="primary"] [data-testid="stIconMaterial"] {
           color: var(--ui-accent) !important;
         }
+        [class*="st-key-nav_btn_"] button[kind="primary"]:hover {
+          background: var(--ui-accent-hover) !important;
+          border-color: var(--ui-accent-hover) !important;
+          color: var(--ui-accent-contrast) !important;
+        }
+        [class*="st-key-nav_btn_"] button[kind="primary"]:hover [data-testid="stIconMaterial"] {
+          color: var(--ui-accent-contrast) !important;
+        }
         [class*="st-key-nav_btn_"] button:focus:not(:focus-visible) {
           box-shadow: none !important;
         }
@@ -1220,6 +1228,12 @@ def apply_theme() -> None:
           font-size: 0.8125rem;
           color: var(--ui-text-muted);
           line-height: 1.45;
+        }
+        .sanzar-detail-task-more {
+          margin: 6px 0 0 !important;
+          padding: 0 !important;
+          font-size: 0.75rem;
+          line-height: 1.35;
         }
         .sanzar-detail-footer-row {
           display: flex;

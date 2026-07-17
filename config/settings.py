@@ -134,6 +134,43 @@ TIPO_RELACION_OPCIONES: tuple[str, ...] = (
     "Cliente",
 )
 
+TIPO_NOTA_OPCIONES: tuple[str, ...] = (
+    "Riego",
+    "Fertilización",
+    "Trabajo en campo",
+    "Plagas / enfermedades",
+    "Instalación / sensores",
+    "Visita / reunión",
+    "Comercial",
+    "Incidencia / soporte",
+    "Clima / alerta",
+    "Cosecha / campaña",
+    "General",
+)
+
+ESTADO_NOTA_OPCIONES: tuple[str, ...] = ("Útil", "Obsoleta")
+
+TIPO_TAREA_OPCIONES: tuple[str, ...] = (
+    "Comunicar riego",
+    "Consultar cliente",
+    "Perseguir cliente",
+    "Visita / reunión",
+    "Revisar sensores",
+    "Resolver incidencia",
+    "Enviar documentación",
+    "Cobro / facturación",
+    "Onboarding / instalación",
+    "Formación / soporte",
+    "Interno",
+    "Otro",
+)
+
+ESTADO_TAREA_OPCIONES: tuple[str, ...] = (
+    "Sin iniciar",
+    "En proceso",
+    "Terminado",
+)
+
 PERSONA_ULTIMO_CONTACTO_OPCIONES: tuple[str, ...] = (
     "Jiajun Xu",
     "Kabir Caravotta",

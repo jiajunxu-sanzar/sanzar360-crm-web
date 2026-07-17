@@ -35,6 +35,16 @@ def normalize_inventory_serial_for_match(value: str) -> str:
     return serial.lower()
 
 
+def format_inventory_serial_with_quotes(value: str) -> str:
+    """Wrap a serial in double quotes for storage when it is not already quoted."""
+    serial = str(value or "").strip()
+    if not serial:
+        return serial
+    if len(serial) >= 2 and serial[0] == serial[-1] and serial[0] in "\"'":
+        return serial
+    return f'"{serial}"'
+
+
 @dataclass(frozen=True)
 class InventoryAssetOption:
     inventory_id: str

@@ -8,6 +8,8 @@ import streamlit as st
 from app.cache import history_service, inventory_service, load_inventory_cached
 from app.state import bump_history_cache
 from services.commercial_action_validation import validate_commercial_action_values
+from services.notas_validation import validate_nota_history_values
+from services.tareas_validation import filter_open_tareas, validate_tarea_history_values
 from services.history_service import (
     HISTORY_SPECS,
     HistoryService,
@@ -41,6 +43,7 @@ from pages.contacts_common import (
     SELECT_OPTIONS,
     _INCIDENCIA_ASSOC_HEADERS,
     filter_open_sensor_history,
+    filter_util_notas,
     _clear_modal_flags,
     _clear_history_selection,
     _clear_sensor_picker_state,
@@ -530,6 +533,28 @@ def _render_operative_history_cards_section(
             n_total = len(rows)
             if n_open < n_total:
                 st.caption(f"{n_open} abierto{'s' if n_open != 1 else ''} · {n_total} en total")
+    elif kind == "notas":
+        toggle_key = f"hist_notas_util_only_{contact_id}"
+        if toggle_key not in st.session_state:
+            st.session_state[toggle_key] = True
+        only_util = st.toggle("Solo útiles", key=toggle_key)
+        if only_util:
+            display_rows = filter_util_notas(rows)
+            n_util = len(display_rows)
+            n_total = len(rows)
+            if n_util < n_total:
+                st.caption(f"{n_util} útil{'es' if n_util != 1 else ''} · {n_total} en total")
+    elif kind == "tareas":
+        toggle_key = f"hist_tareas_open_only_{contact_id}"
+        if toggle_key not in st.session_state:
+            st.session_state[toggle_key] = True
+        only_open = st.toggle("Solo abiertas", key=toggle_key)
+        if only_open:
+            display_rows = filter_open_tareas(rows)
+            n_open = len(display_rows)
+            n_total = len(rows)
+            if n_open < n_total:
+                st.caption(f"{n_open} abierta{'s' if n_open != 1 else ''} · {n_total} en total")
     render_history_section(kind, display_rows, contact_id)
 
 def _render_history_kind_section(
@@ -556,6 +581,8 @@ def _render_history_kind_section(
 def _render_histories(contact: dict[str, str]) -> None:
     for kind in (
         "seguimiento_comercial",
+        "tareas",
+        "notas",
         "sensores",
         "campanas",
         "suscripciones",
@@ -869,6 +896,16 @@ def _submit_history_form(
             raw = (values.get(date_col, "") or "").strip()
             if raw:
                 values[date_col] = normalize_dd_mm_yyyy(raw) or raw
+    if kind == "notas":
+        for date_col in ("fecha_creacion", "fecha_update"):
+            raw = (values.get(date_col, "") or "").strip()
+            if raw:
+                values[date_col] = normalize_dd_mm_yyyy(raw) or raw
+    if kind == "tareas":
+        for date_col in ("fecha_creacion", "fecha_update", "fecha_limite"):
+            raw = (values.get(date_col, "") or "").strip()
+            if raw:
+                values[date_col] = normalize_dd_mm_yyyy(raw) or raw
     try:
         with st.spinner("Guardando y comprobando que no se solapen sensores..."):
             if kind == "sensores":
@@ -1172,6 +1209,46 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
 def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
     label = "ProjectIoTId" if header == "projectiotid" else header.replace("_", " ").capitalize()
     key = f"{prefix}_{header}"
+    if kind == "notas" and header == "estado_nota":
+        bool_key = f"{key}__util"
+        if bool_key not in st.session_state:
+            st.session_state[bool_key] = str(value or "Útil").strip() != "Obsoleta"
+        is_util = st.toggle("Nota útil", key=bool_key)
+        result = "Útil" if is_util else "Obsoleta"
+        st.session_state[key] = result
+        return result
+    if kind == "notas" and header == "persona_nota":
+        from app.cache import load_users_cached
+        from services.users_service import crm_user_names
+
+        names = crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        options = [""] + names
+        index = options.index(value) if value in options else 0
+        return st.selectbox("Autor", options, index=index, key=key)
+    if kind == "notas" and header == "titulo":
+        return st.text_input("Título", value=value, key=key)
+    if kind == "notas" and header == "notas":
+        return st.text_area("Notas", value=value, key=key, height=120)
+    if kind == "tareas" and header in {"persona_creacion", "persona_gestiona"}:
+        from app.cache import load_users_cached
+        from services.users_service import crm_user_names
+
+        names = crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        options = [""] + names
+        index = options.index(value) if value in options else 0
+        label_ui = "Creado por" if header == "persona_creacion" else "Gestiona"
+        return st.selectbox(label_ui, options, index=index, key=key)
+    if kind == "tareas" and header == "titulo":
+        return st.text_input("Título", value=value, key=key)
+    if kind == "tareas" and header == "notas":
+        return st.text_area("Notas", value=value, key=key, height=120)
+    if kind == "tareas" and header == "estado_tarea":
+        options = list(SELECT_OPTIONS.get("estado_tarea", []))
+        selected = value if value in options else ("Sin iniciar" if not (value or "").strip() else value)
+        if selected not in options:
+            options = [selected] + options
+        index = options.index(selected) if selected in options else 0
+        return st.selectbox("Estado", options, index=index, key=key)
     if kind == "sensores" and header == "projectiotid":
         sensor_serial = str(st.session_state.get(f"{prefix}_sensor_serial_number", ""))
         return _render_projectiotid_editor(prefix, value, sensor_serial)
@@ -1299,4 +1376,8 @@ def _validate_history_values(kind: str, values: dict[str, str], prefix: str = ""
         commercial_error = validate_commercial_action_values(values)
         if commercial_error:
             return commercial_error
+    if kind == "notas":
+        return validate_nota_history_values(values)
+    if kind == "tareas":
+        return validate_tarea_history_values(values)
     return None

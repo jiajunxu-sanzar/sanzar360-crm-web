@@ -14,7 +14,11 @@ from config.settings import (
     CANAL_CONTACTO_OPCIONES,
     EMAIL_CLASIFICACION_OPCIONES,
     RESULTADO_CONTACTO_OPCIONES,
+    TIPO_NOTA_OPCIONES,
+    TIPO_TAREA_OPCIONES,
+    ESTADO_TAREA_OPCIONES,
 )
+from services.users_service import crm_user_names
 from ui.components.contact_overview_table import filter_overview_by_contact_ids, sort_overview_by_proxima_accion
 from ui import modal_state
 from ui.components.history import clear_history_table_selection
@@ -31,6 +35,15 @@ DATE_COLUMNS_BY_KIND = {
     "seguimiento_comercial": [
         ("Fecha contacto", "fecha_contacto"),
         ("Próxima acción (fecha)", "proxima_accion_fecha"),
+    ],
+    "notas": [
+        ("Fecha creación", "fecha_creacion"),
+        ("Fecha update", "fecha_update"),
+    ],
+    "tareas": [
+        ("Fecha creación", "fecha_creacion"),
+        ("Fecha update", "fecha_update"),
+        ("Fecha límite", "fecha_limite"),
     ],
 }
 
@@ -52,6 +65,9 @@ SELECT_OPTIONS = {
     "proxima_accion_canal": list(CANAL_CONTACTO_OPCIONES),
     "persona_contacto": list(PERSONA_COMERCIAL_OPCIONES),
     "proxima_accion_persona": list(PERSONA_COMERCIAL_OPCIONES),
+    "tipo_nota": list(TIPO_NOTA_OPCIONES),
+    "tipo_tarea": list(TIPO_TAREA_OPCIONES),
+    "estado_tarea": list(ESTADO_TAREA_OPCIONES),
 }
 
 CONTACT_LIST_PANEL_HEIGHT_BASE = 920
@@ -103,6 +119,16 @@ def pin_oficina_contact_first(df: pd.DataFrame) -> pd.DataFrame:
 def filter_open_sensor_history(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     """Keep sensor history rows that are not explicitly cerrado."""
     return [row for row in rows if _is_sensor_history_open(row)]
+
+
+def is_nota_util(estado: object) -> bool:
+    """Vacío o desconocido se tratan como útiles para no ocultar filas mal formadas."""
+    return str(estado or "").strip() != "Obsoleta"
+
+
+def filter_util_notas(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [row for row in rows if is_nota_util(row.get("estado_nota", ""))]
+
 
 def _contacts_block_spacer() -> None:
     st.markdown('<div class="sanzar-contacts-block-spacer"></div>', unsafe_allow_html=True)
@@ -324,6 +350,27 @@ def _history_smart_defaults(kind: str) -> dict[str, str]:
             "persona_contacto": persona,
             "proxima_accion_persona": persona,
         }
+    if kind == "notas":
+        actor = _actor_name().strip()
+        names = crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        persona = actor if actor in names else ""
+        return {
+            "fecha_creacion": today,
+            "fecha_update": today,
+            "persona_nota": persona,
+            "estado_nota": "Útil",
+        }
+    if kind == "tareas":
+        actor = _actor_name().strip()
+        names = crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        persona = actor if actor in names else ""
+        return {
+            "fecha_creacion": today,
+            "fecha_update": today,
+            "persona_creacion": persona,
+            "persona_gestiona": persona,
+            "estado_tarea": "Sin iniciar",
+        }
     if kind == "sensores":
         return {"fecha_inicio": today}
     if kind == "campanas":
@@ -335,6 +382,11 @@ def _history_smart_defaults(kind: str) -> dict[str, str]:
     return {}
 
 def _apply_smart_defaults(kind: str, initial: dict[str, str], *, is_new: bool) -> dict[str, str]:
+    today = date.today().strftime("%d/%m/%Y")
+    if kind in {"notas", "tareas"} and not is_new:
+        updated = dict(initial)
+        updated["fecha_update"] = today
+        return updated
     if not is_new:
         return initial
     for header, default in _history_smart_defaults(kind).items():

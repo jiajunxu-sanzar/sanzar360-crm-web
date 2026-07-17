@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from pages.inventory import (
+    SERIAL_NUMBER_QUOTES_HELP,
     UG67_SERIAL_NUMBER_QUOTES_HELP,
     _editable_field_keys,
     _field_help,
@@ -18,11 +19,22 @@ from pages.inventory import (
 def test_ug67_create_serial_number_shows_quotes_hint() -> None:
     assert _field_label("serial_number", model="ug67", mode="create") == "Serial number *"
     assert _field_help("serial_number", model="ug67", mode="create") == UG67_SERIAL_NUMBER_QUOTES_HELP
+    assert _field_help("serial_number", model="ug67", mode="create") == SERIAL_NUMBER_QUOTES_HELP
 
 
 def test_ug67_edit_serial_number_has_no_quotes_hint() -> None:
     assert _field_label("serial_number", model="ug67", mode="edit") == "Serial number"
     assert _field_help("serial_number", model="ug67", mode="edit") is None
+
+
+def test_em500_create_serial_number_shows_quotes_hint() -> None:
+    assert _field_label("serial_number", model="em500", mode="create") == "Serial number *"
+    assert _field_help("serial_number", model="em500", mode="create") == SERIAL_NUMBER_QUOTES_HELP
+
+
+def test_em500_edit_serial_number_has_no_quotes_hint() -> None:
+    assert _field_label("serial_number", model="em500", mode="edit") == "Serial number"
+    assert _field_help("serial_number", model="em500", mode="edit") is None
 
 
 def test_other_models_serial_number_has_no_quotes_hint() -> None:

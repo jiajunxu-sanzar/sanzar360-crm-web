@@ -14,9 +14,11 @@ from app.state import select_contact
 from config.contact_estado import is_terminal_contact_estado, normalize_contact_estado
 from services.estado_stagnation_alarms import stagnation_alarms
 from services.history_service import HistoryService
+from services.tareas_validation import build_tareas_alarm_rows
 from ui.components.alarms import WorkAlarmItem, render_work_inbox_row
 
 
+CAT_TAREAS = "Tareas"
 CAT_FUNNEL = "Embudo comercial"
 CAT_INCIDENTS = "Incidencias"
 CAT_SUBS = "Suscripciones"
@@ -182,6 +184,22 @@ def _funnel_items(contacts_df: pd.DataFrame) -> list[WorkAlarmItem]:
 
     items.sort(key=lambda i: (-int(_high_priority(i.priority)), i.title or ""))
     return items
+
+
+def _tareas_items(rows: list[dict[str, str]]) -> list[WorkAlarmItem]:
+    return [
+        WorkAlarmItem(
+            title=item.title,
+            priority=item.priority,
+            due=item.due,
+            owner=item.owner,
+            suggested_action=item.suggested_action,
+            detail=item.detail,
+            contact_id=item.contact_id,
+            context_line=item.context_line,
+        )
+        for item in build_tareas_alarm_rows(rows)
+    ]
 
 
 def _incidents_open(rows: list[dict[str, str]]) -> list[WorkAlarmItem]:
@@ -392,12 +410,18 @@ def render(contacts_df: pd.DataFrame) -> None:
 
     funnel_items = _funnel_items(contacts_df)
 
+    tareas_items: list[WorkAlarmItem] = []
     incidents_items: list[WorkAlarmItem] = []
     subs_items: list[WorkAlarmItem] = []
     sensors_items: list[WorkAlarmItem] = []
     campaigns_items: list[WorkAlarmItem] = []
 
     if hs is not None:
+        try:
+            tareas_items = _tareas_items(hs.rows("tareas"))
+        except Exception as exc:
+            st.warning(f"Tareas: {exc}")
+
         try:
             incidents_items = _incidents_open(hs.rows("incidencias"))
         except Exception as exc:
@@ -417,6 +441,7 @@ def render(contacts_df: pd.DataFrame) -> None:
             st.warning(f"Campañas: {exc}")
 
     items_by_category = {
+        CAT_TAREAS: tareas_items,
         CAT_FUNNEL: funnel_items,
         CAT_INCIDENTS: incidents_items,
         CAT_SUBS: subs_items,
@@ -440,6 +465,7 @@ def render(contacts_df: pd.DataFrame) -> None:
     only_high = st.checkbox("Solo alta / urgente / alto valor", key="alarms_only_high")
 
     configs = (
+        ("Tareas", CAT_TAREAS),
         ("Embudo", CAT_FUNNEL),
         ("Incidencias", CAT_INCIDENTS),
         ("Suscripciones", CAT_SUBS),

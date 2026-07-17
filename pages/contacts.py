@@ -39,6 +39,7 @@ from config.settings import (
     VALOR_OPCIONES,
 )
 from services.contact_proxima_index import enrich_contacts_with_proxima, latest_commercial_contact_row
+from services.tareas_validation import next_open_tarea
 from services.contact_deletion import delete_contact_and_related_data
 from services.contact_sensor_overview import (
     filter_by_sensor_overview,
@@ -671,6 +672,7 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     hs = history_service()
     subscription_status = hs.subscription_status_for_contact(contact_id)
     open_incidents = hs.has_open_incidents(contact_id)
+    open_tasks_count, next_task = next_open_tarea(hs.rows_for_contact("tareas", contact_id))
     acciones_df = load_acciones_cached(st.session_state.get("history_cache_version", 0))
     enriched = enrich_contacts_with_proxima(
         pd.DataFrame([contact]),
@@ -693,6 +695,8 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
         subscription_status=subscription_status,
         open_incidents=open_incidents,
         last_contact=last_contact,
+        open_tasks_count=open_tasks_count,
+        next_task=next_task,
     )
 
     mode_key = f"contact_detail_view_mode_{contact_id}"
@@ -711,6 +715,8 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     elif view_mode == "Históricos":
         updated = None
         _render_history_kind_section(contact, "seguimiento_comercial")
+        _render_history_kind_section(contact, "tareas")
+        _render_history_kind_section(contact, "notas")
         for kind in ("sensores", "campanas", "suscripciones", "incidencias"):
             _render_history_kind_section(contact, kind)
         _maybe_render_sensor_close_location_modal(contact)

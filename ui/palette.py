@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
+from datetime import date, datetime
 
 from ui.design_tokens import color, load_design_tokens, mix_hex, pastel_triplet
 
@@ -199,6 +200,42 @@ def incident_status_style(value: object) -> VisualStatusStyle:
     if text:
         return STATUS_DANGER
     return STATUS_NEUTRAL
+
+
+def tarea_chip_style(*, open_count: int, next_limite: str = "") -> VisualStatusStyle:
+    """Footer chip: neutro si 0; danger si la próxima está vencida; warning si hay abiertas."""
+    if open_count <= 0:
+        return STATUS_NEUTRAL
+    parsed = _parse_task_limite(next_limite)
+    if parsed is not None and parsed < date.today():
+        return STATUS_DANGER
+    return STATUS_WARNING
+
+
+def tarea_limite_style(fecha_limite: str) -> VisualStatusStyle:
+    """Date chip for próxima tarea: vencida=danger, hoy=warning, futuro/sin fecha=info/neutral."""
+    parsed = _parse_task_limite(fecha_limite)
+    if parsed is None:
+        return STATUS_NEUTRAL
+    today = date.today()
+    if parsed < today:
+        return STATUS_DANGER
+    if parsed == today:
+        return STATUS_WARNING
+    return STATUS_INFO
+
+
+def _parse_task_limite(value: str) -> date | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            candidate = raw[:10] if fmt == "%Y-%m-%d" else raw
+            return datetime.strptime(candidate, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def sensor_status_style(value: str) -> VisualStatusStyle:

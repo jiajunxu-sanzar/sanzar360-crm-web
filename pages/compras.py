@@ -706,7 +706,7 @@ def render(_: pd.DataFrame) -> None:
                 top[5].write(fecha)
                 _render_links_row(row)
 
-    if st.session_state.pop(COMPRAS_NEW_DIALOG_KEY, False):
+    if st.session_state.get(COMPRAS_NEW_DIALOG_KEY, False):
         _compras_new_dialog(compras_df)
-    if st.session_state.pop(COMPRAS_EDIT_DIALOG_KEY, False):
+    if st.session_state.get(COMPRAS_EDIT_DIALOG_KEY, False):
         _compras_edit_dialog(compras_df)

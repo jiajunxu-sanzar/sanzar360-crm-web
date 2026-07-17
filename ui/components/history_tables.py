@@ -13,6 +13,7 @@ import streamlit as st
 
 from services.contact_proxima_index import sort_commercial_rows_by_contact_date
 from services.history_service import HISTORY_SPECS, HistoryKind
+from services.tareas_validation import sort_tareas_by_fecha_limite
 from ui import modal_state
 from ui.components.history import (
     clear_history_table_selection,
@@ -23,6 +24,8 @@ from ui.components.tables import filter_dataframe, _selected_row_positions
 
 _NEW_LABELS: dict[str, str] = {
     "seguimiento_comercial": "Nuevo seguimiento",
+    "notas": "Nueva nota",
+    "tareas": "Nueva tarea",
     "sensores": "Nuevo histórico",
     "campanas": "Nuevo histórico",
     "suscripciones": "Nuevo histórico",
@@ -31,6 +34,8 @@ _NEW_LABELS: dict[str, str] = {
 
 _EMPTY_MESSAGES: dict[str, str] = {
     "seguimiento_comercial": "Aún no hay seguimiento comercial. Usa **Nuevo seguimiento** para registrar el primer contacto.",
+    "notas": "Aún no hay notas. Usa **Nueva nota** para registrar la primera.",
+    "tareas": "Aún no hay tareas. Usa **Nueva tarea** para registrar la primera.",
     "sensores": "Aún no hay histórico de sensores. Usa **Nuevo histórico** para registrar el primero.",
     "campanas": "Aún no hay histórico de campañas. Usa **Nuevo histórico** para registrar el primero.",
     "suscripciones": "Aún no hay histórico de suscripciones. Usa **Nuevo histórico** para registrar el primero.",
@@ -81,6 +86,20 @@ _FIELD_LABELS: dict[str, str] = {
     "fecha_cierre": "Cierre",
     "tipo_incidencia": "Tipo",
     "estado_cierre_campana": "Estado",
+    "historial_nota_id": "Nota id",
+    "historial_tarea_id": "Tarea id",
+    "titulo": "Título",
+    "tipo_nota": "Tipo",
+    "estado_nota": "Estado",
+    "tipo_tarea": "Tipo",
+    "estado_tarea": "Estado",
+    "notas": "Notas",
+    "persona_nota": "Autor",
+    "persona_creacion": "Creado por",
+    "persona_gestiona": "Gestiona",
+    "fecha_creacion": "Fecha creación",
+    "fecha_update": "Fecha update",
+    "fecha_limite": "Fecha límite",
     "created_at": "Creado",
     "updated_at": "Actualizado",
 }
@@ -88,6 +107,7 @@ _FIELD_LABELS: dict[str, str] = {
 _LONG_FIELDS = frozenset(
     {
         "notas_contacto",
+        "notas",
         "detalles",
         "detalle",
         "resolucion",
@@ -216,6 +236,21 @@ _TABLE_COLUMNS: dict[str, list[tuple[str, object]]] = {
         ("Detalle", lambda r: _short(_fmt(r, "detalle"), 100) or "—"),
         ("Sensor", lambda r: _fmt(r, "sensor_serial_number") or "—"),
     ],
+    "notas": [
+        ("Título", lambda r: _fmt(r, "titulo") or "—"),
+        ("Tipo", lambda r: _fmt(r, "tipo_nota") or "—"),
+        ("Estado", lambda r: _fmt(r, "estado_nota") or "—"),
+        ("Autor", lambda r: _fmt(r, "persona_nota") or "—"),
+        ("Notas", lambda r: _short(_fmt(r, "notas"), 110) or "—"),
+    ],
+    "tareas": [
+        ("Título", lambda r: _fmt(r, "titulo") or "—"),
+        ("Tipo", lambda r: _fmt(r, "tipo_tarea") or "—"),
+        ("Estado", lambda r: _fmt(r, "estado_tarea") or "—"),
+        ("Gestiona", lambda r: _fmt(r, "persona_gestiona") or "—"),
+        ("Límite", lambda r: _fmt(r, "fecha_limite") or "—"),
+        ("Notas", lambda r: _short(_fmt(r, "notas"), 110) or "—"),
+    ],
 }
 
 
@@ -245,6 +280,18 @@ def _accent_css(kind: str, column: str, value: str) -> str:
                 return _AMBER
             if v == "cerrada":
                 return _GREEN
+        if kind == "notas":
+            if v == "útil" or v == "util":
+                return _GREEN
+            if v == "obsoleta":
+                return _MUTED
+        if kind == "tareas":
+            if v == "terminado":
+                return _GREEN
+            if v == "en proceso":
+                return _AMBER
+            if v == "sin iniciar":
+                return _MUTED
     if kind == "incidencias" and column == "Prioridad":
         if v == "alta":
             return _RED
@@ -273,6 +320,8 @@ def render_history_section(
     spec = HISTORY_SPECS[kind]
     if kind == "seguimiento_comercial":
         rows = sort_commercial_rows_by_contact_date(rows)
+    elif kind == "tareas":
+        rows = sort_tareas_by_fecha_limite(rows)
 
     head = st.columns([0.24, 0.76], gap="small", vertical_alignment="center")
     with head[0]:
@@ -347,7 +396,10 @@ def _render_row_detail(kind: str, row: dict[str, str], contact_id: str, spec) ->
     row_id = str(row.get(spec.id_column, "") or "").strip()
     with st.container(border=True):
         top = st.columns([0.78, 0.22], gap="small", vertical_alignment="center")
-        top[0].markdown(f"**Detalle del registro** · `{_esc(row_id) or '—'}`")
+        if kind in {"notas", "tareas"}:
+            top[0].markdown("**Detalle del registro**")
+        else:
+            top[0].markdown(f"**Detalle del registro** · `{_esc(row_id) or '—'}`")
         if top[1].button(
             "Editar",
             key=f"hist_tbl_edit_{kind}_{contact_id}",

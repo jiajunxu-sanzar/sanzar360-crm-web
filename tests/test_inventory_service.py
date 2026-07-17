@@ -5,6 +5,7 @@ import pandas as pd
 from config.settings import INVENTORY_HEADERS, INVENTORY_MODEL_FIELD_HEADERS, INVENTORY_MODEL_FIELDS_WORKSHEET_NAME, INVENTORY_WORKSHEET_NAME
 from services.inventory_service import (
     InventoryService,
+    format_inventory_serial_with_quotes,
     normalize_field_key,
     normalize_inventory_serial_for_match,
     normalize_model_name,
@@ -64,6 +65,14 @@ def test_normalize_helpers() -> None:
     assert normalize_field_key(" Associated_SIM_Inventory_ID ") == "associated_sim_inventory_id"
     assert normalize_inventory_serial_for_match('"6222E3615254 "') == "6222e3615254"
     assert normalize_inventory_serial_for_match("6222E3615254") == "6222e3615254"
+
+
+def test_format_inventory_serial_with_quotes() -> None:
+    assert format_inventory_serial_with_quotes("6222E3615254") == '"6222E3615254"'
+    assert format_inventory_serial_with_quotes('"6222E3615254"') == '"6222E3615254"'
+    assert format_inventory_serial_with_quotes("'6222E3615254'") == "'6222E3615254'"
+    assert format_inventory_serial_with_quotes("  ") == ""
+    assert format_inventory_serial_with_quotes("") == ""
 
 
 def test_asset_options_by_models_handles_model_variants() -> None:

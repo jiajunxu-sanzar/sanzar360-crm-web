@@ -11,7 +11,7 @@ from services.inventory_export import build_association_map_pdf_bytes
 from ui.components.page_header import render_page_header
 from app.state import bump_inventory_cache
 from config.settings import INVENTORY_HEADERS, INVENTORY_MODEL_FIELD_HEADERS
-from services.inventory_service import normalize_model_name
+from services.inventory_service import format_inventory_serial_with_quotes, normalize_model_name
 from ui.components.inventory_cards import build_inventory_card_html
 from ui.components.sn_association_viewer import render_sn_viewer_panel
 
@@ -149,6 +149,8 @@ def _inventory_options_by_model(inv_df: pd.DataFrame, model: str) -> list[tuple[
 
 
 UG67_SERIAL_NUMBER_QUOTES_HELP = "Poner el serial_number entre comillas."
+SERIAL_NUMBER_QUOTES_HELP = UG67_SERIAL_NUMBER_QUOTES_HELP
+_SERIAL_QUOTE_MODELS = frozenset({"ug67", "em500"})
 
 
 def _field_label(field_key: str, *, model: str = "", mode: str = "create") -> str:
@@ -156,7 +158,7 @@ def _field_label(field_key: str, *, model: str = "", mode: str = "create") -> st
     if (
         field_key == "serial_number"
         and mode == "create"
-        and _normalize_model_name(model) == "ug67"
+        and _normalize_model_name(model) in _SERIAL_QUOTE_MODELS
     ):
         return f"{label} *"
     return label
@@ -166,9 +168,9 @@ def _field_help(field_key: str, *, model: str = "", mode: str = "create") -> str
     if (
         field_key == "serial_number"
         and mode == "create"
-        and _normalize_model_name(model) == "ug67"
+        and _normalize_model_name(model) in _SERIAL_QUOTE_MODELS
     ):
-        return UG67_SERIAL_NUMBER_QUOTES_HELP
+        return SERIAL_NUMBER_QUOTES_HELP
     return None
 
 
@@ -415,6 +417,8 @@ def _render_inventory_form_dialog(
         if not values.get("serial_number", "").strip():
             st.error("El Número de serie (SN) es obligatorio.")
             return
+        if mode == "create" and _normalize_model_name(model) in _SERIAL_QUOTE_MODELS:
+            values["serial_number"] = format_inventory_serial_with_quotes(values["serial_number"])
         if (values.get("acquisition_type", "") == "prestamo") and not values.get("loan_end_date", "").strip():
             st.error("Si acquisition_type es préstamo, indica loan_end_date.")
             return

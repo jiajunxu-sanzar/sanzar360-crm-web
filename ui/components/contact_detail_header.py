@@ -14,6 +14,8 @@ from ui.palette import (
     incident_status_style,
     next_action_style,
     subscription_status_style,
+    tarea_chip_style,
+    tarea_limite_style,
     valor_oportunidad_style,
 )
 
@@ -70,6 +72,38 @@ def _render_last_contact_block(last_contact: dict[str, str] | None) -> str:
 """
 
 
+def _render_next_task_block(
+    *,
+    open_tasks_count: int,
+    next_task: dict[str, str] | None,
+) -> str:
+    if open_tasks_count <= 0 or not next_task:
+        return ""
+    titulo = _esc(_short_detail(str(next_task.get("titulo", "") or ""), 80)) or "Sin título"
+    limite = str(next_task.get("fecha_limite", "") or "").strip()
+    fecha_label = limite or "Sin fecha"
+    limite_chip = chip(fecha_label, tarea_limite_style(limite))
+    gestiona = _esc(next_task.get("persona_gestiona", "")) or "—"
+    more = ""
+    if open_tasks_count > 1:
+        extra = open_tasks_count - 1
+        more = (
+            f'<p class="sanzar-detail-task-more sanzar-muted">'
+            f"+{extra} más en Históricos</p>"
+        )
+    return f"""
+  <div class="sanzar-detail-next sanzar-detail-task">
+    <div class="sanzar-detail-next-label">Próxima tarea</div>
+    <div class="sanzar-detail-next-row">
+      {limite_chip}
+      <span class="sanzar-detail-persona">{gestiona}</span>
+    </div>
+    <p class="sanzar-detail-next-detail">{titulo}</p>
+    {more}
+  </div>
+"""
+
+
 def render_contact_detail_header(
     *,
     contact: dict[str, str],
@@ -77,6 +111,8 @@ def render_contact_detail_header(
     subscription_status: str,
     open_incidents: bool,
     last_contact: dict[str, str] | None = None,
+    open_tasks_count: int = 0,
+    next_task: dict[str, str] | None = None,
 ) -> None:
     """Render the sticky-ish operational header card (nombre, estado, próxima acción, alertas, contacto)."""
     cid_full = _esc(contact_id)
@@ -107,6 +143,15 @@ def render_contact_detail_header(
         "Incidencias abiertas" if open_incidents else "Sin incidencias abiertas",
         incident_status_style("abierta" if open_incidents else "cerrada"),
     )
+    next_limite = str((next_task or {}).get("fecha_limite", "") or "")
+    if open_tasks_count > 0:
+        tareas_label = f"Tareas abiertas · {open_tasks_count}"
+    else:
+        tareas_label = "Sin tareas abiertas"
+    tareas_chip = chip(
+        tareas_label,
+        tarea_chip_style(open_count=open_tasks_count, next_limite=next_limite),
+    )
     valor_row = ""
     if (valor or "").strip():
         valor_row = (
@@ -136,6 +181,10 @@ def render_contact_detail_header(
         )
 
     last_contact_html = _render_last_contact_block(last_contact)
+    next_task_html = _render_next_task_block(
+        open_tasks_count=open_tasks_count,
+        next_task=next_task,
+    )
 
     st.markdown(
         f"""
@@ -156,8 +205,9 @@ def render_contact_detail_header(
     </div>
     <p class="sanzar-detail-next-detail">{detalle_vis}</p>
   </div>
+  {next_task_html}
   <div class="sanzar-detail-footer-row">
-    <div class="sanzar-detail-chips-secondary">{subs_chip}{inc_chip}</div>
+    <div class="sanzar-detail-chips-secondary">{subs_chip}{inc_chip}{tareas_chip}</div>
     {contact_block}
   </div>
 </section>
