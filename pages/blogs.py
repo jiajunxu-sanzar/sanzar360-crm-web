@@ -91,7 +91,7 @@ def _filter_blogs(
         if q:
             haystack = " ".join(
                 str(row.get(col, "") or "")
-                for col in ("titulo", "persona_publica", "notas", "estado_blog")
+                for col in ("titulo", "persona_publica", "responsable_blog", "notas", "estado_blog")
             ).lower()
             if q not in haystack:
                 continue
@@ -142,6 +142,9 @@ def _render_blog_form(values: dict[str, str], *, mode: str) -> None:
     current_persona = str(values.get("persona_publica", "") or "").strip() or _actor_name()
     if current_persona and current_persona not in persona_opts:
         persona_opts = persona_opts + [current_persona]
+    current_responsable = str(values.get("responsable_blog", "") or "").strip() or _actor_name()
+    if current_responsable and current_responsable not in persona_opts:
+        persona_opts = persona_opts + [current_responsable]
 
     titulo = st.text_input("Título *", value=values.get("titulo", ""), key=f"{prefix}_titulo")
     estado = st.selectbox(
@@ -165,14 +168,28 @@ def _render_blog_form(values: dict[str, str], *, mode: str) -> None:
             value=values.get("fecha_publicacion_real", ""),
             key=f"{prefix}_fecha_real",
         )
-    persona_publica = st.selectbox(
-        "Persona que publica",
-        persona_opts,
-        index=persona_opts.index(current_persona) if current_persona in persona_opts else 0,
-        key=f"{prefix}_persona",
-    )
+    p1, p2 = st.columns(2)
+    with p1:
+        persona_publica = p1.selectbox(
+            "Persona que publica",
+            persona_opts,
+            index=persona_opts.index(current_persona) if current_persona in persona_opts else 0,
+            key=f"{prefix}_persona",
+        )
+    with p2:
+        responsable_blog = p2.selectbox(
+            "Responsable de blog",
+            persona_opts,
+            index=persona_opts.index(current_responsable) if current_responsable in persona_opts else 0,
+            key=f"{prefix}_responsable",
+        )
     link_borrador = _render_url_field("Link borrador", values.get("link_borrador", ""), key=f"{prefix}_link_borrador")
     link_publicado = _render_url_field("Link publicado", values.get("link_publicado", ""), key=f"{prefix}_link_pub")
+    link_publicado_linkedin = _render_url_field(
+        "Link publicado LinkedIn",
+        values.get("link_publicado_linkedin", ""),
+        key=f"{prefix}_link_linkedin",
+    )
     notas = st.text_area("Notas internas", value=values.get("notas", ""), key=f"{prefix}_notas", height=80)
 
     draft = {
@@ -184,8 +201,10 @@ def _render_blog_form(values: dict[str, str], *, mode: str) -> None:
         "fecha_publicacion_prevista": fecha_prevista,
         "fecha_publicacion_real": fecha_real,
         "persona_publica": persona_publica,
+        "responsable_blog": responsable_blog,
         "link_borrador": link_borrador,
         "link_publicado": link_publicado,
+        "link_publicado_linkedin": link_publicado_linkedin,
         "notas": notas,
     }
     if estado == "Publicado" and not str(draft.get("fecha_publicacion_real", "") or "").strip():
@@ -336,24 +355,29 @@ def render(_: pd.DataFrame) -> None:
             prevista = str(row.get("fecha_publicacion_prevista", "") or "").strip() or "—"
             real = str(row.get("fecha_publicacion_real", "") or "").strip() or "—"
             persona = str(row.get("persona_publica", "") or "").strip() or "—"
+            responsable = str(row.get("responsable_blog", "") or "").strip() or "—"
             overdue = is_blog_due_or_overdue(row)
             with st.container(border=True):
-                top = st.columns([2.2, 1.0, 1.0, 1.0, 0.8])
+                top = st.columns([2.0, 0.9, 0.95, 0.95, 0.85, 0.85])
                 top[0].markdown(f"**{html.escape(titulo)}**")
                 top[1].markdown(_estado_badge_html(estado), unsafe_allow_html=True)
                 top[2].write(f"Prevista: {prevista}")
                 top[3].write(f"Real: {real}")
-                top[4].write(persona)
+                top[4].write(f"Publica: {persona}")
+                top[5].write(f"Resp.: {responsable}")
                 if overdue:
                     st.caption("Pendiente de publicar (fecha prevista hoy o vencida).")
-                links = st.columns([1, 1, 1])
+                links = st.columns([1, 1, 1, 1])
                 draft_url = str(row.get("link_borrador", "") or "").strip()
                 pub_url = str(row.get("link_publicado", "") or "").strip()
+                linkedin_url = str(row.get("link_publicado_linkedin", "") or "").strip()
                 if draft_url:
                     links[0].link_button("Borrador", draft_url, use_container_width=True)
                 if pub_url:
                     links[1].link_button("Publicado", pub_url, use_container_width=True)
-                if links[2].button("Editar", key=f"blogs_edit_{blog_id}", use_container_width=True):
+                if linkedin_url:
+                    links[2].link_button("LinkedIn", linkedin_url, use_container_width=True)
+                if links[3].button("Editar", key=f"blogs_edit_{blog_id}", use_container_width=True):
                     st.session_state[BLOGS_SELECTED_ID_KEY] = blog_id
                     st.session_state[BLOGS_EDIT_DIALOG_KEY] = True
                     st.rerun()

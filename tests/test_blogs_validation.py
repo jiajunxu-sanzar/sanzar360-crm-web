@@ -15,6 +15,13 @@ from services.blogs_validation import (
 )
 
 
+def test_blogs_headers_include_linkedin_and_responsable() -> None:
+    assert "responsable_blog" in BLOGS_HEADERS
+    assert "link_publicado_linkedin" in BLOGS_HEADERS
+    assert BLOGS_HEADERS.index("responsable_blog") == BLOGS_HEADERS.index("persona_publica") + 1
+    assert BLOGS_HEADERS.index("link_publicado_linkedin") == BLOGS_HEADERS.index("link_publicado") + 1
+
+
 class FakeSheets:
     def __init__(self) -> None:
         self.frames: dict[str, pd.DataFrame] = {
