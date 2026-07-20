@@ -109,10 +109,12 @@ def _sidebar_pending_tareas_count() -> int:
     try:
         history_ver = st.session_state.get("history_cache_version", 0)
         blogs_ver = st.session_state.get("blogs_cache_version", 0)
+        contacts_ver = st.session_state.get("contacts_cache_version", 0)
         tareas_rows = load_history_rows_cached("tareas", history_ver)
         blogs_df = load_blogs_cached(blogs_ver)
         blog_rows = blogs_df.fillna("").astype(str).to_dict("records") if not blogs_df.empty else []
-        return pending_tareas_inbox_count(tareas_rows, blog_rows)
+        contacts_df = load_contacts_cached(contacts_ver)
+        return pending_tareas_inbox_count(tareas_rows, blog_rows, contacts_df=contacts_df)
     except Exception:
         return 0
 

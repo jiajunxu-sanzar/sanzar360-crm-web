@@ -37,7 +37,7 @@ def render_work_inbox_row(item: WorkAlarmItem, *, row_index: int, category_label
     """Render one inbox row + CTAs.
 
     Returns an action token when the user clicks a button:
-    ``open_contact``, ``go_blogs``, or ``dismiss_blog_gap``.
+    ``open_contact``, ``go_blogs``, ``go_clientes``, or ``dismiss_blog_gap``.
     """
     stripe = escape(_stripe_color(item))
     pr = escape((item.priority or "sin dato").strip().capitalize())
@@ -104,6 +104,8 @@ def render_work_inbox_row(item: WorkAlarmItem, *, row_index: int, category_label
     if open_clicked:
         if item.target_page == "Blogs":
             return "go_blogs"
+        if item.target_page == "Clientes":
+            return "go_clientes"
         return "open_contact"
     return None
 

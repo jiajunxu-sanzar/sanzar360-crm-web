@@ -8,6 +8,8 @@ import pandas as pd
 from config.settings import CANONICAL_COLUMNS
 from services.clientes_board import (
     VER_TODOS,
+    count_pendientes_visto_hoy,
+    build_visto_hoy_alarm_row,
     filter_clientes_board,
     is_visto_hoy,
     sort_clientes_board,
@@ -144,6 +146,20 @@ def test_values_for_visto_toggle() -> None:
     today = date(2026, 7, 16)
     assert values_for_visto_toggle(checked=True, today=today) == {"visto_cliente_fecha": "2026-07-16"}
     assert values_for_visto_toggle(checked=False, today=today) == {"visto_cliente_fecha": ""}
+
+
+def test_count_pendientes_visto_hoy() -> None:
+    today = date(2026, 7, 16)
+    assert count_pendientes_visto_hoy(_sample_df(), today=today) == 2
+
+
+def test_build_visto_hoy_alarm_row() -> None:
+    today = date(2026, 7, 16)
+    alarm = build_visto_hoy_alarm_row(_sample_df(), today=today)
+    assert alarm is not None
+    assert alarm.pending_count == 2
+    assert "Faltan 2 clientes" in alarm.title
+    assert build_visto_hoy_alarm_row(pd.DataFrame(), today=today) is None
 
 
 def test_values_for_flag() -> None:

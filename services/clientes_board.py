@@ -184,3 +184,60 @@ def values_for_flag(field: str, *, checked: bool) -> dict[str, str]:
     if field not in {"umbrales_activadas", "suelo_seco"}:
         raise ValueError(f"Campo de flag no válido: {field}")
     return {field: sheet_bool_str(checked)}
+
+
+def count_pendientes_visto_hoy(
+    contacts_df: pd.DataFrame,
+    *,
+    today: date | None = None,
+) -> int:
+    """Cuántos Cliente/Potencial del tablero aún no tienen «Visto hoy» marcado."""
+    board = filter_clientes_board(contacts_df, responsable=None)
+    if board.empty:
+        return 0
+    today_d = today or date.today()
+    visto_col = (
+        board["visto_cliente_fecha"]
+        if "visto_cliente_fecha" in board.columns
+        else pd.Series([""] * len(board), index=board.index)
+    )
+    return int((~visto_col.map(lambda v: is_visto_hoy(v, today=today_d))).sum())
+
+
+@dataclass(frozen=True)
+class VistoHoyAlarmRow:
+    title: str
+    priority: str
+    due: str
+    owner: str
+    suggested_action: str
+    detail: str
+    alarm_key: str
+    context_line: str
+    pending_count: int
+
+
+def build_visto_hoy_alarm_row(
+    contacts_df: pd.DataFrame,
+    *,
+    today: date | None = None,
+) -> VistoHoyAlarmRow | None:
+    """Alarma agregada si falta algún contacto del tablero Clientes por marcar Visto hoy."""
+    today_d = today or date.today()
+    pending = count_pendientes_visto_hoy(contacts_df, today=today_d)
+    if pending <= 0:
+        return None
+    board = filter_clientes_board(contacts_df, responsable=None)
+    total = len(board)
+    noun = "cliente" if pending == 1 else "clientes"
+    return VistoHoyAlarmRow(
+        title=f"Faltan {pending} {noun} por «Visto hoy»",
+        priority="Alta",
+        due=today_d.strftime("%d/%m/%Y"),
+        owner="",
+        suggested_action="Revisar el tablero Clientes y marcar «Visto hoy» en cada ficha pendiente",
+        detail=f"{pending} de {total} en el tablero aún sin revisar hoy",
+        alarm_key=f"visto_hoy:{today_d.isoformat()}",
+        context_line="Objetivo diario: todos los Cliente / Potencial marcados como vistos",
+        pending_count=pending,
+    )

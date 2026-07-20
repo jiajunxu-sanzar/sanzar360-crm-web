@@ -14,6 +14,7 @@ from services.contact_proxima_index import enrich_contacts_with_proxima
 from app.state import bump_blogs_cache, select_contact
 from config.contact_estado import is_terminal_contact_estado, normalize_contact_estado
 from services.blogs_validation import build_blog_due_alarm_rows, build_weekly_gap_alarm_row
+from services.clientes_board import build_visto_hoy_alarm_row
 from services.estado_stagnation_alarms import stagnation_alarms
 from services.history_service import HistoryService
 from services.tareas_validation import build_tareas_alarm_rows
@@ -120,6 +121,9 @@ def _render_inbox_for_category(
                     st.session_state[BLOGS_SELECTED_ID_KEY] = blog_id
                     st.session_state[BLOGS_EDIT_DIALOG_KEY] = True
             st.rerun()
+        elif action == "go_clientes":
+            st.session_state["active_page"] = "Clientes"
+            st.rerun()
         elif action == "dismiss_blog_gap":
             st.session_state[BLOGS_GAP_DISMISS_CONFIRM_KEY] = True
             st.rerun()
@@ -188,6 +192,26 @@ def _blog_items(rows: list[dict[str, str]]) -> list[WorkAlarmItem]:
             )
         )
     return items
+
+
+def _visto_hoy_items(contacts_df: pd.DataFrame) -> list[WorkAlarmItem]:
+    row = build_visto_hoy_alarm_row(contacts_df)
+    if not row:
+        return []
+    return [
+        WorkAlarmItem(
+            title=row.title,
+            priority=row.priority,
+            due=row.due,
+            owner=row.owner,
+            suggested_action=row.suggested_action,
+            detail=row.detail,
+            context_line=row.context_line,
+            cta_label="Ir a Clientes",
+            target_page="Clientes",
+            alarm_key=row.alarm_key,
+        )
+    ]
 
 
 def _funnel_embudo_df(contacts_df: pd.DataFrame) -> pd.DataFrame:
@@ -532,6 +556,7 @@ def render(contacts_df: pd.DataFrame) -> None:
     # Always evaluate blog alarms, even when `HistorialBlog` is empty,
     # so the weekly "no blog scheduled" warning can still appear.
     tareas_items = tareas_items + _blog_items(blog_rows)
+    tareas_items = tareas_items + _visto_hoy_items(contacts_df)
 
     items_by_category = {
         CAT_TAREAS: tareas_items,
