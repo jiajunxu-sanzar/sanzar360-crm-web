@@ -8,6 +8,7 @@ import streamlit as st
 from app.telemetry import timed
 from config.settings import CONFIG
 from config.settings import ACCIONES_HEADERS
+from services.blogs_service import BlogsService
 from services.compras_service import ComprasService
 from services.contact_sensor_overview import build_contact_sensor_overview
 from services.contacts_export import build_overview_pdf_bytes, build_overview_xlsx_bytes
@@ -20,6 +21,11 @@ from services.users_service import load_users
 @st.cache_resource
 def sheets_service() -> SheetsService:
     return SheetsService()
+
+
+@st.cache_resource
+def blogs_service() -> BlogsService:
+    return BlogsService(sheets_service())
 
 
 @st.cache_resource
@@ -71,6 +77,12 @@ def load_inventory_cached(version: int = 0):
 def load_inventory_model_fields_cached(version: int = 0):
     with timed("load_inventory_model_fields_cached", version=version):
         return inventory_service().model_fields_df()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_blogs_cached(version: int = 0):
+    with timed("load_blogs_cached", version=version):
+        return blogs_service().blogs_df()
 
 
 @st.cache_data(ttl=300, show_spinner=False)

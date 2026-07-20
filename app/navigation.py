@@ -33,6 +33,7 @@ PAGES: Final[tuple[str, ...]] = (
     "Facturas",
     "Pricing",
     "Referidos",
+    "Blogs",
 )
 
 # Texto del menú lateral (emojis sólo visuales; ``PAGES`` sigue siendo la clave interna).
@@ -52,6 +53,7 @@ PAGE_MENU_LABELS: Final[dict[str, str]] = {
     "Facturas": "🧾 Facturas",
     "Pricing": "💰 Pricing",
     "Referidos": "🤝 Referidos",
+    "Blogs": "📝 Blogs",
 }
 
 
@@ -77,6 +79,7 @@ PAGE_ICONS: Final[dict[str, str]] = {
     "Facturas": ":material/receipt_long:",
     "Pricing": ":material/payments:",
     "Referidos": ":material/handshake:",
+    "Blogs": ":material/article:",
 }
 
 # Subtítulo mostrado bajo el título en la cabecera de cada página.
@@ -96,6 +99,7 @@ PAGE_DESCRIPTIONS: Final[dict[str, str]] = {
     "Facturas": "Generación de facturas en PDF",
     "Pricing": "Calculadora de precios",
     "Referidos": "Programa de referidos",
+    "Blogs": "Planificación y seguimiento de publicaciones del blog",
 }
 
 # Agrupación visual del menú lateral (no afecta a permisos: cada sección se
@@ -112,6 +116,7 @@ NAV_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "Mapa",
             "Email",
             "Referidos",
+            "Blogs",
         ),
     ),
     (

@@ -68,6 +68,18 @@ def test_referidos_visible_to_commercial_roles_not_employee() -> None:
     assert "Referidos" not in emp
 
 
+def test_blogs_visible_to_commercial_roles_not_employee() -> None:
+    sales = navigation.pages_for_role(navigation.ROLE_SALES)
+    agro = navigation.pages_for_role(navigation.ROLE_AGRO_TEAM)
+    emp = navigation.pages_for_role(navigation.ROLE_EMPLOYEE)
+    assert "Blogs" in sales
+    assert "Blogs" in agro
+    assert "Blogs" not in emp
+    commercial_pages = navigation.NAV_SECTIONS[0][1]
+    assert "Blogs" in commercial_pages
+    assert commercial_pages.index("Blogs") == commercial_pages.index("Referidos") + 1
+
+
 def test_normalize_role() -> None:
     assert navigation.normalize_role(" ADMIN ") == navigation.ROLE_ADMIN
     assert navigation.normalize_role("sales") == navigation.ROLE_SALES

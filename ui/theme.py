@@ -1475,3 +1475,19 @@ def apply_theme() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+# Injected from streamlit_app when the Tareas inbox has pending items.
+NAV_ALARMS_PENDING_TAREAS_CSS = """
+[class*="st-key-nav_btn_centro_de_alarmas"] button[kind="tertiary"] {
+  color: var(--ui-semantic-error) !important;
+  background: var(--ui-kpi-danger-bg) !important;
+  font-weight: 600 !important;
+}
+[class*="st-key-nav_btn_centro_de_alarmas"] button[kind="tertiary"] [data-testid="stIconMaterial"] {
+  color: var(--ui-semantic-error) !important;
+}
+[class*="st-key-nav_btn_centro_de_alarmas"] button[kind="primary"] {
+  box-shadow: inset 3px 0 0 var(--ui-semantic-error) !important;
+}
+"""

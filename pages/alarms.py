@@ -7,15 +7,21 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import streamlit as st
 
-from app.cache import history_service, load_acciones_cached
+from app import auth
+from app.cache import blogs_service, history_service, load_acciones_cached, load_blogs_cached, load_users_cached
 from ui.components.page_header import render_page_header
 from services.contact_proxima_index import enrich_contacts_with_proxima
-from app.state import select_contact
+from app.state import bump_blogs_cache, select_contact
 from config.contact_estado import is_terminal_contact_estado, normalize_contact_estado
+from services.blogs_validation import build_blog_due_alarm_rows, build_weekly_gap_alarm_row
 from services.estado_stagnation_alarms import stagnation_alarms
 from services.history_service import HistoryService
 from services.tareas_validation import build_tareas_alarm_rows
 from ui.components.alarms import WorkAlarmItem, render_work_inbox_row
+
+BLOGS_GAP_DISMISS_CONFIRM_KEY = "blogs_gap_dismiss_confirm"
+BLOGS_SELECTED_ID_KEY = "blogs_selected_id"
+BLOGS_EDIT_DIALOG_KEY = "blogs_edit_dialog_open"
 
 
 CAT_TAREAS = "Tareas"
@@ -102,10 +108,86 @@ def _render_inbox_for_category(
         return
 
     for i, item in enumerate(items):
-        if render_work_inbox_row(item, row_index=i, category_label=category_label):
-            if item.contact_id:
-                select_contact(str(item.contact_id))
+        action = render_work_inbox_row(item, row_index=i, category_label=category_label)
+        if action == "open_contact" and item.contact_id:
+            select_contact(str(item.contact_id))
             st.rerun()
+        elif action == "go_blogs":
+            st.session_state["active_page"] = "Blogs"
+            if item.alarm_key.startswith("blog:"):
+                blog_id = item.alarm_key.split(":", 1)[1].strip()
+                if blog_id and blog_id != "unknown":
+                    st.session_state[BLOGS_SELECTED_ID_KEY] = blog_id
+                    st.session_state[BLOGS_EDIT_DIALOG_KEY] = True
+            st.rerun()
+        elif action == "dismiss_blog_gap":
+            st.session_state[BLOGS_GAP_DISMISS_CONFIRM_KEY] = True
+            st.rerun()
+
+
+def _alarm_actor() -> tuple[str, str]:
+    uid = auth.get_authenticated_user_id()
+    users = load_users_cached(st.session_state.get("users_cache_version", 0))
+    for user in users:
+        if user.employee_id == uid:
+            return uid, user.nombre
+    return uid, uid
+
+
+@st.dialog("Descartar aviso")
+def _confirm_blog_gap_dismiss() -> None:
+    st.markdown("¿Descartar este aviso?")
+    c1, c2 = st.columns(2)
+    if c1.button("Sí", type="primary", key="blogs_gap_dismiss_yes", use_container_width=True):
+        employee_id, actor_name = _alarm_actor()
+        try:
+            blogs_service().log_weekly_gap_dismiss(employee_id=employee_id, actor_name=actor_name)
+        except Exception as exc:
+            st.error(str(exc))
+            return
+        bump_blogs_cache()
+        st.session_state.pop(BLOGS_GAP_DISMISS_CONFIRM_KEY, None)
+        st.rerun()
+    if c2.button("No", key="blogs_gap_dismiss_no", use_container_width=True):
+        st.session_state.pop(BLOGS_GAP_DISMISS_CONFIRM_KEY, None)
+        st.rerun()
+
+
+def _blog_items(rows: list[dict[str, str]]) -> list[WorkAlarmItem]:
+    items: list[WorkAlarmItem] = []
+    for row in build_blog_due_alarm_rows(rows):
+        items.append(
+            WorkAlarmItem(
+                title=row.title,
+                priority=row.priority,
+                due=row.due,
+                owner=row.owner,
+                suggested_action=row.suggested_action,
+                detail=row.detail,
+                context_line=row.context_line,
+                cta_label="Ir a Blogs",
+                target_page="Blogs",
+                alarm_key=row.alarm_key,
+            )
+        )
+    gap = build_weekly_gap_alarm_row(rows)
+    if gap:
+        items.append(
+            WorkAlarmItem(
+                title=gap.title,
+                priority=gap.priority,
+                due=gap.due,
+                owner=gap.owner,
+                suggested_action=gap.suggested_action,
+                detail=gap.detail,
+                context_line=gap.context_line,
+                cta_label="Ir a Blogs",
+                target_page="Blogs",
+                alarm_key=gap.alarm_key,
+                dismissible=True,
+            )
+        )
+    return items
 
 
 def _funnel_embudo_df(contacts_df: pd.DataFrame) -> pd.DataFrame:
@@ -440,6 +522,17 @@ def render(contacts_df: pd.DataFrame) -> None:
         except Exception as exc:
             st.warning(f"Campañas: {exc}")
 
+    blog_rows: list[dict[str, str]] = []
+    try:
+        blogs_df = load_blogs_cached(st.session_state.get("blogs_cache_version", 0))
+        blog_rows = blogs_df.fillna("").astype(str).to_dict("records")
+    except Exception as exc:
+        st.warning(f"Blogs: {exc}")
+
+    # Always evaluate blog alarms, even when `HistorialBlog` is empty,
+    # so the weekly "no blog scheduled" warning can still appear.
+    tareas_items = tareas_items + _blog_items(blog_rows)
+
     items_by_category = {
         CAT_TAREAS: tareas_items,
         CAT_FUNNEL: funnel_items,
@@ -481,3 +574,6 @@ def render(contacts_df: pd.DataFrame) -> None:
                 sort_mode=sort_mode,
                 only_high=only_high,
             )
+
+    if st.session_state.get(BLOGS_GAP_DISMISS_CONFIRM_KEY):
+        _confirm_blog_gap_dismiss()

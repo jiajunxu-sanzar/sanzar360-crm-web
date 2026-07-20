@@ -282,6 +282,27 @@ COMPRAS_ESTADOS: tuple[str, ...] = (
     "cancelada",
 )
 COMPRAS_ESTADOS_PENDIENTES: frozenset[str] = frozenset({"comparando", "pendiente", "en_transito"})
+BLOGS_WORKSHEET_NAME = "HistorialBlog"
+BLOG_TIPO_REGISTRO_BLOG = "blog"
+BLOG_TIPO_REGISTRO_EVENTO = "evento"
+BLOG_EVENTO_ALARMA_SIN_SEMANA = "alarma_sin_blog_semana"
+BLOG_MIN_POR_SEMANA = 1
+ESTADO_BLOG_OPCIONES: tuple[str, ...] = ("Borrador", "Sin publicar", "Publicado")
+BLOGS_HEADERS: tuple[str, ...] = (
+    "historial_blog_id",
+    "tipo_registro",
+    "titulo",
+    "estado_blog",
+    "fecha_publicacion_prevista",
+    "fecha_publicacion_real",
+    "persona_publica",
+    "link_borrador",
+    "link_publicado",
+    "notas",
+    "created_at",
+    "updated_at",
+)
+
 COMPRAS_HEADERS: tuple[str, ...] = (
     "compra_id",
     "referencia",

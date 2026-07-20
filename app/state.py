@@ -24,6 +24,7 @@ DATA_CACHE_VERSION_KEYS: Final[tuple[str, ...]] = (
     "history_cache_version",
     "inventory_cache_version",
     "compras_cache_version",
+    "blogs_cache_version",
     "users_cache_version",
     "vacations_cache_version",
 )
@@ -37,6 +38,7 @@ DEFAULT_STATE = {
     "history_cache_version": 0,
     "inventory_cache_version": 0,
     "compras_cache_version": 0,
+    "blogs_cache_version": 0,
     "alarm_category": "Embudo",
     "asset_search_query": "",
     # Auth keys — managed exclusively via app.auth, never as widget keys.
@@ -78,6 +80,10 @@ def bump_inventory_cache() -> None:
 
 def bump_compras_cache() -> None:
     st.session_state.compras_cache_version = int(st.session_state.get("compras_cache_version", 0)) + 1
+
+
+def bump_blogs_cache() -> None:
+    st.session_state.blogs_cache_version = int(st.session_state.get("blogs_cache_version", 0)) + 1
 
 
 def bump_all_data_caches() -> None:

@@ -21,16 +21,24 @@ class WorkAlarmItem:
     owner: str
     suggested_action: str
     detail: str
-    contact_id: str
+    contact_id: str = ""
     context_line: str = ""
+    cta_label: str = "Abrir ficha"
+    target_page: str = ""
+    alarm_key: str = ""
+    dismissible: bool = False
 
 
 def _stripe_color(item: WorkAlarmItem) -> str:
     return priority_style(item.priority).border
 
 
-def render_work_inbox_row(item: WorkAlarmItem, *, row_index: int, category_label: str) -> bool:
-    """Render one inbox row + primary CTA. Returns True when *Abrir ficha* was clicked."""
+def render_work_inbox_row(item: WorkAlarmItem, *, row_index: int, category_label: str) -> str | None:
+    """Render one inbox row + CTAs.
+
+    Returns an action token when the user clicks a button:
+    ``open_contact``, ``go_blogs``, or ``dismiss_blog_gap``.
+    """
     stripe = escape(_stripe_color(item))
     pr = escape((item.priority or "sin dato").strip().capitalize())
     due_esc = escape(item.due or "—")
@@ -68,18 +76,34 @@ def render_work_inbox_row(item: WorkAlarmItem, *, row_index: int, category_label
 """
 
     cat_slug = "_".join((category_label or "x").split())
-    cid_safe = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in (item.contact_id or "anon"))
+    key_base = item.alarm_key or item.contact_id or f"row_{row_index}"
+    key_safe = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in key_base)
 
     col_main, col_cta = st.columns([5.8, 1.2], gap="small")
     with col_main:
         st.markdown(left, unsafe_allow_html=True)
     with col_cta:
+        cta_label = item.cta_label or "Abrir ficha"
         open_clicked = st.button(
-            "Abrir ficha",
-            key=f"alarm_inbox_open_{cat_slug}_{row_index}_{cid_safe}",
+            cta_label,
+            key=f"alarm_inbox_open_{cat_slug}_{row_index}_{key_safe}",
             width="stretch",
             type="primary",
         )
+        dismiss_clicked = False
+        if item.dismissible:
+            dismiss_clicked = st.button(
+                "Descartar",
+                key=f"alarm_inbox_dismiss_{cat_slug}_{row_index}_{key_safe}",
+                width="stretch",
+            )
 
     st.markdown('<div class="sanzar-inbox-spacer"></div>', unsafe_allow_html=True)
-    return open_clicked
+    if dismiss_clicked:
+        return "dismiss_blog_gap"
+    if open_clicked:
+        if item.target_page == "Blogs":
+            return "go_blogs"
+        return "open_contact"
+    return None
+

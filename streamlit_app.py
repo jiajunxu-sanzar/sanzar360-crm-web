@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.cache import load_contacts_cached, load_users_cached, sheets_service
+from app.cache import load_blogs_cached, load_contacts_cached, load_history_rows_cached, load_users_cached, sheets_service
 from app.navigation import (
     ACCIONES_PAGE,
     PAGE_ICONS,
@@ -25,7 +25,7 @@ from app.state import (
 )
 from config.settings import CONFIG
 from models.contact import empty_contacts_dataframe
-from services.activity_log import init_activity_sheet
+from services.alarm_inbox_counts import pending_tareas_inbox_count
 from services.contacts_schema import init_contacts_schema
 from pages import (
     actions_dashboard,
@@ -40,11 +40,12 @@ from pages import (
     map,
     pricing,
     compras,
+    blogs,
     referidos,
     vacaciones,
     users,
 )
-from ui.theme import apply_theme
+from ui.theme import NAV_ALARMS_PENDING_TAREAS_CSS, apply_theme
 
 
 st.set_page_config(page_title="Sanzar CRM", page_icon="🌱", layout="wide")
@@ -102,6 +103,18 @@ def _close_all_overlays() -> None:
 def _page_key_slug(page: str) -> str:
     """Clave estable y segura para widgets/CSS a partir del nombre de página."""
     return "".join(ch if ch.isalnum() else "_" for ch in page).lower()
+
+
+def _sidebar_pending_tareas_count() -> int:
+    try:
+        history_ver = st.session_state.get("history_cache_version", 0)
+        blogs_ver = st.session_state.get("blogs_cache_version", 0)
+        tareas_rows = load_history_rows_cached("tareas", history_ver)
+        blogs_df = load_blogs_cached(blogs_ver)
+        blog_rows = blogs_df.fillna("").astype(str).to_dict("records") if not blogs_df.empty else []
+        return pending_tareas_inbox_count(tareas_rows, blog_rows)
+    except Exception:
+        return 0
 
 
 def _user_initials(nombre: str) -> str:
@@ -197,6 +210,12 @@ with st.sidebar:
     if active_page not in available_pages:
         active_page = available_pages[0]
 
+    pending_tareas_count = 0
+    if "Centro de alarmas" in available_pages:
+        pending_tareas_count = _sidebar_pending_tareas_count()
+        if pending_tareas_count > 0:
+            st.markdown(f"<style>{NAV_ALARMS_PENDING_TAREAS_CSS}</style>", unsafe_allow_html=True)
+
     # Navegación agrupada por secciones (botones estilizados como items de menú).
     with st.container(key="sanzar_nav"):
         for section_title, section_pages in nav_sections_for_role(selected_user.role):
@@ -206,8 +225,11 @@ with st.sidebar:
             )
             for nav_page_name in section_pages:
                 is_active = nav_page_name == active_page
+                nav_label = nav_page_name
+                if nav_page_name == "Centro de alarmas" and pending_tareas_count > 0:
+                    nav_label = f"{nav_page_name} ({pending_tareas_count})"
                 if st.button(
-                    nav_page_name,
+                    nav_label,
                     key=f"nav_btn_{_page_key_slug(nav_page_name)}",
                     icon=PAGE_ICONS.get(nav_page_name),
                     type="primary" if is_active else "tertiary",
@@ -360,3 +382,5 @@ elif page == "Pricing":
     pricing.render(contacts_df)
 elif page == "Referidos":
     referidos.render(contacts_df)
+elif page == "Blogs":
+    blogs.render(contacts_df)
