@@ -34,6 +34,7 @@ from services.tecnico_campana_prefill import (
     open_campaigns_for_contact,
     textura_visible_name,
 )
+from services.usda_soil_texture import classify_soil_texture
 from ui.components.cultivo_kc_form import render_cultivo_kc_fields, save_cultivo_kc
 from ui.components.page_header import render_page_header
 
@@ -845,6 +846,88 @@ def _render_tab_texturas() -> None:
     st.caption("CC = capacidad de campo teórica, PMP = punto de marchitez fisiológica teórico.")
 
 
+def _render_tab_triangulo_usda() -> None:
+    st.subheader("Triángulo textural USDA")
+    st.caption(
+        "Introduce el % de arcilla, limo y arena (USDA-NRCS). "
+        "Si la suma no es exactamente 100, se normaliza de forma proporcional."
+    )
+
+    with st.container(border=True):
+        st.markdown("##### Porcentajes de la muestra")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            clay = st.number_input(
+                "Arcilla %",
+                min_value=0.0,
+                max_value=100.0,
+                value=20.0,
+                step=0.1,
+                format="%.1f",
+                key="tecnico_usda_clay",
+            )
+        with c2:
+            silt = st.number_input(
+                "Limo %",
+                min_value=0.0,
+                max_value=100.0,
+                value=60.0,
+                step=0.1,
+                format="%.1f",
+                key="tecnico_usda_silt",
+            )
+        with c3:
+            sand = st.number_input(
+                "Arena %",
+                min_value=0.0,
+                max_value=100.0,
+                value=20.0,
+                step=0.1,
+                format="%.1f",
+                key="tecnico_usda_sand",
+            )
+        total = float(clay) + float(silt) + float(sand)
+        st.caption(f"Suma actual: **{total:.1f}** %")
+
+        if st.button("Clasificar textura", type="primary", key="tecnico_usda_clasificar"):
+            try:
+                resultado = classify_soil_texture(float(clay), float(silt), float(sand))
+                st.session_state["tecnico_usda_last_result"] = resultado
+            except ValueError as exc:
+                st.session_state.pop("tecnico_usda_last_result", None)
+                st.error(str(exc))
+
+    resultado = st.session_state.get("tecnico_usda_last_result")
+    if not isinstance(resultado, dict):
+        return
+
+    with st.container(border=True):
+        st.markdown("##### Resultado")
+        clase_es = str(resultado.get("clase_es", "") or "")
+        clase_crm = str(resultado.get("clase_crm", "") or "")
+        st.success(f"Clase textural: **{clase_es}**")
+        st.caption(
+            f"Clave CRM: `{clase_crm}` · "
+            f"Arcilla {resultado.get('clay')}% · "
+            f"Limo {resultado.get('silt')}% · "
+            f"Arena {resultado.get('sand')}%"
+        )
+        candidatos = list(resultado.get("candidatos") or [])
+        if len(candidatos) > 1:
+            st.caption(
+                "El punto cae justo en el límite entre varias clases: "
+                + ", ".join(str(c) for c in candidatos)
+            )
+
+        if st.button("Usar en Calcular umbrales", key="tecnico_usda_aplicar"):
+            if clase_crm not in TABLA_TEXTURAS:
+                st.error(f"La clase «{clase_crm}» no está en la tabla de texturas del CRM.")
+            else:
+                st.session_state["tecnico_textura"] = _nombre_visible_textura(clase_crm)
+                _snapshot_tecnico_form_backup()
+                st.toast(f"Textura «{clase_es}» aplicada en Calcular umbrales.", icon="✅")
+
+
 def _render_tab_cultivos() -> None:
     success = str(st.session_state.pop(CULTIVOS_SUCCESS_KEY, "") or "").strip()
     if success:
@@ -947,13 +1030,18 @@ def _render_tecnico_dialogs() -> None:
 def render(contacts_df: pd.DataFrame) -> None:
     render_page_header("Técnico")
     st.caption(
-        "Cálculo de umbrales de riego, gestión de cultivos Kc FAO-56 y tabla de referencia de texturas."
+        "Cálculo de umbrales de riego, cultivos Kc FAO-56, texturas de referencia "
+        "y clasificador del triángulo USDA."
     )
-    tab_calc, tab_cult, tab_tex = st.tabs(["Calcular umbrales", "Cultivos Kc", "Texturas"])
+    tab_calc, tab_cult, tab_tex, tab_usda = st.tabs(
+        ["Calcular umbrales", "Cultivos Kc", "Texturas", "Triángulo USDA"]
+    )
     with tab_calc:
         _render_tab_umbrales(contacts_df if isinstance(contacts_df, pd.DataFrame) else pd.DataFrame())
     with tab_cult:
         _render_tab_cultivos()
     with tab_tex:
         _render_tab_texturas()
+    with tab_usda:
+        _render_tab_triangulo_usda()
     _render_tecnico_dialogs()
