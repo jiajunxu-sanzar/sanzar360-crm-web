@@ -3,8 +3,8 @@
 Jerarquía de pestañas (inclusión):
 
 - ``admin``: todas las rutas declaradas en ``PAGES``.
-- ``agro_team``: operación completa excepto administración, **sin** pestaña Email.
-- ``sales``: mismo alcance histórico de operación para equipo comercial (**incluye** Email).
+- ``agro_team``: operación completa excepto administración (sin «Usuarios»); **incluye** Email.
+- ``sales``: mismo alcance de operación para equipo comercial (**incluye** Email).
 - ``employee`` (y cualquier rol desconocido): subconjunto mínimo declarado explícitamente.
 
 Para cambiar quién ve qué, edita solo las constantes de este módulo; el orden
@@ -183,8 +183,8 @@ ROLE_LABELS: Final[dict[str, str]] = {
 # Pestañas que sólo aparecen si el rol es admin (ej. configuración sensible).
 _PAGES_EXCLUSIVE_TO_ADMIN: Final[frozenset[str]] = frozenset({"Usuarios"})
 
-# Sin «Usuarios» (admin-only) ni «Email» (reservado a admin + sales).
-AGRO_TEAM_DENIED_PAGES: Final[frozenset[str]] = _PAGES_EXCLUSIVE_TO_ADMIN | frozenset({"Email"})
+# Sin «Usuarios» (admin-only). Email está disponible para admin, sales y agro_team.
+AGRO_TEAM_DENIED_PAGES: Final[frozenset[str]] = _PAGES_EXCLUSIVE_TO_ADMIN
 
 _EMPLOYEE_TAB_KEYS: Final[frozenset[str]] = frozenset(
     {"Vacaciones", "Compras", "Facturas"}
@@ -228,8 +228,8 @@ def _assert_navigation_contract() -> None:
         raise AssertionError("Acciones debe ser sólo administración / equipo agro.")
     sales_pages = frozenset(pages_for_role(ROLE_SALES))
     agro_pages = frozenset(pages_for_role(ROLE_AGRO_TEAM))
-    if "Email" in agro_pages:
-        raise AssertionError("La pestaña Email no debe estar en agro_team.")
+    if "Email" not in agro_pages:
+        raise AssertionError("La pestaña Email debe estar en agro_team.")
     if "Email" not in sales_pages:
         raise AssertionError("La pestaña Email debe estar en sales.")
     if not emp.issubset(sales_pages):

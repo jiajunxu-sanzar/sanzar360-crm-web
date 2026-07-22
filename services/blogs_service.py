@@ -15,6 +15,7 @@ from config.settings import (
     BLOGS_WORKSHEET_NAME,
 )
 from services.blogs_validation import filter_blog_rows, validate_blog_values, week_bounds, week_key
+from services.sheet_date_format import is_valid_dd_mm_yyyy
 from services.sheets_service import SheetsService
 
 
@@ -120,6 +121,72 @@ class BlogsService:
     # Registro de envíos de newsletter (tipo_registro="newsletter")
     # ------------------------------------------------------------------
 
+    def create_newsletter_draft(
+        self,
+        *,
+        titulo: str,
+        persona_publica: str,
+        link_borrador: str = "",
+        estado_blog: str = "Borrador",
+        fecha_publicacion_prevista: str = "",
+        notas: str = "",
+    ) -> str:
+        """Crea una fila de newsletter en planning (sin envío real todavía)."""
+        self.ensure_structure()
+        clean_titulo = str(titulo or "").strip()
+        if not clean_titulo:
+            raise ValueError("El título de la newsletter es obligatorio.")
+        estado = str(estado_blog or "").strip() or "Borrador"
+        if estado not in {"Borrador", "Publicado"}:
+            raise ValueError("El estado debe ser Borrador o Publicado.")
+        prevista = str(fecha_publicacion_prevista or "").strip()
+        if not prevista:
+            raise ValueError("La fecha de publicación prevista es obligatoria.")
+        if not is_valid_dd_mm_yyyy(prevista):
+            raise ValueError("La fecha de publicación prevista debe estar en formato DD/MM/AAAA.")
+
+        persona = str(persona_publica or "").strip()
+        today = _today()
+        row_id = str(uuid.uuid4())
+        row = {h: "" for h in BLOGS_HEADERS}
+        row.update(
+            {
+                "historial_blog_id": row_id,
+                "tipo_registro": BLOG_TIPO_REGISTRO_NEWSLETTER,
+                "titulo": clean_titulo,
+                "estado_blog": estado,
+                "fecha_publicacion_prevista": prevista,
+                "fecha_publicacion_real": today if estado == "Publicado" else "",
+                "persona_publica": persona,
+                "responsable_blog": persona,
+                "link_borrador": str(link_borrador or "").strip(),
+                "notas": str(notas or "").strip(),
+                "newsletter_enviado_por": persona,
+                "newsletter_bajas_json": "[]",
+                "boton_newsletter": "no",
+                "imagen": "no",
+                "created_at": today,
+                "updated_at": today,
+            }
+        )
+        self._sheets.append_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row)
+        return row_id
+
+    def newsletter_draft_rows(self) -> list[dict[str, str]]:
+        """Newsletters en estado Borrador (candidatas a enviar desde Email)."""
+        rows = [
+            row
+            for row in self.newsletter_rows()
+            if str(row.get("estado_blog", "") or "").strip().lower() == "borrador"
+        ]
+        rows.sort(
+            key=lambda r: (
+                str(r.get("fecha_publicacion_prevista", "") or ""),
+                str(r.get("titulo", "") or "").lower(),
+            )
+        )
+        return rows
+
     def log_newsletter_send(
         self,
         *,
@@ -128,8 +195,12 @@ class BlogsService:
         enviado_por: str,
         destinatarios: list[dict[str, str]],
         newsletter_id: str | None = None,
+        asunto: str = "",
+        cta_texto: str = "",
+        cta_url: str = "",
+        tiene_imagen: bool = False,
     ) -> str:
-        """Registra un envío de newsletter como fila nueva en Blogs.
+        """Registra un envío de newsletter: actualiza la fila si el id existe, si no append.
 
         ``destinatarios`` es una lista de ``{"contact_id", "nombre", "correo"}``
         de todos los contactos a los que se mandó (no incluye envíos de prueba).
@@ -141,29 +212,57 @@ class BlogsService:
         self.ensure_structure()
         row_id = str(newsletter_id or "").strip() or str(uuid.uuid4())
         today = _today()
+        cta_t = str(cta_texto or "").strip()
+        cta_u = str(cta_url or "").strip()
+        has_cta = bool(cta_t and cta_u)
+
+        row_nums = self._sheets.row_numbers_by_id(BLOGS_WORKSHEET_NAME, "historial_blog_id")
+        row_num = row_nums.get(row_id)
+        existing: dict[str, str] = {}
+        if row_num is not None:
+            df = self.blogs_df()
+            match = df[df["historial_blog_id"].astype(str).str.strip() == row_id]
+            if not match.empty:
+                existing = {h: str(match.iloc[0].get(h, "") or "") for h in BLOGS_HEADERS}
+            else:
+                row_num = None
+
         row = {h: "" for h in BLOGS_HEADERS}
+        if existing:
+            row.update(existing)
+
         row.update(
             {
                 "historial_blog_id": row_id,
                 "tipo_registro": BLOG_TIPO_REGISTRO_NEWSLETTER,
-                "titulo": str(titulo or "").strip() or "Newsletter",
+                "titulo": str(titulo or "").strip() or existing.get("titulo", "") or "Newsletter",
                 "estado_blog": "Publicado",
-                "fecha_publicacion_prevista": today,
+                "fecha_publicacion_prevista": existing.get("fecha_publicacion_prevista", "") or today,
                 "fecha_publicacion_real": today,
-                "persona_publica": enviado_por,
-                "responsable_blog": enviado_por,
-                "notas": str(texto or "").strip(),
+                "persona_publica": enviado_por or existing.get("persona_publica", ""),
+                "responsable_blog": enviado_por or existing.get("responsable_blog", ""),
+                "link_borrador": existing.get("link_borrador", ""),
+                "notas": str(texto or "").strip() or existing.get("notas", ""),
                 "newsletter_texto": str(texto or "").strip(),
                 "newsletter_enviado_por": enviado_por,
                 "newsletter_destinatarios_json": json.dumps(destinatarios, ensure_ascii=False),
                 "newsletter_num_destinatarios": str(len(destinatarios)),
                 "newsletter_fecha_envio": _now(),
-                "newsletter_bajas_json": "[]",
-                "created_at": today,
+                "newsletter_bajas_json": existing.get("newsletter_bajas_json", "") or "[]",
+                "newsletter_asunto": str(asunto or "").strip(),
+                "boton_newsletter": "sí" if has_cta else "no",
+                "newsletter_cta_texto": cta_t if has_cta else "",
+                "link_boton_newsletter": cta_u if has_cta else "",
+                "imagen": "sí" if tiene_imagen else "no",
+                "created_at": existing.get("created_at", "") or today,
                 "updated_at": today,
             }
         )
-        self._sheets.append_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row)
+
+        if row_num is None:
+            self._sheets.append_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row)
+        else:
+            self._sheets.update_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row_num, row)
         return row_id
 
     def newsletter_rows(self) -> list[dict[str, str]]:

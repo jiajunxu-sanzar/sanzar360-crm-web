@@ -22,9 +22,13 @@ import streamlit as st
 
 from app import auth
 from app.cache import blogs_service, history_service, load_users_cached
-from app.navigation import ROLE_SALES, normalize_role
 from ui.components.page_header import render_page_header
-from app.smtp_profiles import SmtpResolved, resolve_smtp_detail
+from app.smtp_profiles import (
+    NEWSLETTER_SMTP_PROFILE_SLUG,
+    SmtpResolved,
+    resolve_smtp_detail,
+    resolve_smtp_profile,
+)
 from app.state import bump_blogs_cache, bump_contacts_cache, bump_history_cache, set_contacts_df_override
 from config.settings import (
     CONTACT_ESTADO_OPCIONES,
@@ -95,6 +99,9 @@ _KEY_NL_CTA_URL = "newsletter_cta_url"
 _KEY_NL_TEST_RECIPIENTS = "newsletter_test_recipients"
 _KEY_NL_IMAGE_UPLOAD = "newsletter_image_upload"
 _KEY_NL_SHOW_PREVIEW = "_newsletter_show_preview"
+_KEY_NL_CONFIRM_OPEN = "_newsletter_confirm_open"
+_KEY_NL_DRAFT_ID = "newsletter_planned_draft_id"
+_KEY_NL_DRAFT_PREFILL_DONE = "_newsletter_draft_prefill_done"
 
 
 def _ensure_state() -> None:
@@ -110,6 +117,8 @@ def _ensure_state() -> None:
         _KEY_NL_CTA_URL: "",
         _KEY_NL_TEST_RECIPIENTS: NEWSLETTER_TEST_RECIPIENTS_DEFAULT,
         _KEY_NL_SHOW_PREVIEW: False,
+        _KEY_NL_DRAFT_ID: "",
+        _KEY_NL_DRAFT_PREFILL_DONE: "",
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -564,9 +573,12 @@ def _do_send_newsletter(
     content: NewsletterContent,
     hero: tuple[bytes, str] | None,
     smtp_detail: SmtpResolved,
+    *,
+    newsletter_id: str | None = None,
 ) -> None:
     actor = _email_actor_name()
-    newsletter_id = str(uuid.uuid4())
+    planned_id = str(newsletter_id or "").strip()
+    newsletter_id = planned_id or str(uuid.uuid4())
     logo_bytes = load_logo_bytes()
     hero_src = "cid:hero" if hero else None
 
@@ -629,8 +641,14 @@ def _do_send_newsletter(
                 enviado_por=actor,
                 destinatarios=sent_records,
                 newsletter_id=newsletter_id,
+                asunto=content.asunto,
+                cta_texto=content.cta_texto,
+                cta_url=content.cta_url,
+                tiene_imagen=hero is not None,
             )
             bump_blogs_cache()
+            st.session_state[_KEY_NL_DRAFT_ID] = ""
+            st.session_state[_KEY_NL_DRAFT_PREFILL_DONE] = ""
         except Exception as exc:
             st.warning(f"El envío se realizó pero no se pudo registrar en Blogs: {exc}")
 
@@ -663,6 +681,55 @@ def _render_newsletter_panel(
     selected_ids: list[str],
     smtp_detail: SmtpResolved,
 ) -> None:
+    with st.container(border=True):
+        st.markdown("##### Planning (Blogs)")
+        draft_rows: list[dict[str, str]] = []
+        try:
+            draft_rows = blogs_service().newsletter_draft_rows()
+        except Exception:
+            draft_rows = []
+        options = [""] + [
+            str(r.get("historial_blog_id", "") or "").strip()
+            for r in draft_rows
+            if str(r.get("historial_blog_id", "") or "").strip()
+        ]
+        labels = {
+            "": "Ninguna (envío nuevo)",
+            **{
+                str(r.get("historial_blog_id", "") or "").strip(): (
+                    f"{str(r.get('titulo', '') or 'Newsletter').strip()} · "
+                    f"prevista {str(r.get('fecha_publicacion_prevista', '') or '—').strip() or '—'}"
+                )
+                for r in draft_rows
+                if str(r.get("historial_blog_id", "") or "").strip()
+            },
+        }
+        selected_draft = st.selectbox(
+            "Newsletter planificada (opcional)",
+            options,
+            key=_KEY_NL_DRAFT_ID,
+            format_func=lambda x: labels.get(x, x),
+            help="Si eliges un borrador de Blogs, al enviar se actualizará esa misma fila en HistorialBlog.",
+        )
+        if selected_draft:
+            draft = next(
+                (r for r in draft_rows if str(r.get("historial_blog_id", "") or "").strip() == selected_draft),
+                None,
+            )
+            if draft is not None:
+                draft_titulo = str(draft.get("titulo", "") or "").strip()
+                prefill_for = str(st.session_state.get(_KEY_NL_DRAFT_PREFILL_DONE, "") or "")
+                if draft_titulo and prefill_for != selected_draft:
+                    if not str(st.session_state.get(_KEY_NL_TITULO, "") or "").strip():
+                        st.session_state[_KEY_NL_TITULO] = draft_titulo
+                    st.session_state[_KEY_NL_DRAFT_PREFILL_DONE] = selected_draft
+                st.caption(
+                    f"Se actualizará el planning «{draft_titulo or selected_draft[:8]}» "
+                    f"(id `{selected_draft[:8]}…`)."
+                )
+        else:
+            st.session_state[_KEY_NL_DRAFT_PREFILL_DONE] = ""
+
     with st.container(border=True):
         st.markdown("##### Contenido")
         st.text_input(
@@ -706,6 +773,7 @@ def _render_newsletter_panel(
         content = _newsletter_content_from_state()
         content_ok = bool(content.asunto.strip()) and bool(content.titulo.strip())
         can_send = content_ok and not cta_mismatch
+        planned_id = str(st.session_state.get(_KEY_NL_DRAFT_ID, "") or "").strip()
 
         if st.button("Vista previa", width="stretch", disabled=not content_ok):
             st.session_state[_KEY_NL_SHOW_PREVIEW] = True
@@ -739,9 +807,51 @@ def _render_newsletter_panel(
         n = len(selected_ids)
         label = f"Enviar newsletter ({n})" if n else "Enviar newsletter"
         if st.button(label, type="primary", width="stretch", disabled=(n == 0 or not can_send)):
-            with st.spinner("Enviando newsletter…"):
-                _do_send_newsletter(contacts, selected_ids, content, hero, smtp_detail)
+            st.session_state[_KEY_NL_CONFIRM_OPEN] = True
+        if st.session_state.get(_KEY_NL_CONFIRM_OPEN):
+            _newsletter_confirm_send_dialog(
+                contacts, selected_ids, content, hero, smtp_detail, newsletter_id=planned_id or None
+            )
         _render_newsletter_history()
+
+
+@st.dialog("Confirmar envío de newsletter")
+def _newsletter_confirm_send_dialog(
+    contacts: pd.DataFrame,
+    selected_ids: list[str],
+    content: NewsletterContent,
+    hero: tuple[bytes, str] | None,
+    smtp_detail: SmtpResolved,
+    *,
+    newsletter_id: str | None = None,
+) -> None:
+    n = len(selected_ids)
+    st.markdown(
+        f"Vas a enviar la newsletter a **{n}** contacto(s) desde "
+        f"**{smtp_detail.delivery.user}**."
+    )
+    st.markdown(f"**Asunto:** {_newsletter_email_subject(content)}")
+    if newsletter_id:
+        st.caption(f"Se actualizará la fila planificada `{newsletter_id[:8]}…` en HistorialBlog.")
+    else:
+        st.caption("Se creará una fila nueva en HistorialBlog.")
+    st.caption("Revisa que los destinatarios y el contenido sean correctos antes de confirmar.")
+    c1, c2 = st.columns(2)
+    if c1.button("Confirmar envío", type="primary", width="stretch", key="nl_confirm_yes"):
+        st.session_state.pop(_KEY_NL_CONFIRM_OPEN, None)
+        with st.spinner("Enviando newsletter…"):
+            _do_send_newsletter(
+                contacts,
+                selected_ids,
+                content,
+                hero,
+                smtp_detail,
+                newsletter_id=newsletter_id,
+            )
+        st.rerun()
+    if c2.button("Cancelar", width="stretch", key="nl_confirm_no"):
+        st.session_state.pop(_KEY_NL_CONFIRM_OPEN, None)
+        st.rerun()
 
 
 # ---------------------------------------------------------------------------
@@ -765,7 +875,7 @@ def _render_email_password_gate() -> bool:
 
     st.info(
         "Introduce la **misma contraseña** que en la hoja «Usuarios CRM» para este usuario. "
-        "Así se confirma que eres tú y el envío usará el buzón SMTP que te corresponde (Jiajun / Kabir / …)."
+        "Así se confirma que eres tú antes de usar el envío de correos."
     )
     with st.form("email_portal_password", clear_on_submit=False):
         pw = st.text_input("Contraseña de Usuarios CRM", type="password", key="_email_portal_pw_input")
@@ -789,6 +899,11 @@ def render(df: pd.DataFrame) -> None:
     if not _render_email_password_gate():
         return
 
+    st.warning(
+        "Esta funcionalidad debe usarse con cuidado. "
+        "No envíes correos ni newsletters a destinatarios equivocados."
+    )
+
     uid = auth.get_authenticated_user_id()
     actor_nombre = ""
     app_role = ""
@@ -797,33 +912,11 @@ def render(df: pd.DataFrame) -> None:
             actor_nombre = u.nombre
             app_role = u.role
             break
-    smtp_detail = resolve_smtp_detail(
+
+    user_smtp = resolve_smtp_detail(
         employee_id=uid, nombre=actor_nombre, app_role=app_role
     )
-
-    if not smtp_detail.profile_complete:
-        if smtp_detail.routed_profile_slug:
-            slug = smtp_detail.routed_profile_slug
-            st.error(
-                f"No se pueden enviar correos: tu usuario está enlazado al perfil SMTP «{slug}» (por ejemplo "
-                f"la cuenta de correo de **{actor_nombre or uid}**), pero ese perfil **no está bien configurado** "
-                "o falta en secrets / `.env` (host, usuario SMTP, contraseña de aplicación)."
-            )
-        elif normalize_role(app_role) == ROLE_SALES:
-            st.error(
-                "No se pueden enviar correos: con rol **sales** hace falta una **ruta SMTP propia** para tu usuario. "
-                f"Tu `employee_id` en «Usuarios CRM» es **`{uid}`**; en `.env`/secretos debe existir "
-                f"`SMTP_ROUTE_BY_EMPLOYEE_{uid}=kabir` (o el perfil que corresponda) "
-                "y además el bloque `SMTP_PROFILE_KABIR_*` / `[smtp_profiles.kabir]` con usuario y contraseña. "
-                "Si el `employee_id` no coincide con `EMP002` de tu `.env`, la app no te asigna Kabir y antes "
-                "podía caer en el SMTP global (p. ej. Jiajun)."
-            )
-        else:
-            st.error(
-                "No se pueden enviar correos: **SMTP global no configurado** (`SMTP_HOST`, `SMTP_USER`, etc.) "
-                "o no tienes ruta a un perfil (`SMTP_ROUTE_BY_EMPLOYEE_…` / `[smtp_route_by_*]`)."
-            )
-        return
+    newsletter_smtp = resolve_smtp_profile(NEWSLETTER_SMTP_PROFILE_SLUG)
 
     _ensure_state()
 
@@ -855,11 +948,29 @@ def render(df: pd.DataFrame) -> None:
     )
 
     with right:
-        if smtp_detail.routed_profile_slug:
-            st.caption(
-                f"Enviando como **{smtp_detail.delivery.user}** (perfil «{smtp_detail.routed_profile_slug}»)."
-            )
         if is_newsletter:
-            _render_newsletter_panel(contacts, selected_ids, smtp_detail)
+            if not newsletter_smtp.profile_complete:
+                st.error(
+                    "No se puede enviar la newsletter: falta configurar el perfil SMTP **info** "
+                    f"(`SMTP_PROFILE_INFO_*` / `[smtp_profiles.{NEWSLETTER_SMTP_PROFILE_SLUG}]` "
+                    "con host, usuario y contraseña de aplicación)."
+                )
+            else:
+                st.caption(
+                    f"Enviando como **{newsletter_smtp.delivery.user}** "
+                    f"(perfil «{NEWSLETTER_SMTP_PROFILE_SLUG}»)."
+                )
+                _render_newsletter_panel(contacts, selected_ids, newsletter_smtp)
         else:
-            _render_template_editor(contacts, df, selected_ids, smtp_detail)
+            if not user_smtp.profile_complete:
+                st.info(
+                    "Actualmente no tienes acceso al correo individual. "
+                    "Consulta con el administrador para activarlo."
+                )
+            else:
+                if user_smtp.routed_profile_slug:
+                    st.caption(
+                        f"Enviando como **{user_smtp.delivery.user}** "
+                        f"(perfil «{user_smtp.routed_profile_slug}»)."
+                    )
+                _render_template_editor(contacts, df, selected_ids, user_smtp)

@@ -9,7 +9,9 @@ from services.blogs_service import BlogsService
 from services.blogs_validation import (
     build_blog_due_alarm_rows,
     build_weekly_gap_alarm_row,
+    filter_blog_and_newsletter_rows,
     filter_blog_rows,
+    is_newsletter_row,
     should_show_weekly_gap_alarm,
     weekly_blog_count,
 )
@@ -20,6 +22,17 @@ def test_blogs_headers_include_linkedin_and_responsable() -> None:
     assert "link_publicado_linkedin" in BLOGS_HEADERS
     assert BLOGS_HEADERS.index("responsable_blog") == BLOGS_HEADERS.index("persona_publica") + 1
     assert BLOGS_HEADERS.index("link_publicado_linkedin") == BLOGS_HEADERS.index("link_publicado") + 1
+
+
+def test_blogs_headers_include_newsletter_detail_columns() -> None:
+    for col in (
+        "newsletter_asunto",
+        "boton_newsletter",
+        "newsletter_cta_texto",
+        "link_boton_newsletter",
+        "imagen",
+    ):
+        assert col in BLOGS_HEADERS
 
 
 class FakeSheets:
@@ -117,6 +130,18 @@ def test_log_weekly_gap_dismiss_writes_event_row() -> None:
     assert row["persona_publica"] == "David Ortiz"
     assert "semana=2026-W30" in row["notas"]
     assert filter_blog_rows(df.fillna("").astype(str).to_dict("records")) == []
+    assert filter_blog_and_newsletter_rows(df.fillna("").astype(str).to_dict("records")) == []
+
+
+def test_filter_blog_and_newsletter_rows_keeps_both_excludes_evento() -> None:
+    rows = [
+        {**{h: "" for h in BLOGS_HEADERS}, "tipo_registro": "blog", "titulo": "B"},
+        {**{h: "" for h in BLOGS_HEADERS}, "tipo_registro": "newsletter", "titulo": "N"},
+        {**{h: "" for h in BLOGS_HEADERS}, "tipo_registro": "evento", "titulo": "E"},
+    ]
+    visible = filter_blog_and_newsletter_rows(rows)
+    assert {r["titulo"] for r in visible} == {"B", "N"}
+    assert is_newsletter_row(visible[1]) or any(is_newsletter_row(r) for r in visible)
 
 
 def test_alarms_blog_items_includes_weekly_gap_for_empty_list() -> None:

@@ -231,6 +231,28 @@ def resolve_smtp_detail(
     return SmtpResolved(cfg, profile_key, True)
 
 
+NEWSLETTER_SMTP_PROFILE_SLUG = "info"
+
+
+def resolve_smtp_profile(slug: str) -> SmtpResolved:
+    """Resuelve un perfil SMTP por slug (p. ej. ``info`` para newsletter).
+
+    No usa rutas por usuario ni el SMTP global como sustituto usable: si el
+    perfil falta o está incompleto, ``profile_complete`` es ``False``.
+    """
+    key = (slug or "").strip().lower()
+    empty = default_smtp_from_config()
+    if not key:
+        return SmtpResolved(empty, None, False)
+    profiles = _smtp_profiles_dict()
+    if key not in profiles:
+        return SmtpResolved(empty, key, False)
+    cfg = _profile_as_config(profiles[key])
+    if cfg is None:
+        return SmtpResolved(empty, key, False)
+    return SmtpResolved(cfg, key, True)
+
+
 def resolve_smtp_for_user(
     *,
     employee_id: str = "",

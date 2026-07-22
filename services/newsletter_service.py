@@ -138,6 +138,26 @@ class NewsletterContent:
     cta_url: str
 
 
+def newsletter_content_from_historial_row(row: dict[str, str]) -> NewsletterContent:
+    """Reconstruye ``NewsletterContent`` desde una fila de HistorialBlog."""
+    cta_texto = str(row.get("newsletter_cta_texto", "") or "").strip()
+    cta_url = str(row.get("link_boton_newsletter", "") or "").strip()
+    boton = str(row.get("boton_newsletter", "") or "").strip().lower()
+    if boton in {"no", "n", "0", "false"}:
+        cta_texto, cta_url = "", ""
+    return NewsletterContent(
+        asunto=str(row.get("newsletter_asunto", "") or "").strip(),
+        titulo=str(row.get("titulo", "") or "").strip(),
+        parrafo=str(row.get("newsletter_texto", "") or row.get("notas", "") or "").strip(),
+        cta_texto=cta_texto,
+        cta_url=cta_url,
+    )
+
+
+def row_had_newsletter_image(row: dict[str, str]) -> bool:
+    return str(row.get("imagen", "") or "").strip().lower() in {"sí", "si", "yes", "y", "1", "true"}
+
+
 _LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _UNDERLINE_RE = re.compile(r"\+\+(.+?)\+\+")
@@ -194,8 +214,8 @@ def render_newsletter_html(
         f"""
         <tr>
           <td style="padding:0;">
-            <img src="{hero_src}" alt="" width="600"
-                 style="width:100%;max-width:600px;display:block;border:0;" />
+            <img src="{hero_src}" alt="" width="400"
+                 style="width:100%;max-width:400px;display:block;border:0;" />
           </td>
         </tr>
         """
@@ -243,12 +263,12 @@ def render_newsletter_html(
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:24px 0;">
       <tr>
         <td align="center">
-          <table role="presentation" width="600" cellpadding="0" cellspacing="0"
-                 style="background:#ffffff;border-radius:12px;max-width:600px;width:100%;border-collapse:separate;">
+          <table role="presentation" width="400" cellpadding="0" cellspacing="0"
+                 style="background:#ffffff;border-radius:12px;max-width:400px;width:100%;border-collapse:separate;">
             <tr>
-              <td style="padding:22px 32px 14px 32px;text-align:center;">
-                <img src="{logo_src}" alt="Sanzar" height="55"
-                     style="height:55px;width:auto;max-width:138px;display:inline-block;border:0;" />
+              <td style="padding:16px 24px 10px 24px;text-align:center;">
+                <img src="{logo_src}" alt="Sanzar" height="50"
+                     style="height:50px;width:auto;max-width:120px;display:inline-block;border:0;" />
               </td>
             </tr>
             {hero_html}

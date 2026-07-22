@@ -9,6 +9,7 @@ from config.settings import (
     BLOG_MIN_POR_SEMANA,
     BLOG_TIPO_REGISTRO_BLOG,
     BLOG_TIPO_REGISTRO_EVENTO,
+    BLOG_TIPO_REGISTRO_NEWSLETTER,
     ESTADO_BLOG_OPCIONES,
 )
 from services.sheet_date_format import is_valid_dd_mm_yyyy
@@ -43,12 +44,27 @@ def is_blog_row(row: dict[str, str]) -> bool:
     return tipo in {"", BLOG_TIPO_REGISTRO_BLOG}
 
 
+def is_newsletter_row(row: dict[str, str]) -> bool:
+    tipo = str(row.get("tipo_registro", "") or "").strip().lower()
+    return tipo == BLOG_TIPO_REGISTRO_NEWSLETTER
+
+
+def is_evento_row(row: dict[str, str]) -> bool:
+    tipo = str(row.get("tipo_registro", "") or "").strip().lower()
+    return tipo == BLOG_TIPO_REGISTRO_EVENTO
+
+
 def is_blog_publicado(estado: object) -> bool:
     return str(estado or "").strip().lower() == "publicado"
 
 
 def filter_blog_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     return [row for row in rows if is_blog_row(row)]
+
+
+def filter_blog_and_newsletter_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Filas visibles en la página Blogs (blogs + newsletters; sin eventos)."""
+    return [row for row in rows if not is_evento_row(row)]
 
 
 def blogs_in_week(rows: list[dict[str, str]], week_start: date) -> list[dict[str, str]]:

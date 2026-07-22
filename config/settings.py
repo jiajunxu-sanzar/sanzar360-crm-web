@@ -321,6 +321,11 @@ BLOGS_HEADERS: tuple[str, ...] = (
     "newsletter_num_destinatarios",
     "newsletter_fecha_envio",
     "newsletter_bajas_json",
+    "newsletter_asunto",
+    "boton_newsletter",
+    "newsletter_cta_texto",
+    "link_boton_newsletter",
+    "imagen",
 )
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,9 @@ from services.newsletter_service import (
     load_linkedin_icon_bytes,
     load_logo_bytes,
     load_web_icon_bytes,
+    newsletter_content_from_historial_row,
     render_newsletter_html,
+    row_had_newsletter_image,
     verify_unsubscribe_token,
     _paragraph_to_html,
     _sign,
@@ -125,7 +127,8 @@ def test_render_newsletter_html_header_centered_and_footer_links() -> None:
     )
     html = _render(content)
     assert "text-align:center" in html
-    assert 'height="55"' in html
+    assert 'height="50"' in html
+    assert 'max-width:400px' in html
     assert SANZAR_WEB_URL in html
     assert SANZAR_LINKEDIN_URL in html
     assert "viewAsMember" not in html
@@ -177,3 +180,27 @@ def test_load_logo_bytes_reads_real_asset() -> None:
 def test_load_footer_icon_bytes() -> None:
     assert len(load_web_icon_bytes()) > 0
     assert len(load_linkedin_icon_bytes()) > 0
+
+
+def test_newsletter_content_from_historial_row_and_preview() -> None:
+    row = {
+        "newsletter_asunto": "Asunto bandeja",
+        "titulo": "Titulo H1",
+        "newsletter_texto": "Hola **mundo**",
+        "boton_newsletter": "sí",
+        "newsletter_cta_texto": "Ver más",
+        "link_boton_newsletter": "https://example.com/x",
+        "imagen": "sí",
+    }
+    content = newsletter_content_from_historial_row(row)
+    assert content.asunto == "Asunto bandeja"
+    assert content.titulo == "Titulo H1"
+    assert content.cta_texto == "Ver más"
+    assert content.cta_url == "https://example.com/x"
+    assert row_had_newsletter_image(row) is True
+    html = _render(content)
+    assert "Titulo H1" in html
+    assert "Asunto bandeja" not in html
+    assert "Ver más" in html
+    assert "https://example.com/x" in html
+    assert "<strong>mundo</strong>" in html

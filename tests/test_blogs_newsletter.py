@@ -67,6 +67,10 @@ def test_log_newsletter_send_writes_row_with_recipients() -> None:
         enviado_por="Jiajun Xu",
         destinatarios=destinatarios,
         newsletter_id="nl-123",
+        asunto="Asunto SMTP verano",
+        cta_texto="Ver más",
+        cta_url="https://sanzar-group.com/promo",
+        tiene_imagen=True,
     )
 
     assert newsletter_id == "nl-123"
@@ -76,14 +80,143 @@ def test_log_newsletter_send_writes_row_with_recipients() -> None:
     assert row["tipo_registro"] == "newsletter"
     assert row["historial_blog_id"] == "nl-123"
     assert row["titulo"] == "Un verano sobre ruedas"
+    assert row["newsletter_asunto"] == "Asunto SMTP verano"
+    assert row["boton_newsletter"] == "sí"
+    assert row["newsletter_cta_texto"] == "Ver más"
+    assert row["link_boton_newsletter"] == "https://sanzar-group.com/promo"
+    assert row["imagen"] == "sí"
     assert row["newsletter_enviado_por"] == "Jiajun Xu"
     assert row["newsletter_num_destinatarios"] == "2"
     assert json.loads(row["newsletter_destinatarios_json"]) == destinatarios
     assert json.loads(row["newsletter_bajas_json"]) == []
-    # Una newsletter no debe aparecer en el listado editorial de blogs.
-    from services.blogs_validation import filter_blog_rows
+    # Una newsletter no debe aparecer en el listado editorial puro de blogs.
+    from services.blogs_validation import filter_blog_and_newsletter_rows, filter_blog_rows
 
-    assert filter_blog_rows(df.fillna("").astype(str).to_dict("records")) == []
+    records = df.fillna("").astype(str).to_dict("records")
+    assert filter_blog_rows(records) == []
+    assert len(filter_blog_and_newsletter_rows(records)) == 1
+
+
+def test_create_newsletter_draft_and_list_borrador_only() -> None:
+    sheets = FakeSheets()
+    svc = BlogsService(sheets)
+    draft_id = svc.create_newsletter_draft(
+        titulo="Planning verano",
+        persona_publica="Jiajun Xu",
+        link_borrador="https://docs.google.com/draft",
+        estado_blog="Borrador",
+        fecha_publicacion_prevista="25/07/2026",
+        notas="idea inicial",
+    )
+    svc.create_newsletter_draft(
+        titulo="Ya publicada en planning",
+        persona_publica="Ana",
+        estado_blog="Publicado",
+        fecha_publicacion_prevista="20/07/2026",
+    )
+    svc.log_newsletter_send(
+        titulo="Enviada suelta",
+        texto="x",
+        enviado_por="A",
+        destinatarios=[],
+        newsletter_id="sent-1",
+    )
+
+    df = svc.blogs_df()
+    draft = df[df["historial_blog_id"] == draft_id].iloc[0].to_dict()
+    assert draft["tipo_registro"] == "newsletter"
+    assert draft["estado_blog"] == "Borrador"
+    assert draft["titulo"] == "Planning verano"
+    assert draft["link_borrador"] == "https://docs.google.com/draft"
+    assert draft["persona_publica"] == "Jiajun Xu"
+    assert draft["newsletter_enviado_por"] == "Jiajun Xu"
+    assert draft["newsletter_texto"] == ""
+    assert draft["newsletter_num_destinatarios"] in {"", "0"} or draft["newsletter_num_destinatarios"] == ""
+
+    drafts = svc.newsletter_draft_rows()
+    assert {r["historial_blog_id"] for r in drafts} == {draft_id}
+    assert all(r["estado_blog"] == "Borrador" for r in drafts)
+
+
+def test_log_newsletter_send_updates_existing_draft_row() -> None:
+    sheets = FakeSheets()
+    svc = BlogsService(sheets)
+    draft_id = svc.create_newsletter_draft(
+        titulo="Planning",
+        persona_publica="Jiajun Xu",
+        link_borrador="https://draft.example",
+        estado_blog="Borrador",
+        fecha_publicacion_prevista="28/07/2026",
+        notas="nota planning",
+    )
+    assert len(svc.blogs_df()) == 1
+
+    returned = svc.log_newsletter_send(
+        titulo="Titulo final",
+        texto="Cuerpo enviado",
+        enviado_por="Jiajun Xu",
+        destinatarios=[{"contact_id": "c1", "nombre": "Ana", "correo": "a@x.com"}],
+        newsletter_id=draft_id,
+        asunto="Asunto final",
+        cta_texto="Ver",
+        cta_url="https://sanzar-group.com",
+        tiene_imagen=True,
+    )
+    assert returned == draft_id
+    df = svc.blogs_df()
+    assert len(df) == 1
+    row = df.iloc[0].to_dict()
+    assert row["estado_blog"] == "Publicado"
+    assert row["titulo"] == "Titulo final"
+    assert row["newsletter_asunto"] == "Asunto final"
+    assert row["newsletter_texto"] == "Cuerpo enviado"
+    assert row["link_borrador"] == "https://draft.example"
+    assert row["fecha_publicacion_prevista"] == "28/07/2026"
+    assert row["boton_newsletter"] == "sí"
+    assert row["imagen"] == "sí"
+    assert row["newsletter_num_destinatarios"] == "1"
+    assert svc.newsletter_draft_rows() == []
+
+
+def test_log_newsletter_send_appends_when_id_unknown() -> None:
+    sheets = FakeSheets()
+    svc = BlogsService(sheets)
+    svc.create_newsletter_draft(
+        titulo="Otro",
+        persona_publica="A",
+        estado_blog="Borrador",
+        fecha_publicacion_prevista="01/08/2026",
+    )
+    svc.log_newsletter_send(
+        titulo="Nueva",
+        texto="P",
+        enviado_por="A",
+        destinatarios=[],
+        newsletter_id="brand-new-id",
+    )
+    assert len(svc.blogs_df()) == 2
+
+
+def test_log_newsletter_send_without_cta_or_image_flags_no() -> None:
+    sheets = FakeSheets()
+    svc = BlogsService(sheets)
+    svc.log_newsletter_send(
+        titulo="T",
+        texto="P",
+        enviado_por="Ana",
+        destinatarios=[],
+        newsletter_id="nl-no-cta",
+        asunto="Asunto",
+        cta_texto="Ver",
+        cta_url="",
+        tiene_imagen=False,
+    )
+    row = svc.blogs_df().iloc[0].to_dict()
+    assert row["boton_newsletter"] == "no"
+    assert row["newsletter_cta_texto"] == ""
+    assert row["link_boton_newsletter"] == ""
+    assert row["imagen"] == "no"
+    assert row["newsletter_asunto"] == "Asunto"
 
 
 def test_log_newsletter_send_generates_id_when_not_given() -> None:

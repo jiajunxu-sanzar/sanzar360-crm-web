@@ -32,11 +32,11 @@ def test_acciones_page_requires_admin_or_agro_in_catalog() -> None:
     assert navigation.ACCIONES_PAGE not in emp
 
 
-def test_agro_team_blocked_from_email_sales_has_email() -> None:
+def test_agro_team_and_sales_have_email() -> None:
     agro = navigation.pages_for_role(navigation.ROLE_AGRO_TEAM)
     sal = navigation.pages_for_role(navigation.ROLE_SALES)
     adm = navigation.pages_for_role(navigation.ROLE_ADMIN)
-    assert "Email" not in agro
+    assert "Email" in agro
     assert "Email" in sal
     assert "Email" in adm
 
