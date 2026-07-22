@@ -113,9 +113,6 @@ def build_customer_timeline(
             parts = {"Campaña": nombre}
             if cultivo:
                 parts["Cultivo"] = cultivo
-            pq = _clean(row.get("parcela", ""))
-            if pq:
-                parts["Parcela"] = pq
             events.append(
                 CustomerTimelineEvent(
                     on_date=fc_i,

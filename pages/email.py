@@ -21,11 +21,11 @@ from app.state import bump_contacts_cache, bump_history_cache, set_contacts_df_o
 from config.settings import (
     CONTACT_ESTADO_OPCIONES,
     EMAIL_CLASIFICACION_OPCIONES,
-    PERSONA_COMERCIAL_OPCIONES,
 )
 from services.commercial_action_validation import validate_commercial_action_values
 from services.email_service import render_template, send_email, smtp_exception_user_message, validate_placeholders
 from services.sheet_date_format import is_valid_dd_mm_yyyy
+from services.users_service import person_select_options
 from ui.components.tables import filter_dataframe
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ def _render_template_editor(
 
     # --- Seguimiento comercial (histórico Acciones) ---
     st.markdown("---")
-    opts_persona = [""] + list(PERSONA_COMERCIAL_OPCIONES)
+    opts_persona = person_select_options(load_users_cached(st.session_state.get("users_cache_version", 0)))
     opts_clas = list(EMAIL_CLASIFICACION_OPCIONES)
     update_seg = st.checkbox(
         "Registrar seguimiento comercial (histórico) para contactos con envío OK",

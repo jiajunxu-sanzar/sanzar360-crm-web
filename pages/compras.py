@@ -6,10 +6,10 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-from app.cache import compras_service, load_compras_cached
+from app.cache import compras_service, load_compras_cached, load_users_cached
 from ui.components.page_header import render_page_header
 from app.state import bump_compras_cache
-from config.settings import COMPRAS_ESTADOS, COMPRAS_HEADERS, PERSONA_COMERCIAL_OPCIONES
+from config.settings import COMPRAS_ESTADOS, COMPRAS_HEADERS
 from services.compras_service import (
     PoLineItem,
     PoLineasPayload,
@@ -18,6 +18,7 @@ from services.compras_service import (
     serialize_po_lineas_json,
 )
 from services.purchase_order_pdf import PurchaseOrderData, PurchaseOrderItem, generate_purchase_order_pdf
+from services.users_service import person_select_options
 
 SHIP_TO_DEFAULT = (
     "Sanzar. Marco Ruano\n"
@@ -413,12 +414,15 @@ def _render_compra_form(values: dict[str, str], *, mode: str, compras_df: pd.Dat
         fecha_solicitud = g2.text_input("Fecha solicitud", value=values.get("fecha_solicitud", ""), key=f"{prefix}_fecha_sol")
         fecha_pedido = g2.text_input("Fecha pedido", value=values.get("fecha_pedido", ""), key=f"{prefix}_fecha_ped")
         fecha_recepcion = g2.text_input("Fecha recepción", value=values.get("fecha_recepcion", ""), key=f"{prefix}_fecha_rec")
-        responsable_opts = [""] + list(PERSONA_COMERCIAL_OPCIONES)
         current_resp = str(values.get("responsable", "") or "").strip()
+        responsable_opts = person_select_options(
+            load_users_cached(st.session_state.get("users_cache_version", 0)),
+            current=current_resp,
+        )
         responsable = g2.selectbox(
             "Responsable",
-            responsable_opts if current_resp in responsable_opts else responsable_opts + [current_resp],
-            index=(responsable_opts.index(current_resp) if current_resp in responsable_opts else len(responsable_opts)),
+            responsable_opts,
+            index=(responsable_opts.index(current_resp) if current_resp in responsable_opts else 0),
             key=f"{prefix}_responsable",
         )
         importe_total = g2.text_input("Importe total", value=values.get("importe_total", ""), key=f"{prefix}_importe")

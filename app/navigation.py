@@ -28,6 +28,7 @@ PAGES: Final[tuple[str, ...]] = (
     "Buscador sensores/SIM",
     "Mapa",
     "Email",
+    "Técnico",
     "Inventario",
     "Compras",
     "Facturas",
@@ -48,6 +49,7 @@ PAGE_MENU_LABELS: Final[dict[str, str]] = {
     "Buscador sensores/SIM": "🔎 Buscador sensores/SIM",
     "Mapa": "🗺️ Mapa",
     "Email": "✉️ Email",
+    "Técnico": "🛠️ Técnico",
     "Inventario": "📦 Inventario",
     "Compras": "🛒 Compras",
     "Facturas": "🧾 Facturas",
@@ -74,6 +76,7 @@ PAGE_ICONS: Final[dict[str, str]] = {
     "Buscador sensores/SIM": ":material/search:",
     "Mapa": ":material/map:",
     "Email": ":material/mail:",
+    "Técnico": ":material/engineering:",
     "Inventario": ":material/inventory_2:",
     "Compras": ":material/shopping_cart:",
     "Facturas": ":material/receipt_long:",
@@ -94,6 +97,7 @@ PAGE_DESCRIPTIONS: Final[dict[str, str]] = {
     "Buscador sensores/SIM": "Localiza un activo por serial o SIM y consulta su disponibilidad",
     "Mapa": "Contactos geolocalizados sobre el mapa",
     "Email": "Envío de emails con plantillas y seguimiento",
+    "Técnico": "Cálculo de umbrales de riego y cultivos Kc",
     "Inventario": "Sensores, SIMs, gateways y sus asociaciones",
     "Compras": "Pedidos de compra y proveedores",
     "Facturas": "Generación de facturas en PDF",
@@ -122,6 +126,7 @@ NAV_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
     (
         "Operaciones",
         (
+            "Técnico",
             "Inventario",
             "Buscador sensores/SIM",
             "Compras",
@@ -201,7 +206,7 @@ def normalize_role(role: str) -> str:
 
 # Pages that load the main Contacts dataframe from Google Sheets (skip on other pages).
 PAGES_REQUIRING_CONTACTS: Final[frozenset[str]] = frozenset(
-    {"Dashboard", "Contactos", "Clientes", "Centro de alarmas", "Mapa", "Email", "Facturas", "Inventario"}
+    {"Dashboard", "Contactos", "Clientes", "Centro de alarmas", "Mapa", "Email", "Facturas", "Inventario", "Técnico"}
 )
 
 # ── Integrity (fail fast si alguien añade pestañas incoherentes) ────────────

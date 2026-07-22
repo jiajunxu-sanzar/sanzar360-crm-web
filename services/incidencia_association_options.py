@@ -78,11 +78,8 @@ def _campana_history_label(row: dict[str, str]) -> str:
     )
     extra_bits: list[str] = []
     cultivo = str(row.get("cultivo", "") or "").strip()
-    parcela = str(row.get("parcela", "") or "").strip()
     if cultivo:
         extra_bits.append(cultivo)
-    if parcela:
-        extra_bits.append(parcela)
     suffix = f" · {' · '.join(extra_bits)}" if extra_bits else ""
     return f"{nombre} · {period}{suffix}"
 

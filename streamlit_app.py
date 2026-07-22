@@ -42,6 +42,7 @@ from pages import (
     compras,
     blogs,
     referidos,
+    tecnico,
     vacaciones,
     users,
 )
@@ -374,6 +375,8 @@ elif page == "Mapa":
     map.render(contacts_df)
 elif page == "Email":
     email.render(contacts_df)
+elif page == "Técnico":
+    tecnico.render(contacts_df)
 elif page == "Inventario":
     inventory.render(contacts_df)
 elif page == "Compras":

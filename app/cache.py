@@ -10,6 +10,7 @@ from config.settings import CONFIG
 from config.settings import ACCIONES_HEADERS
 from services.blogs_service import BlogsService
 from services.compras_service import ComprasService
+from services.cultivos_kc_service import CultivosKcService
 from services.contact_sensor_overview import build_contact_sensor_overview
 from services.contacts_export import build_overview_pdf_bytes, build_overview_xlsx_bytes
 from services.history_service import HistoryService
@@ -36,6 +37,11 @@ def compras_service() -> ComprasService:
 @st.cache_resource
 def history_service() -> HistoryService:
     return HistoryService(sheets_service())
+
+
+@st.cache_resource
+def cultivos_kc_service() -> CultivosKcService:
+    return CultivosKcService(sheets_service())
 
 
 @st.cache_resource
@@ -77,6 +83,12 @@ def load_inventory_cached(version: int = 0):
 def load_inventory_model_fields_cached(version: int = 0):
     with timed("load_inventory_model_fields_cached", version=version):
         return inventory_service().model_fields_df()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_cultivos_kc_cached(version: int = 0):
+    with timed("load_cultivos_kc_cached", version=version):
+        return cultivos_kc_service().cultivos_df()
 
 
 @st.cache_data(ttl=300, show_spinner=False)

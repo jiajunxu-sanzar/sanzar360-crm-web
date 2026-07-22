@@ -5,7 +5,7 @@ import time
 
 import pandas as pd
 
-from app.navigation import ROLE_ADMIN, ROLE_EMPLOYEE, ROLE_SALES
+from app.navigation import ROLE_ADMIN, ROLE_EMPLOYEE, ROLE_SALES, ROLES_WITH_ACCIONES_PAGE
 from services.sheets_service import SheetsService
 
 USERS_WS = "Usuarios CRM"
@@ -84,6 +84,40 @@ def load_users(sheets: SheetsService) -> list[AppUser]:
 
 def crm_user_names(users: list[AppUser]) -> list[str]:
     return sorted({user.nombre.strip() for user in users if user.nombre.strip()})
+
+
+def commercial_user_names(users: list[AppUser] | list[object]) -> list[str]:
+    """Nombres de usuarios con rol admin, agro_team o sales (sin employee)."""
+    names: list[str] = []
+    for user in users:
+        role = str(getattr(user, "role", "") or "").strip().lower()
+        nombre = str(getattr(user, "nombre", "") or "").strip()
+        if role in ROLES_WITH_ACCIONES_PAGE and nombre:
+            names.append(nombre)
+    return sorted(set(names), key=str.casefold)
+
+
+def person_select_options(
+    users: list[AppUser] | list[object],
+    *,
+    current: str = "",
+    include_blank: bool = True,
+    extra: list[str] | tuple[str, ...] | None = None,
+) -> list[str]:
+    """Opciones de selectbox: roster comercial + valor actual / extras históricos."""
+    roster = commercial_user_names(users)
+    seen: set[str] = set(roster)
+    extras: list[str] = []
+    for name in list(extra or []) + [str(current or "").strip()]:
+        clean = str(name or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            extras.append(clean)
+    extras.sort(key=str.casefold)
+    body = roster + extras
+    if include_blank:
+        return [""] + body
+    return body
 
 
 def _read_users_df_with_retry(sheets: SheetsService) -> tuple[pd.DataFrame, bool]:

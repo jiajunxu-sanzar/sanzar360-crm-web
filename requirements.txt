@@ -1,5 +1,8 @@
 streamlit>=1.48
 pandas
+numpy
+matplotlib
+requests
 gspread
 google-auth
 python-dotenv

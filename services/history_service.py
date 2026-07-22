@@ -10,6 +10,7 @@ import pandas as pd
 
 from app.telemetry import timed
 from config.settings import CONFIG
+from services.geo_service import parse_coordinates
 from services.inventory_service import normalize_inventory_serial_for_match
 from services.sheet_date_format import is_valid_sensor_serial_number, normalize_sensor_serial_number
 from services.sheets_service import SheetsService
@@ -126,18 +127,11 @@ HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
             "fecha_campana_fin",
             "estado_cierre_campana",
             "dias_campana",
-            "p_tabla",
-            "k_1",
-            "k_3",
-            "k_5",
-            "porcentaje_fase_1",
-            "porcentaje_fase_2",
-            "porcentaje_fase_3",
-            "porcentaje_fase_4",
             "cultivo",
-            "parcela",
+            "textura_suelo",
+            "latitud",
+            "longitud",
             "coordenadas_parcela",
-            "tipo_suelo",
             "detalles",
             "created_at",
             "updated_at",
@@ -147,8 +141,7 @@ HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
             "fecha_campana_inicio",
             "fecha_campana_fin",
             "cultivo",
-            "parcela",
-            "tipo_suelo",
+            "textura_suelo",
         ),
     ),
     "suscripciones": HistorySpec(
@@ -600,6 +593,31 @@ class HistoryService:
         if df.empty:
             return pd.DataFrame(columns=spec.headers)
         df = df.fillna("").astype(str)
+        # Compat: hoja antigua con tipo_suelo → textura_suelo; coords → lat/lon
+        if spec.kind == "campanas":
+            if "textura_suelo" not in df.columns:
+                df["textura_suelo"] = ""
+            if "tipo_suelo" in df.columns:
+                legacy = df["tipo_suelo"].fillna("").astype(str).str.strip()
+                current = df["textura_suelo"].fillna("").astype(str).str.strip()
+                df["textura_suelo"] = current.where(current != "", legacy)
+            if "latitud" not in df.columns:
+                df["latitud"] = ""
+            if "longitud" not in df.columns:
+                df["longitud"] = ""
+            if "coordenadas_parcela" in df.columns:
+                for idx in df.index:
+                    lat = str(df.at[idx, "latitud"] or "").strip()
+                    lon = str(df.at[idx, "longitud"] or "").strip()
+                    if lat and lon:
+                        continue
+                    parsed = parse_coordinates(str(df.at[idx, "coordenadas_parcela"] or ""))
+                    if parsed is None:
+                        continue
+                    if not lat:
+                        df.at[idx, "latitud"] = str(parsed[0])
+                    if not lon:
+                        df.at[idx, "longitud"] = str(parsed[1])
         for header in spec.headers:
             if header not in df.columns:
                 df[header] = ""

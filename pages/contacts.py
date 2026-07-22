@@ -34,7 +34,6 @@ from config.contact_estado import is_contact_perdido
 from config.settings import (
     CONTACT_ESTADO_OPCIONES,
     FUENTE_LEAD_OPCIONES,
-    PERSONA_COMERCIAL_OPCIONES,
     TIPO_RELACION_OPCIONES,
     VALOR_OPCIONES,
 )
@@ -54,7 +53,7 @@ from services.proxima_accion_stats import (
     filter_by_responsable_cliente,
     next_action_bucket_counts,
 )
-from services.users_service import crm_user_names
+from services.users_service import person_select_options
 from services.sheet_date_format import contact_soft_warnings, validate_contact_date_fields
 from ui.palette import STATUS_NEUTRAL, STATUS_SUCCESS, STATUS_WARNING
 from ui.components.customer_timeline import render_contact_timeline_block
@@ -852,18 +851,16 @@ def _render_form_sections(
                 )
 
 def _persona_proxima_accion_filter_options(df: pd.DataFrame) -> list[str]:
-    opts = list(PERSONA_COMERCIAL_OPCIONES)
+    users = load_users_cached(st.session_state.get("users_cache_version", 0))
+    extras: list[str] = []
     if not df.empty and "persona_proxima_accion" in df.columns:
-        known = set(opts)
-        extra = sorted(
-            {
-                x
-                for x in df["persona_proxima_accion"].fillna("").astype(str).str.strip().unique()
-                if x and x not in known
-            }
-        )
-        opts = opts + extra
-    return [""] + opts
+        extras = [
+            x
+            for x in df["persona_proxima_accion"].fillna("").astype(str).str.strip().unique()
+            if x
+        ]
+    return person_select_options(users, extra=extras)
+
 
 def _render_next_action_strip(df: pd.DataFrame) -> None:
     if st.session_state.get("dash_bucket") not in _BUCKET_KEYS:
@@ -873,8 +870,15 @@ def _render_next_action_strip(df: pd.DataFrame) -> None:
 
     persona_opts = _persona_proxima_accion_filter_options(df)
     estado_opts = [""] + list(CONTACT_ESTADO_OPCIONES)
-    responsable_opts = [""] + crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
-    # Si el valor restaurado ya no existe entre las opciones, descartarlo antes
+    users = load_users_cached(st.session_state.get("users_cache_version", 0))
+    responsable_extras: list[str] = []
+    if not df.empty and "responsable_cliente" in df.columns:
+        responsable_extras = [
+            x
+            for x in df["responsable_cliente"].fillna("").astype(str).str.strip().unique()
+            if x
+        ]
+    responsable_opts = person_select_options(users, extra=responsable_extras)    # Si el valor restaurado ya no existe entre las opciones, descartarlo antes
     # de instanciar el widget (evita excepciones de Streamlit).
     for key, opts in (
         (DASH_PERSONA_PROXIMA_ACCION_KEY, persona_opts),
@@ -935,7 +939,10 @@ def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
         opts = [""] + list(FUENTE_LEAD_OPCIONES)
         return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
     if column in {"persona_primer_contacto"}:
-        opts = [""] + list(PERSONA_COMERCIAL_OPCIONES)
+        opts = person_select_options(
+            load_users_cached(st.session_state.get("users_cache_version", 0)),
+            current=value,
+        )
         return st.selectbox(label, opts, index=opts.index(value) if value in opts else 0, key=key)
     if column == "valor":
         opts = [""] + list(VALOR_OPCIONES)
@@ -949,7 +956,10 @@ def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
             key=key,
         )
     if column == "responsable_cliente":
-        opts = [""] + crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        opts = person_select_options(
+            load_users_cached(st.session_state.get("users_cache_version", 0)),
+            current=value,
+        )
         return st.selectbox(
             "Responsable del cliente",
             opts,

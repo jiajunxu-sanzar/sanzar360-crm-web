@@ -70,7 +70,9 @@ _FIELD_LABELS: dict[str, str] = {
     "fecha_campana_inicio": "Inicio campaña",
     "fecha_campana_fin": "Fin campaña",
     "dias_campana": "Días",
-    "tipo_suelo": "Tipo de suelo",
+    "textura_suelo": "Textura suelo",
+    "latitud": "Latitud",
+    "longitud": "Longitud",
     "coordenadas_parcela": "Coordenadas parcela",
     "historial_sensor_id": "Histórico sensor",
     "historial_campana_id": "Histórico campaña",
@@ -129,6 +131,15 @@ def _esc(x: object) -> str:
 
 def _fmt(row: dict[str, str], key: str) -> str:
     return str(row.get(key, "") or "").strip()
+
+
+def _coords_display(row: dict[str, str]) -> str:
+    lat = _fmt(row, "latitud")
+    lon = _fmt(row, "longitud")
+    if lat and lon:
+        return f"{lat}, {lon}"
+    legacy = _fmt(row, "coordenadas_parcela")
+    return legacy or "—"
 
 
 def _short(text: str, max_chars: int = 90) -> str:
@@ -215,7 +226,8 @@ _TABLE_COLUMNS: dict[str, list[tuple[str, object]]] = {
         ("Periodo", lambda r: _date_range(_fmt(r, "fecha_campana_inicio"), _fmt(r, "fecha_campana_fin"))),
         ("Días", lambda r: _fmt(r, "dias_campana") or "—"),
         ("Cultivo", lambda r: _fmt(r, "cultivo") or "—"),
-        ("Parcela", lambda r: _fmt(r, "parcela") or "—"),
+        ("Textura", lambda r: _label(_fmt(r, "textura_suelo")) or "—"),
+        ("Lat/Lon", lambda r: _coords_display(r)),
         ("Estado", lambda r: _label(_fmt(r, "estado_cierre_campana")) if _fmt(r, "estado_cierre_campana") else "Abierto"),
         ("Detalles", lambda r: _short(_fmt(r, "detalles"), 80) or "—"),
     ],

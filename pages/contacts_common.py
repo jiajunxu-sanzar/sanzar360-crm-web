@@ -10,7 +10,6 @@ import streamlit as st
 from app import auth
 from app.cache import load_contact_sensor_overview_cached, load_users_cached
 from config.settings import (
-    PERSONA_COMERCIAL_OPCIONES,
     CANAL_CONTACTO_OPCIONES,
     EMAIL_CLASIFICACION_OPCIONES,
     RESULTADO_CONTACTO_OPCIONES,
@@ -18,7 +17,8 @@ from config.settings import (
     TIPO_TAREA_OPCIONES,
     ESTADO_TAREA_OPCIONES,
 )
-from services.users_service import crm_user_names
+from services.riego_umbrales import TABLA_TEXTURAS
+from services.users_service import commercial_user_names
 from ui.components.contact_overview_table import filter_overview_by_contact_ids, sort_overview_by_proxima_accion
 from ui import modal_state
 from ui.components.history import clear_history_table_selection
@@ -63,8 +63,7 @@ SELECT_OPTIONS = {
     "canal_contacto": list(CANAL_CONTACTO_OPCIONES),
     "email_clasificacion": list(EMAIL_CLASIFICACION_OPCIONES),
     "proxima_accion_canal": list(CANAL_CONTACTO_OPCIONES),
-    "persona_contacto": list(PERSONA_COMERCIAL_OPCIONES),
-    "proxima_accion_persona": list(PERSONA_COMERCIAL_OPCIONES),
+    "textura_suelo": list(TABLA_TEXTURAS.keys()),
     "tipo_nota": list(TIPO_NOTA_OPCIONES),
     "tipo_tarea": list(TIPO_TAREA_OPCIONES),
     "estado_tarea": list(ESTADO_TAREA_OPCIONES),
@@ -343,7 +342,8 @@ def _history_smart_defaults(kind: str) -> dict[str, str]:
     today = date.today().strftime("%d/%m/%Y")
     if kind == "seguimiento_comercial":
         actor = _actor_name().strip()
-        persona = actor if actor in PERSONA_COMERCIAL_OPCIONES else ""
+        names = commercial_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        persona = actor if actor in names else ""
         return {
             "fecha_contacto": today,
             "hora_contacto": datetime.now().strftime("%H:%M"),
@@ -352,7 +352,7 @@ def _history_smart_defaults(kind: str) -> dict[str, str]:
         }
     if kind == "notas":
         actor = _actor_name().strip()
-        names = crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        names = commercial_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
         persona = actor if actor in names else ""
         return {
             "fecha_creacion": today,
@@ -362,7 +362,7 @@ def _history_smart_defaults(kind: str) -> dict[str, str]:
         }
     if kind == "tareas":
         actor = _actor_name().strip()
-        names = crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        names = commercial_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
         persona = actor if actor in names else ""
         return {
             "fecha_creacion": today,

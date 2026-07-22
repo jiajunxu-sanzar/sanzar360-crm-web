@@ -5,8 +5,9 @@ import uuid
 
 import streamlit as st
 
-from app.cache import history_service, inventory_service, load_inventory_cached
+from app.cache import cultivos_kc_service, history_service, inventory_service, load_cultivos_kc_cached, load_inventory_cached, load_users_cached
 from app.state import bump_history_cache
+from app import auth
 from services.commercial_action_validation import validate_commercial_action_values
 from services.notas_validation import validate_nota_history_values
 from services.tareas_validation import filter_open_tareas, validate_tarea_history_values
@@ -27,6 +28,7 @@ from services.incidencia_association_options import (
     option_by_id,
 )
 from services.inventory_service import normalize_inventory_serial_for_match
+from ui.components.cultivo_kc_form import render_new_cultivo_kc_dialog_body
 from services.sheet_date_format import (
     SENSOR_SERIAL_NUMBER_FORMAT_HELP,
     is_valid_dd_mm_yyyy,
@@ -72,6 +74,76 @@ from pages.contacts_inventory_sync import (
 )
 
 
+
+
+def _campana_actor_name() -> str:
+    uid = auth.get_authenticated_user_id()
+    users = load_users_cached(st.session_state.get("users_cache_version", 0))
+    for user in users:
+        if user.employee_id == uid:
+            return user.nombre
+    return uid
+
+
+def _cultivo_kc_nombres() -> list[str]:
+    try:
+        df = load_cultivos_kc_cached(st.session_state.get("cultivos_kc_cache_version", 0))
+    except Exception:
+        df = cultivos_kc_service().cultivos_df()
+    if df.empty or "nombre" not in df.columns:
+        return []
+    names = sorted(
+        {str(x).strip() for x in df["nombre"].fillna("").astype(str).tolist() if str(x).strip()},
+        key=str.casefold,
+    )
+    return names
+
+
+CAMPANA_CULTIVO_CREATE_KEY = "campana_cultivo_create_open"
+CAMPANA_CULTIVO_TARGET_PREFIX_KEY = "campana_cultivo_create_prefix"
+
+
+def _render_campana_cultivo_field(prefix: str, value: str, key: str) -> str:
+    names = _cultivo_kc_nombres()
+    options = [""] + names
+    current = str(value or "").strip()
+    if current and current not in options:
+        options = options + [current]
+    col_sel, col_plus = st.columns([0.85, 0.15])
+    with col_sel:
+        index = options.index(current) if current in options else 0
+        selected = st.selectbox("Cultivo", options, index=index, key=key)
+    with col_plus:
+        st.write("")
+        if st.button("＋", help="Crear nuevo cultivo Kc", key=f"{prefix}_cultivo_plus"):
+            st.session_state[CAMPANA_CULTIVO_CREATE_KEY] = True
+            st.session_state[CAMPANA_CULTIVO_TARGET_PREFIX_KEY] = prefix
+            st.rerun()
+    # Nota: esto se renderiza EN LÍNEA (no como @st.dialog) porque este campo
+    # se usa dentro de _add_history_dialog/_edit_history_dialog, que ya son
+    # diálogos abiertos. Streamlit no permite anidar un @st.dialog dentro de
+    # otro ("Dialogs may not be nested"), así que el alta de cultivo se
+    # muestra aquí mismo, en un contenedor, sin abrir un segundo diálogo.
+    if st.session_state.get(CAMPANA_CULTIVO_CREATE_KEY) and st.session_state.get(CAMPANA_CULTIVO_TARGET_PREFIX_KEY) == prefix:
+        with st.container(border=True):
+            st.markdown("**Alta de cultivo**")
+
+            def _on_saved(_cid: str, nombre: str) -> None:
+                st.session_state[key] = nombre
+                st.session_state.pop(CAMPANA_CULTIVO_CREATE_KEY, None)
+                st.session_state.pop(CAMPANA_CULTIVO_TARGET_PREFIX_KEY, None)
+
+            def _on_cancel() -> None:
+                st.session_state.pop(CAMPANA_CULTIVO_CREATE_KEY, None)
+                st.session_state.pop(CAMPANA_CULTIVO_TARGET_PREFIX_KEY, None)
+
+            render_new_cultivo_kc_dialog_body(
+                key_prefix=f"{prefix}_cultivo_inline_new",
+                actor_name=_campana_actor_name(),
+                on_saved=_on_saved,
+                on_cancel=_on_cancel,
+            )
+    return selected
 
 
 _SEGUIMIENTO_CONTACTO_FIELDS = (
@@ -336,6 +408,11 @@ def _add_history_dialog(kind: str, contact: dict[str, str]) -> None:
         excluded = _SEGUIMIENTO_CANAL_FIELDS
         prefix, initial = _seguimiento_modal_initial(kind, contact, None)
         _render_seguimiento_canal_block(prefix, initial)
+    elif kind == "campanas":
+        excluded = frozenset({"cultivo"})
+        prefix = f"{kind}_new"
+        st.markdown("**Cultivo**")
+        _render_campana_cultivo_field(prefix, "", f"{prefix}_cultivo")
 
     with st.form(f"history_add_modal_{kind}_{contact.get('contact_id', '')}"):
         if kind == "incidencias":
@@ -425,6 +502,11 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
         excluded = _SEGUIMIENTO_CANAL_FIELDS
         prefix, initial = _seguimiento_modal_initial(kind, contact, row)
         _render_seguimiento_canal_block(prefix, initial)
+    elif kind == "campanas":
+        excluded = frozenset({"cultivo"})
+        prefix = f"{kind}_{row_id}"
+        st.markdown("**Cultivo**")
+        _render_campana_cultivo_field(prefix, str(row.get("cultivo", "") or ""), f"{prefix}_cultivo")
 
     with st.form(f"history_edit_modal_{kind}_{row.get(spec.id_column, '')}"):
         _render_history_form_grouped_body(kind, contact, row, excluded_headers=excluded)
@@ -620,6 +702,11 @@ def _render_history_form(kind: str, base: dict[str, str], existing: dict[str, st
         hist_id = (existing or {}).get(spec.id_column, "")
         st.markdown("**Sensor**")
         _render_sensor_serial_field(initial_ssn, prefix, f"{prefix}_sensor_serial_number", exclude_hist_id=hist_id)
+    elif kind == "campanas":
+        excluded = frozenset({"cultivo"})
+        initial_cultivo = (existing or {}).get("cultivo", "")
+        st.markdown("**Cultivo**")
+        _render_campana_cultivo_field(prefix, str(initial_cultivo or ""), f"{prefix}_cultivo")
 
     with st.form(f"history_form_{kind}_{suffix}_{base.get('contact_id', '')}"):
         _render_history_form_body(kind, base, existing, excluded_headers=excluded)
@@ -712,7 +799,14 @@ def _render_history_form_body(
         return
 
     st.markdown("**Datos principales**")
-    _always_skip = {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}
+    _always_skip = {
+        spec.id_column,
+        "contact_id",
+        "nombre_cliente",
+        "created_at",
+        "updated_at",
+        "coordenadas_parcela",  # legacy; UI usa latitud/longitud
+    }
     for header in spec.headers:
         if header in _always_skip or header in excluded_headers:
             continue
@@ -1219,10 +1313,12 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         return result
     if kind == "notas" and header == "persona_nota":
         from app.cache import load_users_cached
-        from services.users_service import crm_user_names
+        from services.users_service import person_select_options
 
-        names = crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
-        options = [""] + names
+        options = person_select_options(
+            load_users_cached(st.session_state.get("users_cache_version", 0)),
+            current=value,
+        )
         index = options.index(value) if value in options else 0
         return st.selectbox("Autor", options, index=index, key=key)
     if kind == "notas" and header == "titulo":
@@ -1231,13 +1327,25 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         return st.text_area("Notas", value=value, key=key, height=120)
     if kind == "tareas" and header in {"persona_creacion", "persona_gestiona"}:
         from app.cache import load_users_cached
-        from services.users_service import crm_user_names
+        from services.users_service import person_select_options
 
-        names = crm_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
-        options = [""] + names
+        options = person_select_options(
+            load_users_cached(st.session_state.get("users_cache_version", 0)),
+            current=value,
+        )
         index = options.index(value) if value in options else 0
         label_ui = "Creado por" if header == "persona_creacion" else "Gestiona"
         return st.selectbox(label_ui, options, index=index, key=key)
+    if kind == "seguimiento_comercial" and header in {"persona_contacto", "proxima_accion_persona"}:
+        from app.cache import load_users_cached
+        from services.users_service import person_select_options
+
+        options = person_select_options(
+            load_users_cached(st.session_state.get("users_cache_version", 0)),
+            current=value,
+        )
+        index = options.index(value) if value in options else 0
+        return st.selectbox(label, options, index=index, key=key)
     if kind == "tareas" and header == "titulo":
         return st.text_input("Título", value=value, key=key)
     if kind == "tareas" and header == "notas":
@@ -1255,20 +1363,23 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
     if kind == "campanas" and header == "historial_sensor_id":
         contact_id = str(st.session_state.get(f"{prefix}_id_contact", "") or "")
         sensor_rows = history_service().rows_for_contact("sensores", contact_id) if contact_id else []
-        options = [""] + [str(row.get("historial_sensor_id", "")).strip() for row in sensor_rows if str(row.get("historial_sensor_id", "")).strip()]
-        unique_options = []
-        seen: set[str] = set()
-        for opt in options:
-            if opt in seen:
-                continue
-            seen.add(opt)
-            unique_options.append(opt)
-        index = unique_options.index(value) if value in unique_options else 0
-        return st.selectbox(label, unique_options, index=index, key=key)
-    if header == "sensor_serial_number":
-        return _render_sensor_serial_field(value, prefix, key)
-    if header == "cantidad_sensores":
-        return st.text_input(label, value=str(count_sensor_assets(st.session_state.get(f"{prefix}_sensor_serial_number", value))), key=key, disabled=True)
+        sensor_options = build_sensor_history_options(sensor_rows)
+        label_by_id = {opt.id: opt.label for opt in sensor_options}
+        id_by_label = {opt.label: opt.id for opt in sensor_options}
+        labels = [""] + [opt.label for opt in sensor_options]
+        current_label = label_by_id.get(str(value or "").strip(), "")
+        if str(value or "").strip() and not current_label:
+            # Legacy / cerrado: mostrar id pero permitir conservar
+            labels = labels + [f"(id) {value}"]
+            id_by_label[f"(id) {value}"] = str(value).strip()
+            current_label = f"(id) {value}"
+        index = labels.index(current_label) if current_label in labels else 0
+        picked = st.selectbox("Sensor (histórico)", labels, index=index, key=key)
+        return id_by_label.get(picked, "") if picked else ""
+    if kind == "campanas" and header == "cultivo":
+        return _render_campana_cultivo_field(prefix, value, key)
+    if kind == "campanas" and header in {"latitud", "longitud"}:
+        return st.text_input(label, value=value, key=key, placeholder="ej. 40.4168")
     if kind == "campanas" and header == "dias_campana":
         computed = HistoryService._campaign_days(
             {
@@ -1279,6 +1390,10 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         display = computed if computed else value
         st.caption("Se calcula automáticamente: fecha fin campaña − fecha inicio campaña.")
         return st.text_input("Días campaña", value=display, key=key, disabled=True)
+    if header == "sensor_serial_number":
+        return _render_sensor_serial_field(value, prefix, key)
+    if header == "cantidad_sensores":
+        return st.text_input(label, value=str(count_sensor_assets(st.session_state.get(f"{prefix}_sensor_serial_number", value))), key=key, disabled=True)
     if header in SELECT_OPTIONS:
         options = [""] + SELECT_OPTIONS[header]
         selected_value = value

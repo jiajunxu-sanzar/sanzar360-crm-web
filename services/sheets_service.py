@@ -328,8 +328,10 @@ class SheetsService:
             raise RuntimeError("append_contact_row requires an existing header row.")
         values = [str(row.get(header, "") or "") for header in headers]
         with timed("sheets.append_contact_row"):
+            # RAW: evita que Sheets (locale es_ES) interprete "." como miles
+            # (p. ej. "-3.4414" → "-34.414").
             response = self._with_retry(
-                lambda: worksheet.append_row(values, value_input_option="USER_ENTERED")
+                lambda: worksheet.append_row(values, value_input_option="RAW")
             )
         row_number = self._row_number_from_append_response(response)
         contact_id = str(row.get("contact_id", "") or "").strip()
@@ -411,8 +413,9 @@ class SheetsService:
         sheet_headers = self._worksheet_headers_cache.get(name, []) or headers
         values = [str(row.get(header, "") or "") for header in sheet_headers]
         with timed("sheets.append_worksheet_row", worksheet=name):
+            # RAW: conserva decimales con punto (lat/lon, etc.) sin parseo de locale.
             response = self._with_retry(
-                lambda: worksheet.append_row(values, value_input_option="USER_ENTERED")
+                lambda: worksheet.append_row(values, value_input_option="RAW")
             )
             return self._row_number_from_append_response(response)
 
@@ -421,7 +424,13 @@ class SheetsService:
         sheet_headers = self._worksheet_headers_cache.get(name, []) or headers
         values = [str(row.get(header, "") or "") for header in sheet_headers]
         with timed("sheets.update_worksheet_row", worksheet=name):
-            self._with_retry(lambda: worksheet.update(f"A{row_number}", [values]))
+            self._with_retry(
+                lambda: worksheet.update(
+                    [values],
+                    f"A{row_number}",
+                    value_input_option="RAW",
+                )
+            )
 
     def row_numbers_by_id(self, name: str, id_column: str) -> dict[str, int]:
         """Mapa ``id -> nº de fila`` leyendo SOLO la columna de ids.

@@ -175,16 +175,19 @@ def build_campana_card_html(row: dict[str, str]) -> str:
         _join_bits(
             [
                 f"Cultivo: {row.get('cultivo', '')}" if str(row.get("cultivo", "") or "").strip() else "",
-                f"Parcela: {row.get('parcela', '')}" if str(row.get("parcela", "") or "").strip() else "",
                 (
-                    f"Suelo: {_format_label(str(row.get('tipo_suelo', '')))}"
-                    if str(row.get("tipo_suelo", "") or "").strip()
+                    f"Suelo: {_format_label(str(row.get('textura_suelo', '') or row.get('tipo_suelo', '')))}"
+                    if str(row.get("textura_suelo", "") or row.get("tipo_suelo", "") or "").strip()
                     else ""
                 ),
                 (
-                    f"Coords: {row.get('coordenadas_parcela', '')}"
-                    if str(row.get("coordenadas_parcela", "") or "").strip()
-                    else ""
+                    f"Lat/Lon: {row.get('latitud', '')}, {row.get('longitud', '')}"
+                    if str(row.get("latitud", "") or "").strip() and str(row.get("longitud", "") or "").strip()
+                    else (
+                        f"Coords: {row.get('coordenadas_parcela', '')}"
+                        if str(row.get("coordenadas_parcela", "") or "").strip()
+                        else ""
+                    )
                 ),
             ]
         )
@@ -193,17 +196,6 @@ def build_campana_card_html(row: dict[str, str]) -> str:
     hist_sensor = str(row.get("historial_sensor_id", "") or "").strip()
     if hist_sensor:
         meta_bits.append(f"Sensor hist.: {_esc(hist_sensor)}")
-    phase_bits: list[str] = []
-    for i in (1, 2, 3, 4):
-        pct = str(row.get(f"porcentaje_fase_{i}", "") or "").strip()
-        if pct:
-            phase_bits.append(f"F{i}: {_esc(pct)}%")
-    for k in ("k_1", "k_3", "k_5"):
-        kv = str(row.get(k, "") or "").strip()
-        if kv:
-            phase_bits.append(f"{k}: {_esc(kv)}")
-    if phase_bits:
-        meta_bits.append(" · ".join(phase_bits))
     return _wrap_card(
         modifier,
         head=head,

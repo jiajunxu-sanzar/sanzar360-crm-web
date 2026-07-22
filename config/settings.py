@@ -171,6 +171,8 @@ ESTADO_TAREA_OPCIONES: tuple[str, ...] = (
     "Terminado",
 )
 
+# Legacy: listas estáticas ya no alimentan los desplegables de UI.
+# Los selects de Comercial/Operaciones usan commercial_user_names (Usuarios CRM).
 PERSONA_ULTIMO_CONTACTO_OPCIONES: tuple[str, ...] = (
     "Jiajun Xu",
     "Kabir Caravotta",
@@ -301,6 +303,23 @@ BLOGS_HEADERS: tuple[str, ...] = (
     "link_publicado",
     "link_publicado_linkedin",
     "notas",
+    "created_at",
+    "updated_at",
+)
+
+CULTIVOS_KC_WORKSHEET_NAME = "CultivosKc"
+CULTIVOS_KC_HEADERS: tuple[str, ...] = (
+    "cultivo_kc_id",
+    "nombre",
+    "L1",
+    "L2",
+    "L3",
+    "L4",
+    "kc_ini",
+    "kc_med",
+    "kc_fin",
+    "p_tabla",
+    "creado_por",
     "created_at",
     "updated_at",
 )

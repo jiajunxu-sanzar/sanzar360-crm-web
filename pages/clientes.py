@@ -19,7 +19,7 @@ from services.clientes_board import (
     values_for_visto_toggle,
 )
 from services.contact_use_cases import save_contact_by_id
-from services.users_service import crm_user_names
+from services.users_service import commercial_user_names
 from ui.components.cliente_cards import cliente_card_shell_html
 
 
@@ -132,7 +132,7 @@ def render(df: pd.DataFrame) -> None:
     st.caption(today.strftime("%d/%m/%Y"))
 
     users = load_users_cached(st.session_state.get("users_cache_version", 0))
-    names = crm_user_names(users)
+    names = commercial_user_names(users)
     filter_opts = [VER_TODOS] + names
 
     filter_key = "clientes_responsable_filter"

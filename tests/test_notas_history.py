@@ -132,7 +132,7 @@ def test_notas_smart_defaults_new_and_edit(monkeypatch) -> None:
     today = date.today().strftime("%d/%m/%Y")
     monkeypatch.setattr("pages.contacts_common._actor_name", lambda: "David Ortiz")
     monkeypatch.setattr(
-        "pages.contacts_common.crm_user_names",
+        "pages.contacts_common.commercial_user_names",
         lambda users: ["David Ortiz", "Ana"],
     )
     monkeypatch.setattr("pages.contacts_common.load_users_cached", lambda version=0: [])

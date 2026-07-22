@@ -37,8 +37,10 @@ def test_incidencia_and_suscripcion_and_campana_defaults() -> None:
 
 
 def test_seguimiento_defaults_use_logged_user_when_valid(monkeypatch) -> None:
-    persona_valida = list(contacts.PERSONA_COMERCIAL_OPCIONES)[0]
+    persona_valida = "David Ortiz"
     monkeypatch.setattr(contacts, "_actor_name", lambda: persona_valida)
+    monkeypatch.setattr(contacts, "commercial_user_names", lambda users: [persona_valida, "Marco Ruano"])
+    monkeypatch.setattr(contacts, "load_users_cached", lambda version=0: [])
     defaults = contacts._history_smart_defaults("seguimiento_comercial")
     assert defaults["fecha_contacto"] == _today()
     assert defaults["persona_contacto"] == persona_valida
@@ -48,6 +50,8 @@ def test_seguimiento_defaults_use_logged_user_when_valid(monkeypatch) -> None:
 
 def test_seguimiento_defaults_blank_persona_when_unknown_user(monkeypatch) -> None:
     monkeypatch.setattr(contacts, "_actor_name", lambda: "No Existe")
+    monkeypatch.setattr(contacts, "commercial_user_names", lambda users: ["David Ortiz"])
+    monkeypatch.setattr(contacts, "load_users_cached", lambda version=0: [])
     defaults = contacts._history_smart_defaults("seguimiento_comercial")
     assert defaults["persona_contacto"] == ""
     assert defaults["proxima_accion_persona"] == ""

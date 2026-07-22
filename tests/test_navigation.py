@@ -80,6 +80,17 @@ def test_blogs_visible_to_commercial_roles_not_employee() -> None:
     assert commercial_pages.index("Blogs") == commercial_pages.index("Referidos") + 1
 
 
+def test_tecnico_visible_to_commercial_roles_not_employee() -> None:
+    sales = navigation.pages_for_role(navigation.ROLE_SALES)
+    agro = navigation.pages_for_role(navigation.ROLE_AGRO_TEAM)
+    emp = navigation.pages_for_role(navigation.ROLE_EMPLOYEE)
+    assert "Técnico" in sales
+    assert "Técnico" in agro
+    assert "Técnico" not in emp
+    ops_pages = next(pages for title, pages in navigation.NAV_SECTIONS if title == "Operaciones")
+    assert ops_pages.index("Técnico") == ops_pages.index("Inventario") - 1
+
+
 def test_normalize_role() -> None:
     assert navigation.normalize_role(" ADMIN ") == navigation.ROLE_ADMIN
     assert navigation.normalize_role("sales") == navigation.ROLE_SALES

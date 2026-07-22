@@ -22,8 +22,7 @@ PRIMARY_COLUMNS: dict[str, list[str]] = {
         "fecha_campana_inicio",
         "fecha_campana_fin",
         "cultivo",
-        "parcela",
-        "tipo_suelo",
+        "textura_suelo",
     ],
     "suscripciones": [
         "fecha_pago",

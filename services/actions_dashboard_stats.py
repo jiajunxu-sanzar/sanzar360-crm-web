@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 
-from app.navigation import ROLES_WITH_ACCIONES_PAGE
+from services.users_service import commercial_user_names
 from config.settings import CANAL_CONTACTO_OPCIONES
 from services.contact_proxima_index import _parse_contact_datetime
 
@@ -225,13 +225,7 @@ def summarize_person_canal_week(
 
 def commercial_team_roster(users: list[object]) -> list[str]:
     """Nombres de usuarios con rol admin, agro_team o sales (pestaña Acciones)."""
-    names: list[str] = []
-    for user in users:
-        role = str(getattr(user, "role", "") or "").strip().lower()
-        nombre = str(getattr(user, "nombre", "") or "").strip()
-        if role in ROLES_WITH_ACCIONES_PAGE and nombre:
-            names.append(nombre)
-    return sorted(set(names), key=str.casefold)
+    return commercial_user_names(users)
 
 
 def merge_person_canal_week_with_roster(

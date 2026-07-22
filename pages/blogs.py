@@ -18,7 +18,7 @@ from services.blogs_validation import (
     week_bounds,
     weekly_blog_count,
 )
-from services.users_service import crm_user_names
+from services.users_service import person_select_options
 from ui.components.page_header import render_page_header
 
 BLOGS_NEW_DIALOG_KEY = "blogs_new_dialog_open"
@@ -138,11 +138,9 @@ def _render_blog_form(values: dict[str, str], *, mode: str) -> None:
     prefix = f"blogs_{mode}"
     blog_id = str(values.get("historial_blog_id", "") or "").strip()
     users = load_users_cached(st.session_state.get("users_cache_version", 0))
-    persona_opts = [""] + crm_user_names(users)
     current_persona = str(values.get("persona_publica", "") or "").strip() or _actor_name()
-    if current_persona and current_persona not in persona_opts:
-        persona_opts = persona_opts + [current_persona]
     current_responsable = str(values.get("responsable_blog", "") or "").strip() or _actor_name()
+    persona_opts = person_select_options(users, current=current_persona)
     if current_responsable and current_responsable not in persona_opts:
         persona_opts = persona_opts + [current_responsable]
 

@@ -33,7 +33,6 @@ def _campana_row(
     fecha_campana_inicio: str = "01/03/2025",
     fecha_campana_fin: str = "",
     cultivo: str = "maíz",
-    parcela: str = "Parcela A",
 ) -> dict[str, str]:
     return {
         "historial_campana_id": historial_campana_id,
@@ -42,7 +41,6 @@ def _campana_row(
         "fecha_campana_inicio": fecha_campana_inicio,
         "fecha_campana_fin": fecha_campana_fin,
         "cultivo": cultivo,
-        "parcela": parcela,
     }
 
 
@@ -92,11 +90,11 @@ def test_sensor_label_includes_period_and_formatted_sn() -> None:
     assert "uc501" in options[0].label.lower()
 
 
-def test_campana_label_includes_cultivo_and_parcela_for_disambiguation() -> None:
+def test_campana_label_includes_cultivo_for_disambiguation() -> None:
     options = build_campana_history_options([_campana_row()])
     assert len(options) == 1
     assert "maíz" in options[0].label
-    assert "Parcela A" in options[0].label
+    assert "Parcela" not in options[0].label
 
 
 def test_duplicate_labels_get_suffix() -> None:
