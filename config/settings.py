@@ -297,7 +297,9 @@ BLOG_TIPO_REGISTRO_BLOG = "blog"
 BLOG_TIPO_REGISTRO_EVENTO = "evento"
 BLOG_TIPO_REGISTRO_NEWSLETTER = "newsletter"
 BLOG_EVENTO_ALARMA_SIN_SEMANA = "alarma_sin_blog_semana"
+BLOG_EVENTO_ALARMA_SIN_NEWSLETTER_SEMANA = "alarma_sin_newsletter_semana"
 BLOG_MIN_POR_SEMANA = 1
+NEWSLETTER_MIN_POR_SEMANA = 1
 ESTADO_BLOG_OPCIONES: tuple[str, ...] = ("Borrador", "Sin publicar", "Publicado")
 BLOGS_HEADERS: tuple[str, ...] = (
     "historial_blog_id",
@@ -349,6 +351,19 @@ _NEWSLETTER_TEST_RECIPIENTS_DEFAULT = (
 )
 NEWSLETTER_TEST_RECIPIENTS_DEFAULT = get_secret(
     "NEWSLETTER_TEST_RECIPIENTS", _NEWSLETTER_TEST_RECIPIENTS_DEFAULT
+)
+
+# Destinatarios internos opcionales al enviar newsletter (checkbox en Envío).
+NEWSLETTER_SANZAR_CC_DEFAULT: tuple[str, ...] = (
+    "andrei.pop@sanzar-group.com",
+    "carla.moreno@sanzar-group.com",
+    "marco.ruano@sanzar-group.com",
+    "victor.gonzalez@sanzar-group.com",
+    "antonio.rodriguez@sanzar-group.com",
+    "david.ortiz@sanzar-group.com",
+    "pablo.sacristan@sanzar-group.com",
+    "viviana.castaneda@sanzar-group.com",
+    "jiajun.xu@sanzar-group.com",
 )
 
 CULTIVOS_KC_WORKSHEET_NAME = "CultivosKc"

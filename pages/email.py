@@ -34,6 +34,7 @@ from config.settings import (
     CONTACT_ESTADO_OPCIONES,
     EMAIL_CLASIFICACION_OPCIONES,
     NEWSLETTER_NOTIFY_EMAIL,
+    NEWSLETTER_SANZAR_CC_DEFAULT,
     NEWSLETTER_TEST_RECIPIENTS_DEFAULT,
 )
 from services.commercial_action_validation import validate_commercial_action_values
@@ -102,6 +103,8 @@ _KEY_NL_SHOW_PREVIEW = "_newsletter_show_preview"
 _KEY_NL_CONFIRM_OPEN = "_newsletter_confirm_open"
 _KEY_NL_DRAFT_ID = "newsletter_planned_draft_id"
 _KEY_NL_DRAFT_PREFILL_DONE = "_newsletter_draft_prefill_done"
+_KEY_NL_INCLUDE_SANZAR = "newsletter_include_sanzar_cc"
+_KEY_NL_EXTRA_EMAILS = "newsletter_extra_emails"
 
 
 def _ensure_state() -> None:
@@ -119,6 +122,8 @@ def _ensure_state() -> None:
         _KEY_NL_SHOW_PREVIEW: False,
         _KEY_NL_DRAFT_ID: "",
         _KEY_NL_DRAFT_PREFILL_DONE: "",
+        _KEY_NL_INCLUDE_SANZAR: True,
+        _KEY_NL_EXTRA_EMAILS: "",
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -206,6 +211,11 @@ def _newsletter_eligible_mask(filtered: pd.DataFrame) -> pd.Series:
     return filtered.apply(lambda row: is_newsletter_subscribed(row.to_dict()), axis=1)
 
 
+def _dataframe_selection_state(row_indices: list[int]) -> dict:
+    """Estado de selección del widget ``st.dataframe`` (Streamlit ≥1.35)."""
+    return {"selection": {"rows": list(row_indices), "columns": []}}
+
+
 def _render_contact_table(filtered: pd.DataFrame, *, mode: str = "individual") -> None:
     """Render the selectable contact table and keep the selection state in sync.
 
@@ -220,13 +230,14 @@ def _render_contact_table(filtered: pd.DataFrame, *, mode: str = "individual") -
     is_newsletter = mode == "newsletter"
     selected_key = _KEY_SELECTED_NEWSLETTER if is_newsletter else _KEY_SELECTED
     table_key = f"email_contact_table_{mode}"
+    skip_sync_key = f"_skip_df_sync_{mode}"
 
     has_email_mask = filtered["correo"].fillna("").astype(str).str.strip().ne("")
     eligible_mask = has_email_mask
     if is_newsletter:
         eligible_mask = has_email_mask & _newsletter_eligible_mask(filtered)
 
-    df_with    = filtered[eligible_mask].reset_index(drop=True)
+    df_with = filtered[eligible_mask].reset_index(drop=True)
     df_without = filtered[~eligible_mask].reset_index(drop=True)
 
     ids_with = df_with["contact_id"].tolist()
@@ -235,9 +246,13 @@ def _render_contact_table(filtered: pd.DataFrame, *, mode: str = "individual") -
     ca, cb = st.columns(2, gap="small")
     if ca.button("Seleccionar todos", width="stretch", key=f"{table_key}_select_all"):
         st.session_state[selected_key] = set(ids_with)
+        st.session_state[table_key] = _dataframe_selection_state(list(range(len(ids_with))))
+        st.session_state[skip_sync_key] = True
         st.rerun()
     if cb.button("Deseleccionar todos", width="stretch", key=f"{table_key}_deselect_all"):
         st.session_state[selected_key] = set()
+        st.session_state[table_key] = _dataframe_selection_state([])
+        st.session_state[skip_sync_key] = True
         st.rerun()
 
     # --- Selectable table: contactos elegibles ---
@@ -260,17 +275,18 @@ def _render_contact_table(filtered: pd.DataFrame, *, mode: str = "individual") -
             else []
         )
         # Update selection: keep previously-selected that are outside current filter + new picks
-        all_visible  = set(filtered["contact_id"].tolist())
+        all_visible = set(filtered["contact_id"].tolist())
         preserved = {
             cid for cid in st.session_state[selected_key]
-            if cid not in all_visible          # outside current filter → keep
+            if cid not in all_visible  # outside current filter → keep
         }
         newly_selected = {
             ids_with[pos]
             for pos in raw_positions
             if 0 <= pos < len(ids_with)
         }
-        if event:  # table rendered → sync (don't overwrite on first render without interaction)
+        skip_sync = bool(st.session_state.pop(skip_sync_key, False))
+        if event and not skip_sync:
             st.session_state[selected_key] = preserved | newly_selected
 
     # --- Static greyed-out table: contactos NO elegibles ---
@@ -493,6 +509,82 @@ def _parse_email_list(raw: str) -> list[str]:
     return [p for p in parts if p and "@" in p]
 
 
+def _normalize_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
+def _extra_recipient_record(email: str) -> dict[str, str]:
+    clean = str(email or "").strip()
+    local = clean.split("@", 1)[0] if "@" in clean else clean
+    return {"contact_id": "", "nombre": local, "correo": clean}
+
+
+def merge_newsletter_recipient_emails(
+    *,
+    table_emails: list[str],
+    include_sanzar: bool,
+    sanzar_emails: tuple[str, ...] | list[str],
+    extra_emails: list[str],
+) -> list[str]:
+    """Une correos de tabla + Sanzar + extras sin duplicados (case-insensitive)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for email in list(table_emails) + (list(sanzar_emails) if include_sanzar else []) + list(extra_emails):
+        norm = _normalize_email(email)
+        if not norm or "@" not in norm or norm in seen:
+            continue
+        seen.add(norm)
+        out.append(str(email).strip())
+    return out
+
+
+def build_newsletter_send_targets(
+    contacts: pd.DataFrame,
+    selected_ids: list[str],
+    *,
+    include_sanzar: bool,
+    extra_emails: list[str],
+    sanzar_emails: tuple[str, ...] | list[str] = NEWSLETTER_SANZAR_CC_DEFAULT,
+) -> tuple[list[dict[str, str]], int, int]:
+    """Destinatarios a enviar: (records, n_tabla, n_extra_sanzar).
+
+    Cada record: ``contact_id``, ``nombre``, ``correo``.
+    """
+    by_email: dict[str, dict[str, str]] = {}
+    n_table = 0
+    for cid in selected_ids:
+        row = contacts[contacts["contact_id"] == cid]
+        if row.empty:
+            continue
+        contact = row.iloc[0].to_dict()
+        to = str(contact.get("correo", "") or "").strip()
+        if not to:
+            continue
+        if not is_newsletter_subscribed(contact):
+            continue
+        norm = _normalize_email(to)
+        if norm in by_email:
+            continue
+        by_email[norm] = {
+            "contact_id": str(cid),
+            "nombre": str(contact.get("nombre", "") or ""),
+            "correo": to,
+        }
+        n_table += 1
+
+    extras = list(sanzar_emails) if include_sanzar else []
+    extras.extend(extra_emails)
+    n_extra = 0
+    for email in extras:
+        norm = _normalize_email(email)
+        if not norm or "@" not in norm or norm in by_email:
+            continue
+        by_email[norm] = _extra_recipient_record(email)
+        n_extra += 1
+
+    return list(by_email.values()), n_table, n_extra
+
+
 def _newsletter_content_from_state() -> NewsletterContent:
     return NewsletterContent(
         asunto=str(st.session_state.get(_KEY_NL_ASUNTO, "") or ""),
@@ -575,6 +667,8 @@ def _do_send_newsletter(
     smtp_detail: SmtpResolved,
     *,
     newsletter_id: str | None = None,
+    include_sanzar: bool = False,
+    extra_emails: list[str] | None = None,
 ) -> None:
     actor = _email_actor_name()
     planned_id = str(newsletter_id or "").strip()
@@ -582,20 +676,21 @@ def _do_send_newsletter(
     logo_bytes = load_logo_bytes()
     hero_src = "cid:hero" if hero else None
 
+    targets, n_table, n_extra = build_newsletter_send_targets(
+        contacts,
+        selected_ids,
+        include_sanzar=include_sanzar,
+        extra_emails=list(extra_emails or []),
+    )
+
     sent_records: list[dict[str, str]] = []
     send_errors: list[str] = []
-    for cid in selected_ids:
-        row = contacts[contacts["contact_id"] == cid]
-        if row.empty:
-            continue
-        contact = row.iloc[0].to_dict()
-        to = contact.get("correo", "")
+    for target in targets:
+        to = str(target.get("correo", "") or "").strip()
         if not to:
             continue
-        if not is_newsletter_subscribed(contact):
-            # Doble comprobación de seguridad: la tabla ya los excluye, pero por
-            # si acaso alguien quedó seleccionado antes de darse de baja.
-            continue
+        cid = str(target.get("contact_id", "") or "").strip() or f"__extra__:{_normalize_email(to)}"
+        nombre = str(target.get("nombre", "") or "")
 
         inline_images: dict[str, tuple[bytes, str]] = {
             "logo": (logo_bytes, "png"),
@@ -622,14 +717,21 @@ def _do_send_newsletter(
                 delivery=smtp_detail.delivery,
             )
             sent_records.append(
-                {"contact_id": str(cid), "nombre": str(contact.get("nombre", "") or ""), "correo": str(to)}
+                {
+                    "contact_id": str(target.get("contact_id", "") or ""),
+                    "nombre": nombre,
+                    "correo": to,
+                }
             )
         except Exception as exc:
             friendly = smtp_exception_user_message(exc, routed_profile_slug=smtp_detail.routed_profile_slug)
-            send_errors.append(f"{contact.get('nombre', cid)}: {friendly}")
+            send_errors.append(f"{nombre or to}: {friendly}")
 
     if sent_records:
-        st.success(f"Newsletter enviada: {len(sent_records)} / {len(selected_ids)} seleccionados.")
+        st.success(
+            f"Newsletter enviada: {len(sent_records)} destinatario(s) "
+            f"({n_table} de tabla · {n_extra} Sanzar/extra)."
+        )
     if send_errors:
         st.error("Errores al enviar:\n" + "\n".join(send_errors))
 
@@ -804,13 +906,46 @@ def _render_newsletter_panel(
 
     with st.container(border=True):
         st.markdown("##### Envío")
-        n = len(selected_ids)
-        label = f"Enviar newsletter ({n})" if n else "Enviar newsletter"
-        if st.button(label, type="primary", width="stretch", disabled=(n == 0 or not can_send)):
+        include_sanzar = st.checkbox(
+            "Incluir contactos Sanzar Group",
+            key=_KEY_NL_INCLUDE_SANZAR,
+            help="Añade al envío la lista interna de correos @sanzar-group.com.",
+        )
+        with st.expander("Ver lista Sanzar", expanded=False):
+            st.caption("; ".join(NEWSLETTER_SANZAR_CC_DEFAULT))
+        st.text_input(
+            "Correos adicionales (separados por ;)",
+            key=_KEY_NL_EXTRA_EMAILS,
+            placeholder="otro@ejemplo.com; mas@ejemplo.com",
+        )
+        extra_emails = _parse_email_list(st.session_state.get(_KEY_NL_EXTRA_EMAILS, ""))
+        targets, n_table, n_extra = build_newsletter_send_targets(
+            contacts,
+            selected_ids,
+            include_sanzar=bool(include_sanzar),
+            extra_emails=extra_emails,
+        )
+        n_total = len(targets)
+        st.caption(
+            f"Destinatarios totales: **{n_total}** "
+            f"({n_table} de la tabla · {n_extra} Sanzar/adicionales)."
+        )
+        label = f"Enviar newsletter ({n_total})" if n_total else "Enviar newsletter"
+        if st.button(label, type="primary", width="stretch", disabled=(n_total == 0 or not can_send)):
             st.session_state[_KEY_NL_CONFIRM_OPEN] = True
         if st.session_state.get(_KEY_NL_CONFIRM_OPEN):
             _newsletter_confirm_send_dialog(
-                contacts, selected_ids, content, hero, smtp_detail, newsletter_id=planned_id or None
+                contacts,
+                selected_ids,
+                content,
+                hero,
+                smtp_detail,
+                newsletter_id=planned_id or None,
+                include_sanzar=bool(include_sanzar),
+                extra_emails=extra_emails,
+                n_table=n_table,
+                n_extra=n_extra,
+                n_total=n_total,
             )
         _render_newsletter_history()
 
@@ -824,12 +959,17 @@ def _newsletter_confirm_send_dialog(
     smtp_detail: SmtpResolved,
     *,
     newsletter_id: str | None = None,
+    include_sanzar: bool = False,
+    extra_emails: list[str] | None = None,
+    n_table: int = 0,
+    n_extra: int = 0,
+    n_total: int = 0,
 ) -> None:
-    n = len(selected_ids)
     st.markdown(
-        f"Vas a enviar la newsletter a **{n}** contacto(s) desde "
+        f"Vas a enviar la newsletter a **{n_total}** destinatario(s) desde "
         f"**{smtp_detail.delivery.user}**."
     )
+    st.caption(f"{n_table} de la tabla de contactos · {n_extra} Sanzar / correos adicionales.")
     st.markdown(f"**Asunto:** {_newsletter_email_subject(content)}")
     if newsletter_id:
         st.caption(f"Se actualizará la fila planificada `{newsletter_id[:8]}…` en HistorialBlog.")
@@ -847,6 +987,8 @@ def _newsletter_confirm_send_dialog(
                 hero,
                 smtp_detail,
                 newsletter_id=newsletter_id,
+                include_sanzar=include_sanzar,
+                extra_emails=list(extra_emails or []),
             )
         st.rerun()
     if c2.button("Cancelar", width="stretch", key="nl_confirm_no"):

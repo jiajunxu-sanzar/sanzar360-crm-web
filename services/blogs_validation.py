@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from config.settings import (
-    BLOG_EVENTO_ALARMA_SIN_SEMANA,
-    BLOG_MIN_POR_SEMANA,
+    BLOG_EVENTO_ALARMA_SIN_NEWSLETTER_SEMANA,
     BLOG_TIPO_REGISTRO_BLOG,
     BLOG_TIPO_REGISTRO_EVENTO,
     BLOG_TIPO_REGISTRO_NEWSLETTER,
     ESTADO_BLOG_OPCIONES,
+    NEWSLETTER_MIN_POR_SEMANA,
 )
 from services.sheet_date_format import is_valid_dd_mm_yyyy
 
@@ -85,9 +85,32 @@ def weekly_blog_count(rows: list[dict[str, str]], *, today: date | None = None) 
     return len(blogs_in_week(rows, week_start))
 
 
+def newsletters_in_week(rows: list[dict[str, str]], week_start: date) -> list[dict[str, str]]:
+    _, week_end = week_bounds(week_start)
+    out: list[dict[str, str]] = []
+    for row in rows:
+        if not is_newsletter_row(row):
+            continue
+        parsed = parse_blog_date(row.get("fecha_publicacion_prevista", ""))
+        if parsed is None:
+            continue
+        if week_start <= parsed <= week_end:
+            out.append(row)
+    return out
+
+
+def weekly_newsletter_count(rows: list[dict[str, str]], *, today: date | None = None) -> int:
+    today_d = today or date.today()
+    week_start, _ = week_bounds(today_d)
+    return len(newsletters_in_week(rows, week_start))
+
+
 def _event_payload_matches_week(notas: str, week: str) -> bool:
     text = str(notas or "")
-    return f"evento={BLOG_EVENTO_ALARMA_SIN_SEMANA}" in text and f"semana={week}" in text
+    return (
+        f"evento={BLOG_EVENTO_ALARMA_SIN_NEWSLETTER_SEMANA}" in text
+        and f"semana={week}" in text
+    )
 
 
 def is_weekly_gap_dismissed(rows: list[dict[str, str]], week_start: date) -> bool:
@@ -107,7 +130,7 @@ def should_show_weekly_gap_alarm(
 ) -> bool:
     today_d = today or date.today()
     week_start, _ = week_bounds(today_d)
-    if weekly_blog_count(rows, today=today_d) >= BLOG_MIN_POR_SEMANA:
+    if weekly_newsletter_count(rows, today=today_d) >= NEWSLETTER_MIN_POR_SEMANA:
         return False
     return not is_weekly_gap_dismissed(rows, week_start)
 
@@ -200,13 +223,16 @@ def build_weekly_gap_alarm_row(
     week_start, week_end = week_bounds(today_d)
     week = week_key(week_start)
     return BlogAlarmRow(
-        title="No hay blog previsto esta semana",
+        title="No hay newsletter prevista esta semana",
         priority="Alta",
         due=week_start.strftime("%d/%m/%Y"),
         owner="",
-        suggested_action="Programar al menos un blog con fecha prevista en la semana actual",
+        suggested_action=(
+            "Planificar al menos una newsletter (Nuevo newsletter) "
+            "con fecha prevista en la semana actual"
+        ),
         detail=f"Semana {week} ({week_start.strftime('%d/%m')} – {week_end.strftime('%d/%m')})",
-        alarm_key=f"blog_gap:{week}",
-        context_line=f"Objetivo: al menos {BLOG_MIN_POR_SEMANA} blog por semana",
+        alarm_key=f"newsletter_gap:{week}",
+        context_line=f"Objetivo: al menos {NEWSLETTER_MIN_POR_SEMANA} newsletter por semana",
         dismissible=True,
     )

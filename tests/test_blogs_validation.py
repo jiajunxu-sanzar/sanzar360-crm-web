@@ -14,6 +14,7 @@ from services.blogs_validation import (
     is_newsletter_row,
     should_show_weekly_gap_alarm,
     weekly_blog_count,
+    weekly_newsletter_count,
 )
 
 
@@ -92,22 +93,46 @@ def _blog_row(**kwargs: str) -> dict[str, str]:
     return row
 
 
+def _newsletter_row(**kwargs: str) -> dict[str, str]:
+    row = {h: "" for h in BLOGS_HEADERS}
+    row.update(
+        {
+            "tipo_registro": "newsletter",
+            "titulo": "NL test",
+            "estado_blog": "Borrador",
+            "fecha_publicacion_prevista": "20/07/2026",
+            **kwargs,
+        }
+    )
+    return row
+
+
 def test_weekly_blog_count_includes_published_in_same_week() -> None:
     today = date(2026, 7, 20)  # Monday
     rows = [
         _blog_row(estado_blog="Publicado", fecha_publicacion_prevista="22/07/2026"),
     ]
     assert weekly_blog_count(rows, today=today) == 1
-    assert not should_show_weekly_gap_alarm(rows, today=today)
+    # Un blog no apaga la alarma de newsletter.
+    assert should_show_weekly_gap_alarm(rows, today=today)
 
 
-def test_weekly_gap_alarm_when_no_blog_scheduled() -> None:
+def test_weekly_gap_alarm_when_no_newsletter_scheduled() -> None:
     today = date(2026, 7, 20)
     rows: list[dict[str, str]] = []
     assert should_show_weekly_gap_alarm(rows, today=today)
     gap = build_weekly_gap_alarm_row(rows, today=today)
     assert gap is not None
     assert gap.dismissible is True
+    assert "newsletter" in gap.title.lower()
+
+
+def test_weekly_gap_cleared_by_newsletter_draft_in_week() -> None:
+    today = date(2026, 7, 20)
+    rows = [_newsletter_row(fecha_publicacion_prevista="22/07/2026")]
+    assert weekly_newsletter_count(rows, today=today) == 1
+    assert not should_show_weekly_gap_alarm(rows, today=today)
+    assert build_weekly_gap_alarm_row(rows, today=today) is None
 
 
 def test_due_alarm_until_published() -> None:
@@ -129,8 +154,12 @@ def test_log_weekly_gap_dismiss_writes_event_row() -> None:
     assert row["tipo_registro"] == "evento"
     assert row["persona_publica"] == "David Ortiz"
     assert "semana=2026-W30" in row["notas"]
+    assert "alarma_sin_newsletter_semana" in row["notas"]
     assert filter_blog_rows(df.fillna("").astype(str).to_dict("records")) == []
     assert filter_blog_and_newsletter_rows(df.fillna("").astype(str).to_dict("records")) == []
+    assert not should_show_weekly_gap_alarm(
+        df.fillna("").astype(str).to_dict("records"), today=date(2026, 7, 20)
+    )
 
 
 def test_filter_blog_and_newsletter_rows_keeps_both_excludes_evento() -> None:
@@ -145,12 +174,9 @@ def test_filter_blog_and_newsletter_rows_keeps_both_excludes_evento() -> None:
 
 
 def test_alarms_blog_items_includes_weekly_gap_for_empty_list() -> None:
-    # This mirrors the integration point in `pages/alarms.py`:
-    # if `_blog_items([])` returns the gap row, then removing the guard
-    # ensures the card appears even when `HistorialBlog` is empty.
     from pages.alarms import _blog_items
 
     items = _blog_items([])
     assert len(items) == 1
     assert items[0].dismissible is True
-    assert "No hay blog previsto esta semana" in items[0].title
+    assert "No hay newsletter prevista esta semana" in items[0].title

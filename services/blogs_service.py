@@ -7,7 +7,7 @@ from datetime import date, datetime
 import pandas as pd
 
 from config.settings import (
-    BLOG_EVENTO_ALARMA_SIN_SEMANA,
+    BLOG_EVENTO_ALARMA_SIN_NEWSLETTER_SEMANA,
     BLOG_TIPO_REGISTRO_BLOG,
     BLOG_TIPO_REGISTRO_EVENTO,
     BLOG_TIPO_REGISTRO_NEWSLETTER,
@@ -28,7 +28,10 @@ def _now() -> str:
 
 
 def _event_notas(*, week: str, employee_id: str) -> str:
-    return f"evento={BLOG_EVENTO_ALARMA_SIN_SEMANA};semana={week};employee_id={employee_id}"
+    return (
+        f"evento={BLOG_EVENTO_ALARMA_SIN_NEWSLETTER_SEMANA};"
+        f"semana={week};employee_id={employee_id}"
+    )
 
 
 class BlogsService:
@@ -106,7 +109,7 @@ class BlogsService:
             {
                 "historial_blog_id": row_id,
                 "tipo_registro": BLOG_TIPO_REGISTRO_EVENTO,
-                "titulo": "Aviso semanal descartado",
+                "titulo": "Aviso semanal newsletter descartado",
                 "fecha_publicacion_prevista": start.strftime("%d/%m/%Y"),
                 "persona_publica": actor_name,
                 "notas": _event_notas(week=week, employee_id=employee_id),
