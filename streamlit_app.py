@@ -46,10 +46,19 @@ from pages import (
     vacaciones,
     users,
 )
+from pages import newsletter_unsubscribe
 from ui.theme import NAV_ALARMS_PENDING_TAREAS_CSS, apply_theme
 
 
 st.set_page_config(page_title="Sanzar CRM", page_icon="🌱", layout="wide")
+
+# --- Ruta pública de baja de newsletter: SIN login, antes de cualquier otra
+# cosa. Un destinatario que pulsa "Darse de baja" en un correo no tiene
+# usuario del CRM ni por qué tenerlo. ---
+if newsletter_unsubscribe.is_unsubscribe_request():
+    newsletter_unsubscribe.render_unsubscribe_page()
+    st.stop()
+
 apply_theme()
 init_state()
 

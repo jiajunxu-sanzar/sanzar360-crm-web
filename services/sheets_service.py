@@ -542,6 +542,40 @@ class SheetsService:
             mapping = self.refresh_contacts_row_index()
         return target in mapping
 
+    @staticmethod
+    def _column_letter(index_0based: int) -> str:
+        """Índice de columna 0-based -> notación A1 (0->A, 25->Z, 26->AA, ...)."""
+        n = index_0based + 1
+        letters = ""
+        while n > 0:
+            n, rem = divmod(n - 1, 26)
+            letters = chr(65 + rem) + letters
+        return letters
+
+    def update_contact_field(self, contact_id: str, column: str, value: str) -> bool:
+        """Actualiza UNA celda de un contacto por id, sin reescribir la fila entera.
+
+        Pensado para operaciones puntuales desde rutas públicas sin login (p.ej.
+        la baja de newsletter): cuesta como mucho 1 lectura de índice + 1
+        escritura de celda, no una lectura/escritura de la hoja completa.
+        Devuelve ``False`` si la columna no existe o el contacto no se encuentra.
+        """
+        target = str(contact_id or "").strip()
+        if not target:
+            return False
+        headers = self.worksheet_headers()
+        col_idx = self._column_index_in_header(headers, column)
+        if col_idx is None:
+            return False
+        row_number = self._contacts_row_by_cid.get(target) or self.refresh_contacts_row_index().get(target)
+        if not row_number:
+            return False
+        ws = self.worksheet()
+        cell = f"{self._column_letter(col_idx)}{row_number}"
+        with timed("sheets.update_contact_field"):
+            self._with_retry(lambda: ws.update([[str(value)]], cell, value_input_option="RAW"))
+        return True
+
     def get_contact_row_by_id(self, contact_id: str) -> dict[str, str] | None:
         df = self.load_contacts_df()
         target = str(contact_id or "").strip()

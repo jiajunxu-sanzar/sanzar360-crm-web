@@ -86,7 +86,15 @@ CANONICAL_COLUMNS = [
     "umbrales_activadas",
     "suelo_seco",
     "visto_cliente_fecha",
+    "newsletter_suscrito",
 ]
+
+# Valor que marca a un contacto como NO suscrito a la newsletter. Cualquier
+# otro valor (incluida celda vacía, para contactos creados antes de esta
+# columna) se trata como suscrito por defecto — nadie queda excluido salvo
+# que se dé de baja explícitamente.
+NEWSLETTER_SUSCRITO_NO = "no"
+NEWSLETTER_SUSCRITO_SI = "sí"
 
 CONTACT_ESTADO_OPCIONES: tuple[str, ...] = (
     "Nuevo contacto",
@@ -287,6 +295,7 @@ COMPRAS_ESTADOS_PENDIENTES: frozenset[str] = frozenset({"comparando", "pendiente
 BLOGS_WORKSHEET_NAME = "HistorialBlog"
 BLOG_TIPO_REGISTRO_BLOG = "blog"
 BLOG_TIPO_REGISTRO_EVENTO = "evento"
+BLOG_TIPO_REGISTRO_NEWSLETTER = "newsletter"
 BLOG_EVENTO_ALARMA_SIN_SEMANA = "alarma_sin_blog_semana"
 BLOG_MIN_POR_SEMANA = 1
 ESTADO_BLOG_OPCIONES: tuple[str, ...] = ("Borrador", "Sin publicar", "Publicado")
@@ -305,6 +314,36 @@ BLOGS_HEADERS: tuple[str, ...] = (
     "notas",
     "created_at",
     "updated_at",
+    # --- Registro de envíos de newsletter (tipo_registro="newsletter") ---
+    "newsletter_texto",
+    "newsletter_enviado_por",
+    "newsletter_destinatarios_json",
+    "newsletter_num_destinatarios",
+    "newsletter_fecha_envio",
+    "newsletter_bajas_json",
+)
+
+# ---------------------------------------------------------------------------
+# Newsletter (pestaña Email → modo Newsletter)
+# ---------------------------------------------------------------------------
+NEWSLETTER_NOTIFY_EMAIL = get_secret("NEWSLETTER_NOTIFY_EMAIL", "info@sanzar-group.com")
+# URL pública base de la app desplegada (ej. https://sanzar-crm.streamlit.app),
+# necesaria para construir el enlace de baja que va dentro de cada correo.
+NEWSLETTER_PUBLIC_BASE_URL = get_secret("APP_PUBLIC_URL", "").rstrip("/")
+# Secreto para firmar el token del enlace de baja (evita que alguien fabrique
+# una URL para dar de baja a un contacto arbitrario). Si no se configura, se
+# deriva uno a partir de otros secretos disponibles (menos robusto: conviene
+# fijar NEWSLETTER_UNSUB_SECRET explícitamente en producción).
+NEWSLETTER_UNSUB_SECRET = get_secret(
+    "NEWSLETTER_UNSUB_SECRET",
+    get_secret("GOOGLE_SHEET_ID", "") + get_secret("SMTP_PASSWORD", "") or "sanzar-newsletter-dev-secret",
+)
+_NEWSLETTER_TEST_RECIPIENTS_DEFAULT = (
+    "andrei.pop@sanzar-group.com; jiajun.xu@sanzar-group.com; "
+    "carla.moreno@sanzar-group.com; david.ortiz@sanzar-group.com"
+)
+NEWSLETTER_TEST_RECIPIENTS_DEFAULT = get_secret(
+    "NEWSLETTER_TEST_RECIPIENTS", _NEWSLETTER_TEST_RECIPIENTS_DEFAULT
 )
 
 CULTIVOS_KC_WORKSHEET_NAME = "CultivosKc"

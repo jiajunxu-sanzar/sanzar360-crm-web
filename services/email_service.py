@@ -55,6 +55,15 @@ def smtp_exception_user_message(exc: BaseException, *, routed_profile_slug: str 
     return f"{perfil} — error al enviar: {exc}"
 
 
+def _deliver_smtp_message(msg: EmailMessage, cfg: SmtpDeliveryConfig) -> None:
+    with smtplib.SMTP(cfg.host, cfg.port) as smtp:
+        if cfg.use_tls:
+            smtp.starttls()
+        if cfg.password:
+            smtp.login(cfg.user, cfg.password)
+        smtp.send_message(msg)
+
+
 def send_email(
     to: str,
     subject: str,
@@ -70,9 +79,39 @@ def send_email(
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
-    with smtplib.SMTP(cfg.host, cfg.port) as smtp:
-        if cfg.use_tls:
-            smtp.starttls()
-        if cfg.password:
-            smtp.login(cfg.user, cfg.password)
-        smtp.send_message(msg)
+    _deliver_smtp_message(msg, cfg)
+
+
+def send_html_email(
+    to: str,
+    subject: str,
+    html: str,
+    *,
+    plain_fallback: str = "",
+    inline_images: dict[str, tuple[bytes, str]] | None = None,
+    delivery: SmtpDeliveryConfig | None = None,
+) -> None:
+    """Envía un correo HTML (con texto plano de respaldo) y opcionalmente
+    imágenes incrustadas dentro del propio correo (no enlaces externos).
+
+    ``inline_images`` es un dict ``{cid: (bytes, subtipo_mime)}`` (p. ej.
+    ``{"logo": (b"...", "png")}``); el HTML debe referenciarlas como
+    ``<img src="cid:logo">``. Usado por la newsletter; ``send_email`` (texto
+    plano) sigue igual para el envío individual existente.
+    """
+    cfg = delivery or default_smtp_from_config()
+    if not cfg.host or not cfg.user:
+        raise RuntimeError("SMTP no está configurado.")
+    msg = EmailMessage()
+    msg["From"] = cfg.user
+    msg["To"] = to
+    msg["Subject"] = subject
+    msg.set_content(
+        plain_fallback or "Este correo contiene contenido HTML. Ábrelo con un cliente de correo compatible."
+    )
+    msg.add_alternative(html, subtype="html")
+    if inline_images:
+        html_part = msg.get_payload()[-1]
+        for cid, (data, subtype) in inline_images.items():
+            html_part.add_related(data, maintype="image", subtype=subtype, cid=f"<{cid}>")
+    _deliver_smtp_message(msg, cfg)

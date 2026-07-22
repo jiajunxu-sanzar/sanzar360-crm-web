@@ -1,29 +1,59 @@
-"""Email mass-send page.
+"""Email page: envío individual y newsletter.
 
-Layout
-------
+Layout (ambos modos)
+---------------------
 Left panel  (42 %): search + filters, all-contacts table with multi-row
                     selection, select-all / deselect-all buttons.
-Right panel (58 %): template editor, preview, seguimiento comercial checkbox
-                    (optional bulk follow-up update), and send button.
+Right panel (58 %): editor del modo activo (plantilla individual, o bloque
+                    de newsletter) + vista previa + botón de envío.
+
+Modo "Newsletter": bloque único (imagen de cabecera, título, párrafo, texto
+con enlace), con el logo de Sanzar y el botón de baja añadidos
+automáticamente. Vista previa en pantalla, envío de prueba a una lista interna
+fija, y envío masivo que excluye automáticamente a quien se haya dado de baja.
 """
 from __future__ import annotations
+
+import json
+import uuid
 
 import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.cache import history_service, load_users_cached
+from app.cache import blogs_service, history_service, load_users_cached
 from app.navigation import ROLE_SALES, normalize_role
 from ui.components.page_header import render_page_header
 from app.smtp_profiles import SmtpResolved, resolve_smtp_detail
-from app.state import bump_contacts_cache, bump_history_cache, set_contacts_df_override
+from app.state import bump_blogs_cache, bump_contacts_cache, bump_history_cache, set_contacts_df_override
 from config.settings import (
     CONTACT_ESTADO_OPCIONES,
     EMAIL_CLASIFICACION_OPCIONES,
+    NEWSLETTER_NOTIFY_EMAIL,
+    NEWSLETTER_TEST_RECIPIENTS_DEFAULT,
 )
 from services.commercial_action_validation import validate_commercial_action_values
-from services.email_service import render_template, send_email, smtp_exception_user_message, validate_placeholders
+from services.email_service import (
+    render_template,
+    send_email,
+    send_html_email,
+    smtp_exception_user_message,
+    validate_placeholders,
+)
+from services.newsletter_service import (
+    NewsletterContent,
+    TEST_CONTACT_ID,
+    TEST_NEWSLETTER_ID,
+    build_unsubscribe_url,
+    data_uri,
+    image_mime_subtype,
+    is_newsletter_subscribed,
+    load_linkedin_icon_bytes,
+    load_logo_bytes,
+    load_web_icon_bytes,
+    public_base_url_configured,
+    render_newsletter_html,
+)
 from services.sheet_date_format import is_valid_dd_mm_yyyy
 from services.users_service import person_select_options
 from ui.components.tables import filter_dataframe
@@ -31,7 +61,12 @@ from ui.components.tables import filter_dataframe
 # ---------------------------------------------------------------------------
 # Session-state keys (all prefixed "email_" to avoid collisions)
 # ---------------------------------------------------------------------------
-_KEY_SELECTED = "email_selected_ids"    # set[str] — contact_ids selected in table
+_KEY_MODE = "email_mode"
+_MODE_INDIVIDUAL = "Correo individual"
+_MODE_NEWSLETTER = "Newsletter"
+
+_KEY_SELECTED = "email_selected_ids"    # set[str] — contact_ids selected in table (modo individual)
+_KEY_SELECTED_NEWSLETTER = "newsletter_selected_ids"  # set[str] — modo newsletter
 _KEY_FILTERS_OPEN = "email_filters_open"
 _KEY_SEG_EMAIL_CLAS = "email_seg_email_clasificacion"
 _KEY_SEG_EMAIL_URL = "email_seg_email_url"
@@ -52,10 +87,29 @@ _TABLE_COLS = ["Nombre", "Estado", "Provincia", "Municipio", "Cultivos", "Correo
 # State initialisation
 # ---------------------------------------------------------------------------
 
+_KEY_NL_ASUNTO = "newsletter_asunto"
+_KEY_NL_TITULO = "newsletter_titulo"
+_KEY_NL_PARRAFO = "newsletter_parrafo"
+_KEY_NL_CTA_TEXTO = "newsletter_cta_texto"
+_KEY_NL_CTA_URL = "newsletter_cta_url"
+_KEY_NL_TEST_RECIPIENTS = "newsletter_test_recipients"
+_KEY_NL_IMAGE_UPLOAD = "newsletter_image_upload"
+_KEY_NL_SHOW_PREVIEW = "_newsletter_show_preview"
+
+
 def _ensure_state() -> None:
     defaults = {
         _KEY_SELECTED: set(),
+        _KEY_SELECTED_NEWSLETTER: set(),
         _KEY_FILTERS_OPEN: False,
+        _KEY_MODE: _MODE_INDIVIDUAL,
+        _KEY_NL_ASUNTO: "",
+        _KEY_NL_TITULO: "",
+        _KEY_NL_PARRAFO: "",
+        _KEY_NL_CTA_TEXTO: "",
+        _KEY_NL_CTA_URL: "",
+        _KEY_NL_TEST_RECIPIENTS: NEWSLETTER_TEST_RECIPIENTS_DEFAULT,
+        _KEY_NL_SHOW_PREVIEW: False,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -137,37 +191,56 @@ def _build_display_df(df_subset: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-def _render_contact_table(filtered: pd.DataFrame) -> None:
-    """Render the selectable contact table and keep email_selected_ids in sync.
+def _newsletter_eligible_mask(filtered: pd.DataFrame) -> pd.Series:
+    if filtered.empty:
+        return pd.Series(dtype=bool)
+    return filtered.apply(lambda row: is_newsletter_subscribed(row.to_dict()), axis=1)
 
-    Contacts WITH email  → selectable st.dataframe (multi-row).
-    Contacts WITHOUT email → read-only st.dataframe styled in grey below it.
+
+def _render_contact_table(filtered: pd.DataFrame, *, mode: str = "individual") -> None:
+    """Render the selectable contact table and keep the selection state in sync.
+
+    Contactos elegibles   → selectable st.dataframe (multi-row).
+    Contactos NO elegibles → read-only st.dataframe styled in grey below it.
+
+    En modo "individual" son elegibles los contactos con correo. En modo
+    "newsletter" además se excluyen (en gris, no seleccionables) los que se
+    hayan dado de baja (``newsletter_suscrito == "no"``), para que nadie los
+    seleccione por error.
     """
+    is_newsletter = mode == "newsletter"
+    selected_key = _KEY_SELECTED_NEWSLETTER if is_newsletter else _KEY_SELECTED
+    table_key = f"email_contact_table_{mode}"
+
     has_email_mask = filtered["correo"].fillna("").astype(str).str.strip().ne("")
-    df_with    = filtered[has_email_mask].reset_index(drop=True)
-    df_without = filtered[~has_email_mask].reset_index(drop=True)
+    eligible_mask = has_email_mask
+    if is_newsletter:
+        eligible_mask = has_email_mask & _newsletter_eligible_mask(filtered)
+
+    df_with    = filtered[eligible_mask].reset_index(drop=True)
+    df_without = filtered[~eligible_mask].reset_index(drop=True)
 
     ids_with = df_with["contact_id"].tolist()
 
     # --- Select-all / deselect-all ---
     ca, cb = st.columns(2, gap="small")
-    if ca.button("Seleccionar todos", width="stretch", key="email_select_all"):
-        st.session_state[_KEY_SELECTED] = set(ids_with)
+    if ca.button("Seleccionar todos", width="stretch", key=f"{table_key}_select_all"):
+        st.session_state[selected_key] = set(ids_with)
         st.rerun()
-    if cb.button("Deseleccionar todos", width="stretch", key="email_deselect_all"):
-        st.session_state[_KEY_SELECTED] = set()
+    if cb.button("Deseleccionar todos", width="stretch", key=f"{table_key}_deselect_all"):
+        st.session_state[selected_key] = set()
         st.rerun()
 
-    # --- Selectable table: contacts WITH email ---
+    # --- Selectable table: contactos elegibles ---
     if df_with.empty:
-        st.info("Ningún contacto visible tiene dirección de correo.")
+        st.info("Ningún contacto visible es seleccionable con los filtros actuales.")
     else:
         event = st.dataframe(
             _build_display_df(df_with),
             width="stretch",
             hide_index=True,
             height=min(420, 36 + len(df_with) * 35),
-            key="email_contact_table",
+            key=table_key,
             on_select="rerun",
             selection_mode="multi-row",
         )
@@ -178,10 +251,9 @@ def _render_contact_table(filtered: pd.DataFrame) -> None:
             else []
         )
         # Update selection: keep previously-selected that are outside current filter + new picks
-        visible_with = set(ids_with)
         all_visible  = set(filtered["contact_id"].tolist())
         preserved = {
-            cid for cid in st.session_state[_KEY_SELECTED]
+            cid for cid in st.session_state[selected_key]
             if cid not in all_visible          # outside current filter → keep
         }
         newly_selected = {
@@ -190,13 +262,16 @@ def _render_contact_table(filtered: pd.DataFrame) -> None:
             if 0 <= pos < len(ids_with)
         }
         if event:  # table rendered → sync (don't overwrite on first render without interaction)
-            st.session_state[_KEY_SELECTED] = preserved | newly_selected
+            st.session_state[selected_key] = preserved | newly_selected
 
-    # --- Static greyed-out table: contacts WITHOUT email ---
+    # --- Static greyed-out table: contactos NO elegibles ---
     if not df_without.empty:
-        st.caption(
-            f"Sin correo — no seleccionables ({len(df_without)})"
+        caption = (
+            "Sin correo o dado de baja de la newsletter — no seleccionables"
+            if is_newsletter
+            else "Sin correo — no seleccionables"
         )
+        st.caption(f"{caption} ({len(df_without)})")
         grey_df = _build_display_df(df_without)
         styled = grey_df.style.set_properties(**{
             "color": "#c0c8d0",
@@ -209,7 +284,7 @@ def _render_contact_table(filtered: pd.DataFrame) -> None:
             height=min(220, 36 + len(df_without) * 35),
         )
 
-    n_sel = len(st.session_state[_KEY_SELECTED])
+    n_sel = len(st.session_state[selected_key])
     st.caption(f"{len(filtered)} contactos · {n_sel} seleccionados")
 
 
@@ -223,60 +298,62 @@ def _render_template_editor(
     selected_ids: list[str],
     smtp_detail: SmtpResolved,
 ) -> None:
-    subject = st.text_input("Asunto", value=_DEFAULT_SUBJECT, key="email_subject")
-    body = st.text_area("Cuerpo", value=_DEFAULT_BODY, height=220, key="email_body")
+    with st.container(border=True):
+        st.markdown("##### Plantilla")
+        subject = st.text_input("Asunto", value=_DEFAULT_SUBJECT, key="email_subject")
+        body = st.text_area("Cuerpo", value=_DEFAULT_BODY, height=220, key="email_body")
 
-    invalid = validate_placeholders(subject + "\n" + body)
-    if invalid:
-        st.error("Placeholders no válidos: " + ", ".join(invalid))
+        invalid = validate_placeholders(subject + "\n" + body)
+        if invalid:
+            st.error("Placeholders no válidos: " + ", ".join(invalid))
 
-    if selected_ids:
-        preview_row = contacts[contacts["contact_id"] == selected_ids[0]]
-        if not preview_row.empty:
-            preview_contact = preview_row.iloc[0].to_dict()
-            with st.expander("Vista previa (primer contacto seleccionado)", expanded=True):
-                st.caption(f"**Asunto:** {render_template(subject, preview_contact)}")
-                st.text(render_template(body, preview_contact))
+        if selected_ids:
+            preview_row = contacts[contacts["contact_id"] == selected_ids[0]]
+            if not preview_row.empty:
+                preview_contact = preview_row.iloc[0].to_dict()
+                with st.expander("Vista previa (primer contacto seleccionado)", expanded=True):
+                    st.caption(f"**Asunto:** {render_template(subject, preview_contact)}")
+                    st.text(render_template(body, preview_contact))
 
-    # --- Seguimiento comercial (histórico Acciones) ---
-    st.markdown("---")
-    opts_persona = person_select_options(load_users_cached(st.session_state.get("users_cache_version", 0)))
-    opts_clas = list(EMAIL_CLASIFICACION_OPCIONES)
-    update_seg = st.checkbox(
-        "Registrar seguimiento comercial (histórico) para contactos con envío OK",
-        key="email_update_seguimiento",
-    )
-    if update_seg:
-        st.selectbox(
-            "Clasificación del email",
-            opts_clas,
-            index=1 if "seguimiento" in opts_clas else 0,
-            key=_KEY_SEG_EMAIL_CLAS,
+    with st.container(border=True):
+        st.markdown("##### Seguimiento")
+        opts_persona = person_select_options(load_users_cached(st.session_state.get("users_cache_version", 0)))
+        opts_clas = list(EMAIL_CLASIFICACION_OPCIONES)
+        update_seg = st.checkbox(
+            "Registrar seguimiento comercial (histórico) para contactos con envío OK",
+            key="email_update_seguimiento",
         )
-        st.text_input("URL del correo (opcional)", key=_KEY_SEG_EMAIL_URL)
-        st.text_area("Resumen / de qué se habló", key=_KEY_SEG_NOTAS, height=80, placeholder="Asunto o notas del envío")
-        st.markdown("**Próxima acción pendiente** (opcional)")
-        p1, p2 = st.columns(2, gap="small")
-        p1.text_input("Fecha próxima acción (dd/mm/aaaa)", key=_KEY_SEG_PROX_FECHA)
-        p2.selectbox("Persona próxima acción", opts_persona, key=_KEY_SEG_PERSONA_PROX)
-        p3, p4 = st.columns(2, gap="small")
-        p3.selectbox(
-            "Canal próxima acción",
-            [""] + ["email", "llamada", "en_persona"],
-            key=_KEY_SEG_PROX_CANAL,
-        )
-        p4.text_area("Detalle próxima acción", key=_KEY_SEG_PROX_DETALLE, height=60)
-        prox_fecha_val = st.session_state.get(_KEY_SEG_PROX_FECHA, "").strip()
-        if prox_fecha_val and not is_valid_dd_mm_yyyy(prox_fecha_val):
-            st.warning("Fecha próxima acción no válida — usa dd/mm/aaaa.")
+        if update_seg:
+            st.selectbox(
+                "Clasificación del email",
+                opts_clas,
+                index=1 if "seguimiento" in opts_clas else 0,
+                key=_KEY_SEG_EMAIL_CLAS,
+            )
+            st.text_input("URL del correo (opcional)", key=_KEY_SEG_EMAIL_URL)
+            st.text_area("Resumen / de qué se habló", key=_KEY_SEG_NOTAS, height=80, placeholder="Asunto o notas del envío")
+            st.markdown("**Próxima acción pendiente** (opcional)")
+            p1, p2 = st.columns(2, gap="small")
+            p1.text_input("Fecha próxima acción (dd/mm/aaaa)", key=_KEY_SEG_PROX_FECHA)
+            p2.selectbox("Persona próxima acción", opts_persona, key=_KEY_SEG_PERSONA_PROX)
+            p3, p4 = st.columns(2, gap="small")
+            p3.selectbox(
+                "Canal próxima acción",
+                [""] + ["email", "llamada", "en_persona"],
+                key=_KEY_SEG_PROX_CANAL,
+            )
+            p4.text_area("Detalle próxima acción", key=_KEY_SEG_PROX_DETALLE, height=60)
+            prox_fecha_val = st.session_state.get(_KEY_SEG_PROX_FECHA, "").strip()
+            if prox_fecha_val and not is_valid_dd_mm_yyyy(prox_fecha_val):
+                st.warning("Fecha próxima acción no válida — usa dd/mm/aaaa.")
 
-    # --- Send button ---
-    st.markdown("---")
-    n = len(selected_ids)
-    label = f"Enviar emails ({n})" if n else "Enviar emails"
-    if st.button(label, disabled=(bool(invalid) or n == 0), type="primary", width="stretch"):
-        with st.spinner("Enviando emails y actualizando seguimiento…"):
-            _do_send(contacts, df_raw, selected_ids, subject, body, smtp_detail)
+    with st.container(border=True):
+        st.markdown("##### Envío")
+        n = len(selected_ids)
+        label = f"Enviar emails ({n})" if n else "Enviar emails"
+        if st.button(label, disabled=(bool(invalid) or n == 0), type="primary", width="stretch"):
+            with st.spinner("Enviando emails y actualizando seguimiento…"):
+                _do_send(contacts, df_raw, selected_ids, subject, body, smtp_detail)
 
 
 def _email_actor_name() -> str:
@@ -399,6 +476,275 @@ def _do_send(
 
 
 # ---------------------------------------------------------------------------
+# Newsletter: editor de bloque único + vista previa + prueba + envío
+# ---------------------------------------------------------------------------
+
+def _parse_email_list(raw: str) -> list[str]:
+    parts = [p.strip() for p in str(raw or "").replace(",", ";").split(";")]
+    return [p for p in parts if p and "@" in p]
+
+
+def _newsletter_content_from_state() -> NewsletterContent:
+    return NewsletterContent(
+        asunto=str(st.session_state.get(_KEY_NL_ASUNTO, "") or ""),
+        titulo=str(st.session_state.get(_KEY_NL_TITULO, "") or ""),
+        parrafo=str(st.session_state.get(_KEY_NL_PARRAFO, "") or ""),
+        cta_texto=str(st.session_state.get(_KEY_NL_CTA_TEXTO, "") or ""),
+        cta_url=str(st.session_state.get(_KEY_NL_CTA_URL, "") or ""),
+    )
+
+
+def _newsletter_email_subject(content: NewsletterContent) -> str:
+    return str(content.asunto or content.titulo or "Newsletter").strip() or "Newsletter"
+
+
+def _hero_image_bytes_and_subtype(uploaded_file: object) -> tuple[bytes, str] | None:
+    if uploaded_file is None:
+        return None
+    data = uploaded_file.getvalue()
+    if not data:
+        return None
+    subtype = image_mime_subtype(uploaded_file.name)
+    return data, subtype
+
+
+def _do_send_newsletter_test(
+    content: NewsletterContent,
+    hero: tuple[bytes, str] | None,
+    smtp_detail: SmtpResolved,
+) -> None:
+    recipients = _parse_email_list(st.session_state.get(_KEY_NL_TEST_RECIPIENTS, ""))
+    if not recipients:
+        st.error("No hay ninguna dirección de prueba válida (usa ; para separar varias).")
+        return
+
+    inline_images: dict[str, tuple[bytes, str]] = {
+        "logo": (load_logo_bytes(), "png"),
+        "icon_web": (load_web_icon_bytes(), "png"),
+        "icon_linkedin": (load_linkedin_icon_bytes(), "png"),
+    }
+    hero_src = None
+    if hero:
+        inline_images["hero"] = hero
+        hero_src = "cid:hero"
+    unsubscribe_url = build_unsubscribe_url(TEST_CONTACT_ID, TEST_NEWSLETTER_ID)
+    html = render_newsletter_html(
+        content,
+        logo_src="cid:logo",
+        hero_src=hero_src,
+        unsubscribe_url=unsubscribe_url,
+        icon_web_src="cid:icon_web",
+        icon_linkedin_src="cid:icon_linkedin",
+    )
+
+    sent, errors = 0, []
+    for to in recipients:
+        try:
+            send_html_email(
+                to,
+                f"[PRUEBA] {_newsletter_email_subject(content)}",
+                html,
+                inline_images=inline_images,
+                delivery=smtp_detail.delivery,
+            )
+            sent += 1
+        except Exception as exc:
+            friendly = smtp_exception_user_message(exc, routed_profile_slug=smtp_detail.routed_profile_slug)
+            errors.append(f"{to}: {friendly}")
+
+    if sent:
+        st.success(f"Prueba enviada a {sent}/{len(recipients)} direcciones.")
+    if errors:
+        st.error("Errores en el envío de prueba:\n" + "\n".join(errors))
+
+
+def _do_send_newsletter(
+    contacts: pd.DataFrame,
+    selected_ids: list[str],
+    content: NewsletterContent,
+    hero: tuple[bytes, str] | None,
+    smtp_detail: SmtpResolved,
+) -> None:
+    actor = _email_actor_name()
+    newsletter_id = str(uuid.uuid4())
+    logo_bytes = load_logo_bytes()
+    hero_src = "cid:hero" if hero else None
+
+    sent_records: list[dict[str, str]] = []
+    send_errors: list[str] = []
+    for cid in selected_ids:
+        row = contacts[contacts["contact_id"] == cid]
+        if row.empty:
+            continue
+        contact = row.iloc[0].to_dict()
+        to = contact.get("correo", "")
+        if not to:
+            continue
+        if not is_newsletter_subscribed(contact):
+            # Doble comprobación de seguridad: la tabla ya los excluye, pero por
+            # si acaso alguien quedó seleccionado antes de darse de baja.
+            continue
+
+        inline_images: dict[str, tuple[bytes, str]] = {
+            "logo": (logo_bytes, "png"),
+            "icon_web": (load_web_icon_bytes(), "png"),
+            "icon_linkedin": (load_linkedin_icon_bytes(), "png"),
+        }
+        if hero:
+            inline_images["hero"] = hero
+        unsubscribe_url = build_unsubscribe_url(cid, newsletter_id)
+        html = render_newsletter_html(
+            content,
+            logo_src="cid:logo",
+            hero_src=hero_src,
+            unsubscribe_url=unsubscribe_url,
+            icon_web_src="cid:icon_web",
+            icon_linkedin_src="cid:icon_linkedin",
+        )
+        try:
+            send_html_email(
+                to,
+                _newsletter_email_subject(content),
+                html,
+                inline_images=inline_images,
+                delivery=smtp_detail.delivery,
+            )
+            sent_records.append(
+                {"contact_id": str(cid), "nombre": str(contact.get("nombre", "") or ""), "correo": str(to)}
+            )
+        except Exception as exc:
+            friendly = smtp_exception_user_message(exc, routed_profile_slug=smtp_detail.routed_profile_slug)
+            send_errors.append(f"{contact.get('nombre', cid)}: {friendly}")
+
+    if sent_records:
+        st.success(f"Newsletter enviada: {len(sent_records)} / {len(selected_ids)} seleccionados.")
+    if send_errors:
+        st.error("Errores al enviar:\n" + "\n".join(send_errors))
+
+    if sent_records:
+        try:
+            blogs_service().log_newsletter_send(
+                titulo=content.titulo,
+                texto=content.parrafo,
+                enviado_por=actor,
+                destinatarios=sent_records,
+                newsletter_id=newsletter_id,
+            )
+            bump_blogs_cache()
+        except Exception as exc:
+            st.warning(f"El envío se realizó pero no se pudo registrar en Blogs: {exc}")
+
+
+def _render_newsletter_history() -> None:
+    try:
+        rows = blogs_service().newsletter_rows()
+    except Exception:
+        return
+    if not rows:
+        return
+    with st.expander(f"Historial de newsletters enviadas ({len(rows)})", expanded=False):
+        for row in rows[:20]:
+            titulo = str(row.get("titulo", "") or "Newsletter")
+            fecha = str(row.get("newsletter_fecha_envio", "") or "—")
+            enviado_por = str(row.get("newsletter_enviado_por", "") or "—")
+            num_dest = str(row.get("newsletter_num_destinatarios", "") or "0")
+            try:
+                num_bajas = len(json.loads(row.get("newsletter_bajas_json", "") or "[]"))
+            except (TypeError, ValueError):
+                num_bajas = 0
+            st.markdown(
+                f"**{titulo}** — {fecha} · enviada por {enviado_por} · "
+                f"{num_dest} destinatario(s) · {num_bajas} baja(s)"
+            )
+
+
+def _render_newsletter_panel(
+    contacts: pd.DataFrame,
+    selected_ids: list[str],
+    smtp_detail: SmtpResolved,
+) -> None:
+    with st.container(border=True):
+        st.markdown("##### Contenido")
+        st.text_input(
+            "Asunto del email",
+            key=_KEY_NL_ASUNTO,
+            placeholder="Novedades Sanzar · verano 2026",
+            help="Texto que aparece en la bandeja de entrada del destinatario.",
+        )
+        st.text_input(
+            "Título de la newsletter",
+            key=_KEY_NL_TITULO,
+            placeholder="Un verano sobre ruedas",
+            help="Título grande (H1) dentro del cuerpo del correo.",
+        )
+        uploaded = st.file_uploader(
+            "Imagen de cabecera (opcional)", type=["png", "jpg", "jpeg"], key=_KEY_NL_IMAGE_UPLOAD
+        )
+        st.text_area("Párrafo", key=_KEY_NL_PARRAFO, height=140, placeholder="Cuéntales la novedad...")
+        st.caption(
+            "Formato: `**negrita**`, `++subrayado++`, `[texto](https://enlace.com)`. "
+            "Los saltos de línea se respetan."
+        )
+        c1, c2 = st.columns(2, gap="small")
+        c1.text_input("Texto del botón/enlace (opcional)", key=_KEY_NL_CTA_TEXTO, placeholder="Ver más")
+        c2.text_input("URL del enlace", key=_KEY_NL_CTA_URL, placeholder="https://...")
+
+        cta_texto = str(st.session_state.get(_KEY_NL_CTA_TEXTO, "") or "").strip()
+        cta_url = str(st.session_state.get(_KEY_NL_CTA_URL, "") or "").strip()
+        cta_mismatch = bool(cta_texto) != bool(cta_url)
+        if cta_mismatch:
+            st.warning("El texto y la URL del botón deben rellenarse los dos juntos, o dejarse los dos vacíos.")
+
+        if not public_base_url_configured():
+            st.warning(
+                "Falta configurar `APP_PUBLIC_URL` (la URL pública de esta app desplegada) en secrets/.env. "
+                "Sin ella, el botón de baja no puede ser una página de un clic: los correos mostrarán en su "
+                f"lugar un contacto directo a {NEWSLETTER_NOTIFY_EMAIL}."
+            )
+
+        hero = _hero_image_bytes_and_subtype(uploaded)
+        content = _newsletter_content_from_state()
+        content_ok = bool(content.asunto.strip()) and bool(content.titulo.strip())
+        can_send = content_ok and not cta_mismatch
+
+        if st.button("Vista previa", width="stretch", disabled=not content_ok):
+            st.session_state[_KEY_NL_SHOW_PREVIEW] = True
+        if st.session_state.get(_KEY_NL_SHOW_PREVIEW) and content_ok:
+            logo_src = data_uri(load_logo_bytes(), "png")
+            hero_src = data_uri(*hero) if hero else None
+            preview_html = render_newsletter_html(
+                content,
+                logo_src=logo_src,
+                hero_src=hero_src,
+                unsubscribe_url=build_unsubscribe_url(TEST_CONTACT_ID, TEST_NEWSLETTER_ID) or "#",
+                icon_web_src=data_uri(load_web_icon_bytes(), "png"),
+                icon_linkedin_src=data_uri(load_linkedin_icon_bytes(), "png"),
+            )
+            with st.expander("Vista previa del correo", expanded=True):
+                st.caption(f"**Asunto:** {_newsletter_email_subject(content)}")
+                st.components.v1.html(preview_html, height=650, scrolling=True)
+
+    with st.container(border=True):
+        st.markdown("##### Prueba")
+        st.text_input(
+            "Enviarme una prueba a (direcciones separadas por ;)",
+            key=_KEY_NL_TEST_RECIPIENTS,
+        )
+        if st.button("Enviarme una prueba", width="stretch", disabled=not can_send):
+            with st.spinner("Enviando prueba…"):
+                _do_send_newsletter_test(content, hero, smtp_detail)
+
+    with st.container(border=True):
+        st.markdown("##### Envío")
+        n = len(selected_ids)
+        label = f"Enviar newsletter ({n})" if n else "Enviar newsletter"
+        if st.button(label, type="primary", width="stretch", disabled=(n == 0 or not can_send)):
+            with st.spinner("Enviando newsletter…"):
+                _do_send_newsletter(contacts, selected_ids, content, hero, smtp_detail)
+        _render_newsletter_history()
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -483,23 +829,37 @@ def render(df: pd.DataFrame) -> None:
 
     contacts = df.fillna("").astype(str)
 
+    st.radio(
+        "Modo",
+        [_MODE_INDIVIDUAL, _MODE_NEWSLETTER],
+        key=_KEY_MODE,
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+    mode = st.session_state[_KEY_MODE]
+    is_newsletter = mode == _MODE_NEWSLETTER
+
     left, right = st.columns([0.42, 0.58], gap="large")
 
     with left:
-        st.subheader("Contactos")
-        _render_filter_bar(contacts)
-        filtered = _apply_filters(contacts)
-        _render_contact_table(filtered)
+        with st.container(border=True):
+            st.markdown("##### Contactos")
+            _render_filter_bar(contacts)
+            filtered = _apply_filters(contacts)
+            _render_contact_table(filtered, mode="newsletter" if is_newsletter else "individual")
 
+    selected_key = _KEY_SELECTED_NEWSLETTER if is_newsletter else _KEY_SELECTED
     selected_ids = sorted(
-        cid for cid in st.session_state[_KEY_SELECTED]
+        cid for cid in st.session_state[selected_key]
         if cid in contacts["contact_id"].values
     )
 
     with right:
-        st.subheader("Plantilla")
         if smtp_detail.routed_profile_slug:
             st.caption(
                 f"Enviando como **{smtp_detail.delivery.user}** (perfil «{smtp_detail.routed_profile_slug}»)."
             )
-        _render_template_editor(contacts, df, selected_ids, smtp_detail)
+        if is_newsletter:
+            _render_newsletter_panel(contacts, selected_ids, smtp_detail)
+        else:
+            _render_template_editor(contacts, df, selected_ids, smtp_detail)

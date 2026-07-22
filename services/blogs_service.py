@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -9,6 +10,7 @@ from config.settings import (
     BLOG_EVENTO_ALARMA_SIN_SEMANA,
     BLOG_TIPO_REGISTRO_BLOG,
     BLOG_TIPO_REGISTRO_EVENTO,
+    BLOG_TIPO_REGISTRO_NEWSLETTER,
     BLOGS_HEADERS,
     BLOGS_WORKSHEET_NAME,
 )
@@ -18,6 +20,10 @@ from services.sheets_service import SheetsService
 
 def _today() -> str:
     return date.today().strftime("%d/%m/%Y")
+
+
+def _now() -> str:
+    return datetime.now().strftime("%d/%m/%Y %H:%M")
 
 
 def _event_notas(*, week: str, employee_id: str) -> str:
@@ -109,3 +115,96 @@ class BlogsService:
         )
         self._sheets.append_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row)
         return row_id
+
+    # ------------------------------------------------------------------
+    # Registro de envíos de newsletter (tipo_registro="newsletter")
+    # ------------------------------------------------------------------
+
+    def log_newsletter_send(
+        self,
+        *,
+        titulo: str,
+        texto: str,
+        enviado_por: str,
+        destinatarios: list[dict[str, str]],
+        newsletter_id: str | None = None,
+    ) -> str:
+        """Registra un envío de newsletter como fila nueva en Blogs.
+
+        ``destinatarios`` es una lista de ``{"contact_id", "nombre", "correo"}``
+        de todos los contactos a los que se mandó (no incluye envíos de prueba).
+        ``newsletter_id`` debe ser el mismo id ya usado para firmar los enlaces
+        de baja incluidos en esos correos (se genera ANTES de enviar, para
+        poder embeberlo en cada enlace); si no se pasa, se genera aquí.
+        Devuelve el ``historial_blog_id`` usado como ``newsletter_id``.
+        """
+        self.ensure_structure()
+        row_id = str(newsletter_id or "").strip() or str(uuid.uuid4())
+        today = _today()
+        row = {h: "" for h in BLOGS_HEADERS}
+        row.update(
+            {
+                "historial_blog_id": row_id,
+                "tipo_registro": BLOG_TIPO_REGISTRO_NEWSLETTER,
+                "titulo": str(titulo or "").strip() or "Newsletter",
+                "estado_blog": "Publicado",
+                "fecha_publicacion_prevista": today,
+                "fecha_publicacion_real": today,
+                "persona_publica": enviado_por,
+                "responsable_blog": enviado_por,
+                "notas": str(texto or "").strip(),
+                "newsletter_texto": str(texto or "").strip(),
+                "newsletter_enviado_por": enviado_por,
+                "newsletter_destinatarios_json": json.dumps(destinatarios, ensure_ascii=False),
+                "newsletter_num_destinatarios": str(len(destinatarios)),
+                "newsletter_fecha_envio": _now(),
+                "newsletter_bajas_json": "[]",
+                "created_at": today,
+                "updated_at": today,
+            }
+        )
+        self._sheets.append_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row)
+        return row_id
+
+    def newsletter_rows(self) -> list[dict[str, str]]:
+        """Filas de Blogs con ``tipo_registro='newsletter'``, más recientes primero."""
+        rows = [
+            row
+            for row in self.all_rows()
+            if str(row.get("tipo_registro", "") or "").strip() == BLOG_TIPO_REGISTRO_NEWSLETTER
+        ]
+        rows.sort(key=lambda r: str(r.get("newsletter_fecha_envio", "") or ""), reverse=True)
+        return rows
+
+    def record_newsletter_unsubscribe(self, *, newsletter_id: str, contact_id: str, nombre: str) -> bool:
+        """Añade una baja al registro de un envío de newsletter concreto.
+
+        Se usa desde la página pública de baja (sin login). No falla el flujo de
+        baja si el ``newsletter_id`` ya no existe en Blogs (p.ej. borrado a
+        mano): en ese caso simplemente no hay nada que anotar aquí.
+        """
+        clean_id = str(newsletter_id or "").strip()
+        if not clean_id:
+            return False
+        self.ensure_structure()
+        row_nums = self._sheets.row_numbers_by_id(BLOGS_WORKSHEET_NAME, "historial_blog_id")
+        row_num = row_nums.get(clean_id)
+        if row_num is None:
+            return False
+        df = self.blogs_df()
+        match = df[df["historial_blog_id"].astype(str).str.strip() == clean_id]
+        if match.empty:
+            return False
+        current_row = match.iloc[0].to_dict()
+        try:
+            bajas = json.loads(current_row.get("newsletter_bajas_json", "") or "[]")
+            if not isinstance(bajas, list):
+                bajas = []
+        except (TypeError, ValueError):
+            bajas = []
+        bajas.append({"contact_id": str(contact_id or ""), "nombre": str(nombre or ""), "fecha": _now()})
+        updated_row = {h: str(current_row.get(h, "") or "") for h in BLOGS_HEADERS}
+        updated_row["newsletter_bajas_json"] = json.dumps(bajas, ensure_ascii=False)
+        updated_row["updated_at"] = _today()
+        self._sheets.update_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row_num, updated_row)
+        return True
