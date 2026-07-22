@@ -82,6 +82,31 @@ class ResultadoUmbrales:
 # ----------------------------------------------------------------------
 # Carga de datos
 # ----------------------------------------------------------------------
+def _ensure_datetime64_ns(values) -> pd.Series:
+    """Normaliza timestamps a datetime64[ns].
+
+    En Python 3.12+ / pandas reciente, ``pd.to_datetime`` puede devolver
+    ``datetime64[us]``. ``merge_asof`` exige la misma unidad en ambas
+    claves (ns vs us → MergeError). Unificamos a ns.
+    """
+    series = pd.to_datetime(values)
+    if isinstance(series, pd.Series):
+        try:
+            return series.astype("datetime64[ns]")
+        except (TypeError, ValueError):
+            if hasattr(series.dt, "as_unit"):
+                return series.dt.as_unit("ns")
+            return series
+    # Index u otro array-like
+    series = pd.Series(series)
+    try:
+        return series.astype("datetime64[ns]")
+    except (TypeError, ValueError):
+        if hasattr(series.dt, "as_unit"):
+            return series.dt.as_unit("ns")
+        return series
+
+
 def cargar_serie(csv_path: str, col_timestamp: int = 5, col_valor: int = 6,
                   con_cabecera: bool = False) -> pd.DataFrame:
     """
@@ -102,7 +127,7 @@ def cargar_serie(csv_path: str, col_timestamp: int = 5, col_valor: int = 6,
             "valor": raw[col_valor],
         })
 
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["timestamp"] = _ensure_datetime64_ns(df["timestamp"])
     df = df[["timestamp", "valor"]].dropna().sort_values("timestamp").reset_index(drop=True)
     return df
 
@@ -559,7 +584,7 @@ def obtener_et_precipitacion(lat: float, lon: float, past_days: int = 30,
     datos = resp.json()["hourly"]
 
     df = pd.DataFrame({
-        "timestamp": pd.to_datetime(datos["time"]),
+        "timestamp": _ensure_datetime64_ns(datos["time"]),
         "et0": datos["et0_fao_evapotranspiration"],
         "precipitacion": datos["precipitation"],
     })
@@ -640,8 +665,12 @@ def analizar_pmp_operativo_normalizado_et(df: pd.DataFrame, df_meteo: pd.DataFra
     inicios_ordenados = sorted(e.inicio_riego for e in eventos_cc)
     resultados = []
 
+    left = df.sort_values("timestamp").copy()
+    right = df_meteo.sort_values("timestamp").copy()
+    left["timestamp"] = _ensure_datetime64_ns(left["timestamp"])
+    right["timestamp"] = _ensure_datetime64_ns(right["timestamp"])
     df_merge = pd.merge_asof(
-        df.sort_values("timestamp"), df_meteo.sort_values("timestamp"),
+        left, right,
         on="timestamp", direction="nearest", tolerance=pd.Timedelta("1h"),
     )
 
