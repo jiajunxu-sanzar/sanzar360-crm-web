@@ -53,6 +53,7 @@ from services.newsletter_service import (
     data_uri,
     image_mime_subtype,
     is_newsletter_subscribed,
+    allows_crm_email,
     load_linkedin_icon_bytes,
     load_logo_bytes,
     load_web_icon_bytes,
@@ -211,6 +212,12 @@ def _newsletter_eligible_mask(filtered: pd.DataFrame) -> pd.Series:
     return filtered.apply(lambda row: is_newsletter_subscribed(row.to_dict()), axis=1)
 
 
+def _allows_crm_email_mask(filtered: pd.DataFrame) -> pd.Series:
+    if filtered.empty:
+        return pd.Series(dtype=bool)
+    return filtered.apply(lambda row: allows_crm_email(row.to_dict()), axis=1)
+
+
 def _dataframe_selection_state(row_indices: list[int]) -> dict:
     """Estado de selección del widget ``st.dataframe`` (Streamlit ≥1.35)."""
     return {"selection": {"rows": list(row_indices), "columns": []}}
@@ -222,10 +229,9 @@ def _render_contact_table(filtered: pd.DataFrame, *, mode: str = "individual") -
     Contactos elegibles   → selectable st.dataframe (multi-row).
     Contactos NO elegibles → read-only st.dataframe styled in grey below it.
 
-    En modo "individual" son elegibles los contactos con correo. En modo
-    "newsletter" además se excluyen (en gris, no seleccionables) los que se
-    hayan dado de baja (``newsletter_suscrito == "no"``), para que nadie los
-    seleccione por error.
+    Elegibles: tienen correo y no tienen ``no_recibir_emails=sí``. En modo
+    newsletter además se excluyen los dados de baja
+    (``newsletter_suscrito == "no"``).
     """
     is_newsletter = mode == "newsletter"
     selected_key = _KEY_SELECTED_NEWSLETTER if is_newsletter else _KEY_SELECTED
@@ -233,9 +239,9 @@ def _render_contact_table(filtered: pd.DataFrame, *, mode: str = "individual") -
     skip_sync_key = f"_skip_df_sync_{mode}"
 
     has_email_mask = filtered["correo"].fillna("").astype(str).str.strip().ne("")
-    eligible_mask = has_email_mask
+    eligible_mask = has_email_mask & _allows_crm_email_mask(filtered)
     if is_newsletter:
-        eligible_mask = has_email_mask & _newsletter_eligible_mask(filtered)
+        eligible_mask = eligible_mask & _newsletter_eligible_mask(filtered)
 
     df_with = filtered[eligible_mask].reset_index(drop=True)
     df_without = filtered[~eligible_mask].reset_index(drop=True)
@@ -292,9 +298,9 @@ def _render_contact_table(filtered: pd.DataFrame, *, mode: str = "individual") -
     # --- Static greyed-out table: contactos NO elegibles ---
     if not df_without.empty:
         caption = (
-            "Sin correo o dado de baja de la newsletter — no seleccionables"
+            "Sin correo, opt-out o baja de newsletter — no seleccionables"
             if is_newsletter
-            else "Sin correo — no seleccionables"
+            else "Sin correo u opt-out de emails — no seleccionables"
         )
         st.caption(f"{caption} ({len(df_without)})")
         grey_df = _build_display_df(df_without)
@@ -440,6 +446,8 @@ def _do_send(
         to = contact.get("correo", "")
         if not to:
             continue
+        if not allows_crm_email(contact):
+            continue
         try:
             send_email(
                 to,
@@ -559,6 +567,8 @@ def build_newsletter_send_targets(
         contact = row.iloc[0].to_dict()
         to = str(contact.get("correo", "") or "").strip()
         if not to:
+            continue
+        if not allows_crm_email(contact):
             continue
         if not is_newsletter_subscribed(contact):
             continue

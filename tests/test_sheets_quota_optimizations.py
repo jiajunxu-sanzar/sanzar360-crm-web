@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from services.history_service import HistoryService
+from services.history_service import HISTORY_SPECS, HistoryService
 from services.sheets_service import SheetsService
 
 
@@ -317,11 +317,29 @@ class _BatchHistorySheets(_CountingHistorySheets):
         return df[headers].fillna("").astype(str) if headers else df.fillna("").astype(str)
 
 
-def test_history_lazy_load_batches_all_kinds_in_one_call() -> None:
+def test_history_lazy_load_batches_only_requested_kind() -> None:
     sheets = _BatchHistorySheets()
     service = HistoryService(sheets)  # type: ignore[arg-type]
-    service.rows("sensores")   # primer acceso: batch de TODOS los pendientes
-    service.rows("campanas")   # ya cargado: sin llamadas nuevas
+    service.rows("sensores")
+    assert len(sheets.batch_calls) == 1
+    assert sheets.batch_calls[0] == [HISTORY_SPECS["sensores"].worksheet_name]
+    service.rows("campanas")
+    assert len(sheets.batch_calls) == 2
+    assert sheets.batch_calls[1] == [HISTORY_SPECS["campanas"].worksheet_name]
+    service.rows("sensores")  # ya cargado
+    assert len(sheets.batch_calls) == 2
+    assert sheets.read_worksheet_calls == 0
+
+
+def test_history_load_kinds_batches_requested_together() -> None:
+    sheets = _BatchHistorySheets()
+    service = HistoryService(sheets)  # type: ignore[arg-type]
+    service.load_kinds(["sensores", "incidencias"])
+    assert len(sheets.batch_calls) == 1
+    names = sheets.batch_calls[0]
+    assert HISTORY_SPECS["sensores"].worksheet_name in names
+    assert HISTORY_SPECS["incidencias"].worksheet_name in names
+    assert len(names) == 2
+    service.rows("sensores")
     service.rows("incidencias")
     assert len(sheets.batch_calls) == 1
-    assert sheets.read_worksheet_calls == 0

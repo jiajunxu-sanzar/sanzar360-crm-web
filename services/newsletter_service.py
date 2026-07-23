@@ -26,6 +26,7 @@ from config.settings import (
     NEWSLETTER_PUBLIC_BASE_URL,
     NEWSLETTER_SUSCRITO_NO,
     NEWSLETTER_UNSUB_SECRET,
+    NO_RECIBIR_EMAILS_SI,
     PROJECT_ROOT,
 )
 
@@ -89,6 +90,16 @@ def is_newsletter_subscribed(contact_row: dict[str, str]) -> bool:
     """
     value = str(contact_row.get("newsletter_suscrito", "") or "").strip().lower()
     return value != NEWSLETTER_SUSCRITO_NO.lower()
+
+
+def allows_crm_email(contact_row: dict[str, str]) -> bool:
+    """False solo si ``no_recibir_emails`` es ``sí`` (opt-out amplio).
+
+    Bloquea correo individual y newsletter. Vacío / ``no`` / otros valores
+    permiten envío (contactos antiguos sin la columna).
+    """
+    value = str(contact_row.get("no_recibir_emails", "") or "").strip().lower()
+    return value not in {NO_RECIBIR_EMAILS_SI.lower(), "si", "yes", "true", "1"}
 
 
 def _sign(contact_id: str, newsletter_id: str) -> str:

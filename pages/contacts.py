@@ -34,6 +34,8 @@ from config.contact_estado import is_contact_perdido
 from config.settings import (
     CONTACT_ESTADO_OPCIONES,
     FUENTE_LEAD_OPCIONES,
+    NO_RECIBIR_EMAILS_NO,
+    NO_RECIBIR_EMAILS_SI,
     TIPO_RELACION_OPCIONES,
     VALOR_OPCIONES,
 )
@@ -46,6 +48,13 @@ from services.contact_sensor_overview import (
     semaforo_display_prefix,
 )
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
+from services.clientes_board import (
+    TIPO_RELACION_BOARD,
+    is_sheet_true,
+    is_visto_hoy,
+    values_for_flag,
+    values_for_visto_toggle,
+)
 from services.proxima_accion_stats import (
     apply_dash_bucket_date_filter,
     filter_by_contact_estado,
@@ -122,6 +131,7 @@ from pages.contacts_common import (  # noqa: F401
     _actor_name,
     _history_smart_defaults,
     _apply_smart_defaults,
+    autosave_contact_fields,
 )
 from pages.contacts_inventory_sync import (  # noqa: F401
     _parse_ddmmyyyy,
@@ -277,6 +287,8 @@ def _render_contact_list(df: pd.DataFrame) -> None:
         with search_cols[1]:
             st.toggle("Mostrar perdidos", key=CONTACTS_SHOW_LOST_KEY)
         with search_cols[2]:
+            if CONTACTS_ONLY_WITH_SENSORS_KEY not in st.session_state:
+                st.session_state[CONTACTS_ONLY_WITH_SENSORS_KEY] = True
             st.toggle("Con sensores", key=CONTACTS_ONLY_WITH_SENSORS_KEY)
         with st.expander("Más filtros (estado, provincia, municipio, tipo, cultivo)", icon=":material/tune:"):
             advanced = _render_advanced_filters(df)
@@ -398,7 +410,7 @@ def _apply_contact_filters(
     dash_bucket = st.session_state.get("dash_bucket") or ""
     if dash_bucket:
         filtered = apply_dash_bucket_date_filter(filtered, str(dash_bucket))
-    if bool(st.session_state.get(CONTACTS_ONLY_WITH_SENSORS_KEY, False)):
+    if bool(st.session_state.get(CONTACTS_ONLY_WITH_SENSORS_KEY, True)):
         filtered = filter_by_sensor_overview(filtered, overview, only_with_sensors=True)
     filtered = pin_oficina_contact_first(filtered)
     return filtered.reset_index(drop=True)
@@ -688,6 +700,7 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
             st.session_state["_contacts_last_selected_id"] = ""
             st.rerun()
 
+    show_flags = str(contact.get("tipo_relacion", "") or "").strip() in TIPO_RELACION_BOARD
     render_contact_detail_header(
         contact=header_contact,
         contact_id=contact_id,
@@ -696,7 +709,10 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
         last_contact=last_contact,
         open_tasks_count=open_tasks_count,
         next_task=next_task,
+        with_flags=show_flags,
     )
+
+    df = _render_ficha_board_flags(df, contact)
 
     mode_key = f"contact_detail_view_mode_{contact_id}"
     if st.session_state.get(mode_key) not in _DETAIL_VIEW_OPTIONS:
@@ -726,6 +742,63 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
     _maybe_render_edit_history_modal(contact)
     return updated if updated is not None else df
 
+
+def _render_ficha_board_flags(df: pd.DataFrame, contact: dict[str, str]) -> pd.DataFrame:
+    """Visto hoy / Umbrales / Suelo seco bajo los chips del header."""
+    tipo = str(contact.get("tipo_relacion", "") or "").strip()
+    if tipo not in TIPO_RELACION_BOARD:
+        return df
+
+    cid = str(contact.get("contact_id", "") or "")
+    cid_safe = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in cid)
+    cache_ver = int(st.session_state.get("contacts_cache_version", 0))
+    key_suffix = f"{cid_safe}_{cache_ver}"
+
+    visto_hoy = is_visto_hoy(contact.get("visto_cliente_fecha", ""))
+    umbrales_on = is_sheet_true(contact.get("umbrales_activadas", ""))
+    suelo_on = is_sheet_true(contact.get("suelo_seco", ""))
+
+    visto_key = f"ficha_visto_{key_suffix}"
+    umbrales_key = f"ficha_umbrales_{key_suffix}"
+    suelo_key = f"ficha_suelo_{key_suffix}"
+
+    if visto_key not in st.session_state:
+        st.session_state[visto_key] = visto_hoy
+    if umbrales_key not in st.session_state:
+        st.session_state[umbrales_key] = umbrales_on
+    if suelo_key not in st.session_state:
+        st.session_state[suelo_key] = suelo_on
+
+    c1, c2, c3 = st.columns(3, gap="small")
+    with c1:
+        st.markdown('<span class="sanzar-flags-marker" hidden></span>', unsafe_allow_html=True)
+        visto = st.checkbox("Visto hoy", key=visto_key)
+    with c2:
+        umbrales = st.toggle("Umbrales activadas", key=umbrales_key)
+    with c3:
+        suelo = st.toggle("Suelo seco", key=suelo_key)
+
+    if visto != visto_hoy:
+        return autosave_contact_fields(
+            df,
+            contact_id=cid,
+            updates=values_for_visto_toggle(checked=visto),
+        )
+    if umbrales != umbrales_on:
+        return autosave_contact_fields(
+            df,
+            contact_id=cid,
+            updates=values_for_flag("umbrales_activadas", checked=umbrales),
+        )
+    if suelo != suelo_on:
+        return autosave_contact_fields(
+            df,
+            contact_id=cid,
+            updates=values_for_flag("suelo_seco", checked=suelo),
+        )
+    return df
+
+
 def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]) -> pd.DataFrame | None:
     st.subheader("Ficha del cliente")
     sections_left: list[tuple[str, list[str]]] = [
@@ -746,9 +819,17 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
     sections_right: list[tuple[str, list[str]]] = [
         (
             "Estado y oportunidad",
-            ["estado", "fecha_estado", "razon_perdida", "valor", "responsable_cliente", "tipo_relacion"],
+            [
+                "estado",
+                "fecha_estado",
+                "razon_perdida",
+                "valor",
+                "responsable_cliente",
+                "tipo_relacion",
+                "no_recibir_emails",
+            ],
         ),
-        ("Operativa y suscripción", ["cuenta_usuario", "digital_maps", "iot_module", "sowing_module"]),
+        ("Operativa y suscripción", ["cuenta_usuario", "digital_maps", "iot_module", "sowing_module", "link_carpeta_cliente"]),
     ]
 
     with st.form(f"contact_form_{contact['contact_id']}"):
@@ -954,6 +1035,28 @@ def _render_contact_field_input(column: str, value: str, *, key: str) -> str:
             opts,
             index=opts.index(value) if value in opts else 0,
             key=key,
+        )
+    if column == "no_recibir_emails":
+        opts = [NO_RECIBIR_EMAILS_NO, NO_RECIBIR_EMAILS_SI]
+        normalized = (value or "").strip().lower()
+        if normalized in {"si", "sí", "yes", "true", "1"}:
+            current = NO_RECIBIR_EMAILS_SI
+        else:
+            current = NO_RECIBIR_EMAILS_NO
+        return st.selectbox(
+            "No recibir emails",
+            opts,
+            index=opts.index(current),
+            key=key,
+            help="Si = no enviar correo individual ni newsletter a este contacto.",
+        )
+    if column == "link_carpeta_cliente":
+        return st.text_input(
+            "Link carpeta cliente",
+            value=value,
+            key=key,
+            placeholder="https://…",
+            help="URL de la carpeta del cliente (Drive u otro).",
         )
     if column == "responsable_cliente":
         opts = person_select_options(

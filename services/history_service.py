@@ -364,6 +364,11 @@ def sensor_association_tokens(sensor_serial_number: str) -> list[str]:
     return out
 
 
+def count_sensor_packs(sensor_serial_number: str) -> int:
+    """Count packs (comma-separated groups), not exploded physical assets."""
+    return len(sensor_association_tokens(sensor_serial_number))
+
+
 def parse_projectiotid_assignments(raw: str) -> list[ProjectIotAssignment]:
     value = (raw or "").strip()
     if not value:
@@ -530,6 +535,22 @@ class HistoryService:
     def load_all(self) -> None:
         self._load_kinds_batch(list(HISTORY_SPECS.keys()))
 
+    def load_kinds(self, kinds: list[HistoryKind], *, force: bool = False) -> None:
+        """Carga solo los kinds indicados (un batchGet si hay varios pendientes)."""
+        ordered: list[HistoryKind] = []
+        seen: set[HistoryKind] = set()
+        for kind in kinds:
+            if kind not in HISTORY_SPECS or kind in seen:
+                continue
+            seen.add(kind)
+            if force or kind not in self._loaded:
+                ordered.append(kind)
+        if force:
+            for kind in ordered:
+                self.load_kind(kind, force=True)
+            return
+        self._load_kinds_batch(ordered)
+
     def load_kind(self, kind: HistoryKind, *, force: bool = False) -> None:
         if not force and kind in self._loaded:
             return
@@ -539,11 +560,8 @@ class HistoryService:
                 df = self._sheets_service.read_worksheet_df(spec.worksheet_name, list(spec.headers))
                 self._set_frame(kind, df)
             return
-        # Carga perezosa: las páginas suelen necesitar varios históricos en el
-        # mismo render, así que se traen TODOS los pendientes en una única
-        # llamada API (values.batchGet) en vez de hoja a hoja.
-        pending = [k for k in HISTORY_SPECS if k not in self._loaded]
-        self._load_kinds_batch(pending or [kind])
+        # Solo el kind pedido — evita bajar todo el histórico al abrir Contactos.
+        self._load_kinds_batch([kind])
 
     def _load_kinds_batch(self, kinds: list[HistoryKind]) -> None:
         if not kinds:

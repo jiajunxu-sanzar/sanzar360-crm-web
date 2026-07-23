@@ -6,6 +6,7 @@ from services.newsletter_service import (
     SANZAR_WEB_URL,
     TEST_CONTACT_ID,
     TEST_NEWSLETTER_ID,
+    allows_crm_email,
     build_unsubscribe_url,
     data_uri,
     image_mime_subtype,
@@ -45,6 +46,19 @@ def test_is_newsletter_subscribed_false_only_for_no() -> None:
     assert is_newsletter_subscribed({"newsletter_suscrito": "no"}) is False
     assert is_newsletter_subscribed({"newsletter_suscrito": " No "}) is False
     assert is_newsletter_subscribed({"newsletter_suscrito": "NO"}) is False
+
+
+def test_allows_crm_email_default_true() -> None:
+    assert allows_crm_email({}) is True
+    assert allows_crm_email({"no_recibir_emails": ""}) is True
+    assert allows_crm_email({"no_recibir_emails": "no"}) is True
+    assert allows_crm_email({"no_recibir_emails": "NO"}) is True
+
+
+def test_allows_crm_email_false_when_si() -> None:
+    assert allows_crm_email({"no_recibir_emails": "sí"}) is False
+    assert allows_crm_email({"no_recibir_emails": "si"}) is False
+    assert allows_crm_email({"no_recibir_emails": " Sí "}) is False
 
 
 def test_token_roundtrip_and_tamper_detection() -> None:

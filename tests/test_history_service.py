@@ -5,6 +5,7 @@ import pandas as pd
 from services.history_service import (
     HistoryService,
     count_sensor_assets,
+    count_sensor_packs,
     parse_sensor_asset_occurrences,
     parse_sensor_assets,
 )
@@ -122,6 +123,8 @@ def test_parse_sensor_assets_extracts_physical_assets() -> None:
     assert ("teros10", "te001") in keys
     assert ("sim", "sim001") in keys
     assert count_sensor_assets("uc501-UC001-TE001-SIM001") == 3
+    assert count_sensor_packs("uc501-UC001-TE001-SIM001") == 1
+    assert count_sensor_packs("uc501-a-b-c,ug67-x-y") == 2
 
 
 def test_parse_sensor_assets_uc501_gateway_only() -> None:

@@ -6,8 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from app.telemetry import timed
-from config.settings import CONFIG
-from config.settings import ACCIONES_HEADERS
 from services.blogs_service import BlogsService
 from services.compras_service import ComprasService
 from services.cultivos_kc_service import CultivosKcService
@@ -17,7 +15,6 @@ from services.history_service import HistoryService
 from services.inventory_service import InventoryService
 from services.sheets_service import SheetsService
 from services.users_service import load_users
-
 
 @st.cache_resource
 def sheets_service() -> SheetsService:
@@ -105,11 +102,9 @@ def load_compras_cached(version: int = 0):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_acciones_cached(version: int = 0):
-    """Filas de seguimiento comercial (hoja Acciones)."""
+    """Filas de seguimiento comercial (hoja Acciones), vía HistoryService."""
     with timed("load_acciones_cached", version=version):
-        return sheets_service().read_worksheet_df(
-            CONFIG.google_activity_log_worksheet_name, list(ACCIONES_HEADERS)
-        )
+        return history_service().frame("seguimiento_comercial")
 
 
 def load_activity_log_cached(version: int = 0):
@@ -121,6 +116,8 @@ def load_activity_log_cached(version: int = 0):
 def load_contact_sensor_overview_cached(version: int = 0) -> pd.DataFrame:
     with timed("load_contact_sensor_overview_cached", version=version):
         contacts = load_contacts_cached(version)
+        # Un solo batchGet para lo que necesita el semáforo (no todo el histórico).
+        history_service().load_kinds(["sensores", "incidencias"])
         sensor_rows = load_history_rows_cached("sensores", version)
         incidencia_rows = load_history_rows_cached("incidencias", version)
         acciones_df = load_acciones_cached(version)

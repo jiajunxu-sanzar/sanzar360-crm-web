@@ -7,7 +7,7 @@ from services.contact_proxima_index import (
     enrich_contacts_with_proxima,
     latest_commercial_contact_row,
 )
-from services.history_service import count_sensor_assets, parse_sensor_assets
+from services.history_service import count_sensor_packs, parse_sensor_assets
 from services.sheet_date_format import normalize_dd_mm_yyyy
 
 OVERVIEW_COLUMNS = [
@@ -153,7 +153,7 @@ def _aggregate_open_sensors(sensor_rows: list[dict]) -> dict[str, tuple[int, str
             if key in seen_ssn:
                 continue
             seen_ssn.add(key)
-            total += count_sensor_assets(ssn)
+            total += count_sensor_packs(ssn)
             pack = format_sensor_pack_associations(ssn)
             if pack:
                 packs.append(pack)

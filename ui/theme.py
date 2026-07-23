@@ -1117,6 +1117,23 @@ def apply_theme() -> None:
           border-radius: 12px;
           box-shadow: 0 2px 12px rgba(15, 23, 42, 0.07);
         }
+        .sanzar-detail-header--with-flags {
+          margin-bottom: 0;
+          border-bottom-left-radius: 0;
+          border-bottom-right-radius: 0;
+          border-bottom: none;
+          box-shadow: none;
+        }
+        /* Franja de flags: el row de columnas que contiene el marcador, pegado al header */
+        div[data-testid="stHorizontalBlock"]:has(.sanzar-flags-marker) {
+          margin: 0 0 1rem 0 !important;
+          padding: 10px 18px 14px !important;
+          background: var(--ui-bg-elevated);
+          border: 1px solid var(--ui-border);
+          border-top: 1px dashed var(--ui-border);
+          border-radius: 0 0 12px 12px;
+          box-shadow: 0 2px 12px rgba(15, 23, 42, 0.07);
+        }
         .sanzar-detail-header-top {
           display: flex;
           flex-wrap: wrap;

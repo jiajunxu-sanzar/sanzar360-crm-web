@@ -77,7 +77,7 @@ def test_verde_sensor_abierto() -> None:
     )
     row = out.iloc[0]
     assert row["semaforo"] == "verde"
-    assert row["num_sensores"] == 3
+    assert row["num_sensores"] == 1
     assert "uc501-UC001" in str(row["sensor_sns"])
     assert "→" in str(row["sensor_sns"])
     assert row["incidencias_abiertas"] == 0

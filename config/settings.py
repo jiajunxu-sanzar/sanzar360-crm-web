@@ -69,6 +69,7 @@ CANONICAL_COLUMNS = [
     "digital_maps",
     "iot_module",
     "sowing_module",
+    "link_carpeta_cliente",
     "otros_contactos",
     "cultivos",
     "superficie_ha",
@@ -87,6 +88,7 @@ CANONICAL_COLUMNS = [
     "suelo_seco",
     "visto_cliente_fecha",
     "newsletter_suscrito",
+    "no_recibir_emails",
 ]
 
 # Valor que marca a un contacto como NO suscrito a la newsletter. Cualquier
@@ -95,6 +97,11 @@ CANONICAL_COLUMNS = [
 # que se dé de baja explícitamente.
 NEWSLETTER_SUSCRITO_NO = "no"
 NEWSLETTER_SUSCRITO_SI = "sí"
+
+# Opt-out amplio de emails CRM (individual + newsletter). Solo "sí" bloquea;
+# vacío / "no" permiten envío.
+NO_RECIBIR_EMAILS_SI = "sí"
+NO_RECIBIR_EMAILS_NO = "no"
 
 CONTACT_ESTADO_OPCIONES: tuple[str, ...] = (
     "Nuevo contacto",

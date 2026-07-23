@@ -37,13 +37,14 @@ def test_merge_skips_sanzar_when_checkbox_off() -> None:
 def test_build_newsletter_send_targets_table_and_extras() -> None:
     contacts = pd.DataFrame(
         [
-            {"contact_id": "c1", "nombre": "Ana", "correo": "ana@x.com", "newsletter_suscrito": ""},
-            {"contact_id": "c2", "nombre": "Baja", "correo": "baja@x.com", "newsletter_suscrito": "no"},
+            {"contact_id": "c1", "nombre": "Ana", "correo": "ana@x.com", "newsletter_suscrito": "", "no_recibir_emails": ""},
+            {"contact_id": "c2", "nombre": "Baja", "correo": "baja@x.com", "newsletter_suscrito": "no", "no_recibir_emails": ""},
+            {"contact_id": "c3", "nombre": "OptOut", "correo": "opt@x.com", "newsletter_suscrito": "", "no_recibir_emails": "sí"},
         ]
     )
     targets, n_table, n_extra = build_newsletter_send_targets(
         contacts,
-        ["c1", "c2"],
+        ["c1", "c2", "c3"],
         include_sanzar=True,
         extra_emails=["extra@z.com"],
         sanzar_emails=("jiajun.xu@sanzar-group.com",),

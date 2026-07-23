@@ -8,7 +8,8 @@ import pandas as pd
 import streamlit as st
 
 from app import auth
-from app.cache import load_contact_sensor_overview_cached, load_users_cached
+from app.cache import load_contact_sensor_overview_cached, load_users_cached, sheets_service
+from app.state import bump_contacts_cache, set_contacts_df_override
 from config.settings import (
     CANAL_CONTACTO_OPCIONES,
     EMAIL_CLASIFICACION_OPCIONES,
@@ -17,6 +18,7 @@ from config.settings import (
     TIPO_TAREA_OPCIONES,
     ESTADO_TAREA_OPCIONES,
 )
+from services.contact_use_cases import save_contact_by_id
 from services.riego_umbrales import TABLA_TEXTURAS
 from services.users_service import commercial_user_names
 from ui.components.contact_overview_table import filter_overview_by_contact_ids, sort_overview_by_proxima_accion
@@ -393,3 +395,39 @@ def _apply_smart_defaults(kind: str, initial: dict[str, str], *, is_new: bool) -
         if not str(initial.get(header, "") or "").strip():
             initial[header] = default
     return initial
+
+
+def row_index_for_contact(df: pd.DataFrame, contact_id: str) -> int | None:
+    if df.empty or "contact_id" not in df.columns:
+        return None
+    match = df.index[df["contact_id"].astype(str) == str(contact_id)].tolist()
+    return int(match[0]) if match else None
+
+
+def autosave_contact_fields(
+    df: pd.DataFrame,
+    *,
+    contact_id: str,
+    updates: dict[str, str],
+) -> pd.DataFrame:
+    """Guarda campos sueltos (visto/flags) y refresca caché. Hace ``st.rerun``."""
+    row_idx = row_index_for_contact(df, contact_id)
+    if row_idx is None:
+        st.error("No se encontró el contacto para guardar.")
+        return df
+    values = {"contact_id": contact_id, **updates}
+    new_df, verify = save_contact_by_id(
+        df,
+        row_idx=row_idx,
+        contact_id=contact_id,
+        values=values,
+        sheets=sheets_service(),
+    )
+    bump_contacts_cache()
+    set_contacts_df_override(new_df)
+    if verify.status != "confirmed":
+        st.caption(f"Guardado con verificación: {verify.status}")
+    else:
+        st.toast("Guardado", icon="✅")
+    st.rerun()
+    return new_df  # pragma: no cover

@@ -113,6 +113,7 @@ def render_contact_detail_header(
     last_contact: dict[str, str] | None = None,
     open_tasks_count: int = 0,
     next_task: dict[str, str] | None = None,
+    with_flags: bool = False,
 ) -> None:
     """Render the sticky-ish operational header card (nombre, estado, próxima acción, alertas, contacto)."""
     cid_full = _esc(contact_id)
@@ -186,9 +187,13 @@ def render_contact_detail_header(
         next_task=next_task,
     )
 
+    header_cls = "sanzar-detail-header"
+    if with_flags:
+        header_cls += " sanzar-detail-header--with-flags"
+
     st.markdown(
         f"""
-<section class="sanzar-detail-header" aria-label="Cabecera del contacto">
+<section class="{header_cls}" aria-label="Cabecera del contacto">
   <div class="sanzar-detail-header-top">
     <div class="sanzar-detail-title-block">
       <h2 class="sanzar-detail-title">{_esc(nombre)}</h2>
