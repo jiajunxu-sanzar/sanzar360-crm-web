@@ -94,7 +94,15 @@ def _render_cliente_card(df: pd.DataFrame, payload, *, cache_ver: int) -> pd.Dat
 def render(df: pd.DataFrame) -> None:
     render_page_header("Clientes")
     today = date.today()
-    st.caption(today.strftime("%d/%m/%Y"))
+    cap_col, manual_col = st.columns([0.82, 0.18], vertical_alignment="center")
+    with cap_col:
+        st.caption(today.strftime("%d/%m/%Y"))
+    with manual_col:
+        st.link_button(
+            "Manual",
+            "https://docs.google.com/document/d/1n4trakXtEXnXpTGld89RQvLyiBzlImVM/edit",
+            use_container_width=True,
+        )
 
     users = load_users_cached(st.session_state.get("users_cache_version", 0))
     names = commercial_user_names(users)

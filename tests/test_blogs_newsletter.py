@@ -274,3 +274,55 @@ def test_record_newsletter_unsubscribe_unknown_newsletter_id_returns_false() -> 
     sheets = FakeSheets()
     svc = BlogsService(sheets)
     assert svc.record_newsletter_unsubscribe(newsletter_id="no-existe", contact_id="c1", nombre="Ana") is False
+
+
+def test_update_newsletter_publish_links_only_changes_links() -> None:
+    sheets = FakeSheets()
+    svc = BlogsService(sheets)
+    svc.log_newsletter_send(
+        titulo="Titulo NL",
+        texto="Cuerpo original",
+        enviado_por="Jiajun",
+        destinatarios=[{"contact_id": "c1", "nombre": "Ana", "correo": "a@x.com"}],
+        newsletter_id="nl-links",
+        asunto="Asunto",
+    )
+    before = svc.blogs_df().iloc[0].to_dict()
+    assert before["newsletter_texto"] == "Cuerpo original"
+    assert before["newsletter_asunto"] == "Asunto"
+
+    ok = svc.update_newsletter_publish_links(
+        "nl-links",
+        link_publicado="https://example.com/pub",
+        link_publicado_linkedin="https://linkedin.com/x",
+    )
+    assert ok is True
+    after = svc.blogs_df().iloc[0].to_dict()
+    assert after["link_publicado"] == "https://example.com/pub"
+    assert after["link_publicado_linkedin"] == "https://linkedin.com/x"
+    assert after["newsletter_texto"] == "Cuerpo original"
+    assert after["newsletter_asunto"] == "Asunto"
+    assert after["titulo"] == "Titulo NL"
+    assert after["tipo_registro"] == "newsletter"
+
+
+def test_update_newsletter_publish_links_rejects_blog_row() -> None:
+    sheets = FakeSheets()
+    svc = BlogsService(sheets)
+    svc.upsert_blog(
+        {
+            "historial_blog_id": "blog-1",
+            "titulo": "Blog",
+            "estado_blog": "Borrador",
+            "fecha_publicacion_prevista": "20/07/2026",
+        }
+    )
+    try:
+        svc.update_newsletter_publish_links(
+            "blog-1",
+            link_publicado="https://x.com",
+            link_publicado_linkedin="",
+        )
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "newsletter" in str(exc).lower()

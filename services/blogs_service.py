@@ -310,3 +310,33 @@ class BlogsService:
         updated_row["updated_at"] = _today()
         self._sheets.update_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row_num, updated_row)
         return True
+
+    def update_newsletter_publish_links(
+        self,
+        historial_blog_id: str,
+        *,
+        link_publicado: str,
+        link_publicado_linkedin: str,
+    ) -> bool:
+        """Actualiza solo los links publicados de una fila newsletter."""
+        clean_id = str(historial_blog_id or "").strip()
+        if not clean_id:
+            return False
+        self.ensure_structure()
+        row_nums = self._sheets.row_numbers_by_id(BLOGS_WORKSHEET_NAME, "historial_blog_id")
+        row_num = row_nums.get(clean_id)
+        if row_num is None:
+            return False
+        df = self.blogs_df()
+        match = df[df["historial_blog_id"].astype(str).str.strip() == clean_id]
+        if match.empty:
+            return False
+        current = match.iloc[0].to_dict()
+        if str(current.get("tipo_registro", "") or "").strip() != BLOG_TIPO_REGISTRO_NEWSLETTER:
+            raise ValueError("La fila no es una newsletter.")
+        updated_row = {h: str(current.get(h, "") or "") for h in BLOGS_HEADERS}
+        updated_row["link_publicado"] = str(link_publicado or "").strip()
+        updated_row["link_publicado_linkedin"] = str(link_publicado_linkedin or "").strip()
+        updated_row["updated_at"] = _today()
+        self._sheets.update_worksheet_row(BLOGS_WORKSHEET_NAME, list(BLOGS_HEADERS), row_num, updated_row)
+        return True

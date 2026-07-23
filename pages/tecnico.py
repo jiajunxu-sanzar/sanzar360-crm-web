@@ -1029,10 +1029,18 @@ def _render_tecnico_dialogs() -> None:
 
 def render(contacts_df: pd.DataFrame) -> None:
     render_page_header("Técnico")
-    st.caption(
-        "Cálculo de umbrales de riego, cultivos Kc FAO-56, texturas de referencia "
-        "y clasificador del triángulo USDA."
-    )
+    cap_col, manual_col = st.columns([0.82, 0.18], vertical_alignment="center")
+    with cap_col:
+        st.caption(
+            "Cálculo de umbrales de riego, cultivos Kc FAO-56, texturas de referencia "
+            "y clasificador del triángulo USDA."
+        )
+    with manual_col:
+        st.link_button(
+            "Manual",
+            "https://docs.google.com/document/d/1sI64Qcj8gelBDu-YNNqtRx1FlczuJOAp/edit",
+            use_container_width=True,
+        )
     tab_calc, tab_cult, tab_tex, tab_usda = st.tabs(
         ["Calcular umbrales", "Cultivos Kc", "Texturas", "Triángulo USDA"]
     )

@@ -50,6 +50,8 @@ BLOGS_SUCCESS_KEY = "blogs_success_message"
 BLOGS_DELETE_STEP2_KEY = "blogs_delete_step2_id"
 BLOGS_NL_DETAIL_DIALOG_KEY = "blogs_newsletter_detail_open"
 BLOGS_NL_DETAIL_ID_KEY = "blogs_newsletter_detail_id"
+BLOGS_NL_EDIT_DIALOG_KEY = "blogs_newsletter_edit_open"
+BLOGS_NL_EDIT_ID_KEY = "blogs_newsletter_edit_id"
 
 _NEWSLETTER_ESTADO_OPCIONES: tuple[str, ...] = ("Borrador", "Publicado")
 
@@ -127,6 +129,11 @@ def _close_blogs_edit_dialog() -> None:
 def _close_newsletter_detail_dialog() -> None:
     st.session_state.pop(BLOGS_NL_DETAIL_DIALOG_KEY, None)
     st.session_state.pop(BLOGS_NL_DETAIL_ID_KEY, None)
+
+
+def _close_newsletter_edit_dialog() -> None:
+    st.session_state.pop(BLOGS_NL_EDIT_DIALOG_KEY, None)
+    st.session_state.pop(BLOGS_NL_EDIT_ID_KEY, None)
 
 
 def _row_sort_key(row: dict[str, str]) -> tuple:
@@ -497,6 +504,67 @@ def _newsletter_detail_dialog(blogs_df: pd.DataFrame) -> None:
     st.components.v1.html(preview_html, height=520, scrolling=True)
 
 
+@st.dialog("Editar links newsletter", width="large", on_dismiss=_close_newsletter_edit_dialog)
+def _newsletter_edit_links_dialog(blogs_df: pd.DataFrame) -> None:
+    nl_id = str(st.session_state.get(BLOGS_NL_EDIT_ID_KEY, "") or "").strip()
+    if not nl_id:
+        st.warning("No hay newsletter seleccionada.")
+        return
+    matches = blogs_df[blogs_df["historial_blog_id"].astype(str).str.strip() == nl_id]
+    if matches.empty:
+        st.warning("La newsletter ya no existe.")
+        return
+    row = _row_dict(matches.iloc[0])
+    titulo = str(row.get("titulo", "") or "").strip() or nl_id[:8]
+
+    head1, head2 = st.columns([1, 0.22])
+    with head1:
+        st.markdown(f"### {html.escape(titulo)}")
+    with head2:
+        if st.button("Cerrar", key="blogs_nl_edit_close", use_container_width=True):
+            _close_newsletter_edit_dialog()
+            st.rerun()
+
+    st.caption("Solo se pueden editar los links de publicación.")
+    link_publicado = _render_url_field(
+        "Link publicado",
+        row.get("link_publicado", ""),
+        key="blogs_nl_edit_link_pub",
+    )
+    link_publicado_linkedin = _render_url_field(
+        "Link publicado LinkedIn",
+        row.get("link_publicado_linkedin", ""),
+        key="blogs_nl_edit_link_linkedin",
+    )
+
+    save_col, cancel_col = st.columns(2)
+    if save_col.button("Guardar", type="primary", key="blogs_nl_edit_save", use_container_width=True):
+        try:
+            ok = blogs_service().update_newsletter_publish_links(
+                nl_id,
+                link_publicado=link_publicado,
+                link_publicado_linkedin=link_publicado_linkedin,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+        except Exception as exc:
+            if _is_quota_error(exc):
+                st.error("Google Sheets sin cuota (429). Reintenta en unos segundos.")
+                return
+            raise
+        if not ok:
+            st.warning("No se pudo guardar: newsletter no encontrada.")
+            return
+        bump_blogs_cache()
+        st.session_state[BLOGS_SUCCESS_KEY] = "Links de newsletter actualizados."
+        _close_newsletter_edit_dialog()
+        st.rerun()
+    if cancel_col.button("Cancelar", key="blogs_nl_edit_cancel", use_container_width=True):
+        _close_newsletter_edit_dialog()
+        st.rerun()
+
+
 def render(_: pd.DataFrame) -> None:
     render_page_header("Blogs")
     st.caption("Planificación editorial y newsletters enviadas.")
@@ -539,7 +607,7 @@ def render(_: pd.DataFrame) -> None:
             st.session_state[BLOGS_NEW_DIALOG_KEY] = True
             st.rerun()
     with toolbar3:
-        if st.button("+ Nuevo newsletter", use_container_width=True):
+        if st.button("+ Nuevo newsletter", type="primary", use_container_width=True):
             st.session_state[BLOGS_NEW_NL_DIALOG_KEY] = True
             st.rerun()
 
@@ -582,9 +650,20 @@ def render(_: pd.DataFrame) -> None:
                     top[3].write(f"Prevista: {prevista}" if not fecha_envio else f"Enviado: {fecha_envio}")
                     top[4].write(f"Por: {enviado}")
                     top[5].write(f"Dest.: {num_dest}")
-                    if st.button("Detalle", key=f"blogs_nl_detail_{row_id}", use_container_width=True):
+                    pub_url = str(row.get("link_publicado", "") or "").strip()
+                    linkedin_url = str(row.get("link_publicado_linkedin", "") or "").strip()
+                    actions = st.columns([1, 1, 1, 1])
+                    if pub_url:
+                        actions[0].link_button("Publicado", pub_url, use_container_width=True)
+                    if linkedin_url:
+                        actions[1].link_button("LinkedIn", linkedin_url, use_container_width=True)
+                    if actions[2].button("Detalle", key=f"blogs_nl_detail_{row_id}", use_container_width=True):
                         st.session_state[BLOGS_NL_DETAIL_ID_KEY] = row_id
                         st.session_state[BLOGS_NL_DETAIL_DIALOG_KEY] = True
+                        st.rerun()
+                    if actions[3].button("Editar", key=f"blogs_nl_edit_{row_id}", use_container_width=True):
+                        st.session_state[BLOGS_NL_EDIT_ID_KEY] = row_id
+                        st.session_state[BLOGS_NL_EDIT_DIALOG_KEY] = True
                         st.rerun()
                 else:
                     estado = str(row.get("estado_blog", "") or "").strip()
@@ -626,3 +705,5 @@ def render(_: pd.DataFrame) -> None:
         _blogs_edit_dialog(blogs_df)
     if st.session_state.get(BLOGS_NL_DETAIL_DIALOG_KEY, False):
         _newsletter_detail_dialog(blogs_df)
+    if st.session_state.get(BLOGS_NL_EDIT_DIALOG_KEY, False):
+        _newsletter_edit_links_dialog(blogs_df)
