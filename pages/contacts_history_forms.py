@@ -104,9 +104,15 @@ CAMPANA_CULTIVO_TARGET_PREFIX_KEY = "campana_cultivo_create_prefix"
 
 
 def _render_campana_cultivo_field(prefix: str, value: str, key: str) -> str:
+    # Tras crear un cultivo no se puede mutar la key del selectbox en el mismo
+    # run (StreamlitAPIException). Se aplica en el siguiente rerun, aquí.
+    pending_key = f"_pending_{key}"
+    if pending_key in st.session_state:
+        st.session_state[key] = st.session_state.pop(pending_key)
+
     names = _cultivo_kc_nombres()
     options = [""] + names
-    current = str(value or "").strip()
+    current = str(st.session_state.get(key, value) or value or "").strip()
     if current and current not in options:
         options = options + [current]
     col_sel, col_plus = st.columns([0.85, 0.15])
@@ -129,7 +135,7 @@ def _render_campana_cultivo_field(prefix: str, value: str, key: str) -> str:
             st.markdown("**Alta de cultivo**")
 
             def _on_saved(_cid: str, nombre: str) -> None:
-                st.session_state[key] = nombre
+                st.session_state[pending_key] = nombre
                 st.session_state.pop(CAMPANA_CULTIVO_CREATE_KEY, None)
                 st.session_state.pop(CAMPANA_CULTIVO_TARGET_PREFIX_KEY, None)
 
