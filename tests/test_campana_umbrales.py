@@ -6,6 +6,7 @@ import json
 from services.history_service import (
     CAMPANAS_FORM_FIELD_ORDER,
     HISTORY_SPECS,
+    apply_umbrales_draft,
     merge_historial_umbrales,
     parse_historial_umbrales,
     serialize_historial_umbrales,
@@ -124,6 +125,96 @@ def test_merge_edit_last_replaces_only_last() -> None:
     assert entries[0]["razon"] == "a"
     assert entries[1]["razon"] == "b-edit"
     assert entries[1]["fecha_actualizacion"] == "11/01/2026"
+
+
+def test_apply_umbrales_draft_edit_middle_index() -> None:
+    entries = [
+        {
+            "fecha_actualizacion": "01/01/2026",
+            "umbral_superior": "30",
+            "umbral_inferior": "15",
+            "razon": "a",
+        },
+        {
+            "fecha_actualizacion": "10/01/2026",
+            "umbral_superior": "31",
+            "umbral_inferior": "16",
+            "razon": "b",
+        },
+        {
+            "fecha_actualizacion": "20/01/2026",
+            "umbral_superior": "32",
+            "umbral_inferior": "17",
+            "razon": "c",
+        },
+    ]
+    updated, err = apply_umbrales_draft(
+        entries,
+        mode="edit",
+        index=1,
+        fecha_actualizacion="11/01/2026",
+        umbral_superior="40",
+        umbral_inferior="20",
+        razon="b-edit",
+    )
+    assert err is None
+    assert updated[0]["razon"] == "a"
+    assert updated[1]["razon"] == "b-edit"
+    assert updated[1]["umbral_superior"] == "40"
+    assert updated[2]["razon"] == "c"
+
+
+def test_apply_umbrales_draft_empty_keeps_list() -> None:
+    entries = [
+        {
+            "fecha_actualizacion": "01/01/2026",
+            "umbral_superior": "30",
+            "umbral_inferior": "15",
+            "razon": "a",
+        }
+    ]
+    updated, err = apply_umbrales_draft(
+        entries,
+        mode="add",
+        fecha_actualizacion="22/07/2026",
+        umbral_superior="",
+        umbral_inferior="",
+        razon="",
+    )
+    assert err is None
+    assert updated == entries
+
+
+def test_merge_edit_by_index() -> None:
+    base = serialize_historial_umbrales(
+        [
+            {
+                "fecha_actualizacion": "01/01/2026",
+                "umbral_superior": "30",
+                "umbral_inferior": "15",
+                "razon": "a",
+            },
+            {
+                "fecha_actualizacion": "10/01/2026",
+                "umbral_superior": "31",
+                "umbral_inferior": "16",
+                "razon": "b",
+            },
+        ]
+    )
+    out, err = merge_historial_umbrales(
+        base,
+        mode="edit",
+        index=0,
+        fecha_actualizacion="02/01/2026",
+        umbral_superior="29",
+        umbral_inferior="14",
+        razon="a-edit",
+    )
+    assert err is None
+    entries = parse_historial_umbrales(out)
+    assert entries[0]["razon"] == "a-edit"
+    assert entries[1]["razon"] == "b"
 
 
 def test_merge_validates_partial_draft() -> None:

@@ -489,32 +489,60 @@ def merge_historial_umbrales(
     umbral_superior: str,
     umbral_inferior: str,
     razon: str,
+    index: int | None = None,
 ) -> tuple[str, str | None]:
-    """Añade o reemplaza la última entrada. Si el draft está vacío, no muta.
+    """Añade o reemplaza una entrada. Si el draft está vacío, no muta.
 
-    ``mode``: ``add`` | ``edit_last``.
+    ``mode``: ``add`` | ``edit`` | ``edit_last`` (alias de edit del último).
+    ``index``: requerido para ``edit`` (0-based).
     Devuelve ``(json_serializado, error_o_None)``.
     """
+    entries = parse_historial_umbrales(existing_raw)
+    updated, err = apply_umbrales_draft(
+        entries,
+        mode=mode,
+        index=index,
+        fecha_actualizacion=fecha_actualizacion,
+        umbral_superior=umbral_superior,
+        umbral_inferior=umbral_inferior,
+        razon=razon,
+    )
+    if err:
+        return existing_raw, err
+    return serialize_historial_umbrales(updated), None
+
+
+def apply_umbrales_draft(
+    entries: list[dict[str, str]],
+    *,
+    mode: str,
+    fecha_actualizacion: str,
+    umbral_superior: str,
+    umbral_inferior: str,
+    razon: str,
+    index: int | None = None,
+) -> tuple[list[dict[str, str]], str | None]:
+    """Aplica un draft sobre una lista en memoria. Draft vacío → lista sin cambios."""
     from services.locale_numbers import parse_locale_float
     from services.sheet_date_format import is_valid_dd_mm_yyyy, normalize_dd_mm_yyyy
 
-    entries = parse_historial_umbrales(existing_raw)
+    out = [dict(e) for e in entries]
     if umbrales_draft_is_empty(
         umbral_superior=umbral_superior,
         umbral_inferior=umbral_inferior,
         razon=razon,
     ):
-        return serialize_historial_umbrales(entries), None
+        return out, None
 
     fecha = normalize_dd_mm_yyyy(str(fecha_actualizacion or "").strip()) or str(fecha_actualizacion or "").strip()
     if not fecha or not is_valid_dd_mm_yyyy(fecha):
-        return existing_raw, "Fecha de actualización de umbrales inválida (usa DD/MM/YYYY)."
+        return out, "Fecha de actualización de umbrales inválida (usa DD/MM/YYYY)."
     if parse_locale_float(umbral_superior) is None:
-        return existing_raw, "Umbral superior debe ser un número."
+        return out, "Umbral superior debe ser un número."
     if parse_locale_float(umbral_inferior) is None:
-        return existing_raw, "Umbral inferior debe ser un número."
+        return out, "Umbral inferior debe ser un número."
     if not str(razon or "").strip():
-        return existing_raw, "Indica la razón del cambio de umbrales."
+        return out, "Indica la razón del cambio de umbrales."
 
     entry = {
         "fecha_actualizacion": fecha,
@@ -524,12 +552,18 @@ def merge_historial_umbrales(
     }
     mode_norm = str(mode or "add").strip().lower()
     if mode_norm in {"edit_last", "editar última", "editar ultima"}:
-        if not entries:
-            return existing_raw, "No hay entradas de umbrales para editar."
-        entries[-1] = entry
+        if not out:
+            return out, "No hay entradas de umbrales para editar."
+        out[-1] = entry
+    elif mode_norm in {"edit", "editar"}:
+        if index is None:
+            return out, "Índice de umbral a editar no indicado."
+        if index < 0 or index >= len(out):
+            return out, "La entrada de umbrales a editar no existe."
+        out[index] = entry
     else:
-        entries.append(entry)
-    return serialize_historial_umbrales(entries), None
+        out.append(entry)
+    return out, None
 
 
 def validate_projectiotid_assignments(

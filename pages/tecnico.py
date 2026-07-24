@@ -22,6 +22,7 @@ from services.riego_umbrales import (
     ParametrosDeteccion,
     ParametrosPMP,
     calcular_kc_cultivo,
+    cargar_meteo_open_meteo_csv,
     dibujar_curva_kc,
     ejecutar_analisis_completo,
     guardar_excel_completo_bytes,
@@ -712,9 +713,9 @@ def _render_umbrales_cultivo() -> tuple[float, float, float]:
     return float(p_tabla), float(kc), float(coef_seguridad_vwc)
 
 
-def _render_umbrales_ubicacion() -> tuple[float, float]:
+def _render_umbrales_ubicacion() -> tuple[float, float, bool, object]:
     with st.container(border=True):
-        st.markdown("##### Ubicación")
+        st.markdown("##### Ubicación y meteo")
         col_lat, col_lon = st.columns(2)
         with col_lat:
             lat = st.number_input(
@@ -734,7 +735,27 @@ def _render_umbrales_ubicacion() -> tuple[float, float]:
                 format="%.6f",
                 key="tecnico_lon",
             )
-    return float(lat), float(lon)
+        usar_meteo_csv = st.checkbox(
+            "Usar meteo desde CSV (Open-Meteo)",
+            value=False,
+            key="tecnico_usar_meteo_csv",
+            help=(
+                "Si Open-Meteo responde 429 o no hay red, sube el CSV hourly "
+                "(time, ET0, precipitation) exportado desde open-meteo.com."
+            ),
+        )
+        meteo_upload = None
+        if usar_meteo_csv:
+            meteo_upload = st.file_uploader(
+                "CSV meteo Open-Meteo (hourly)",
+                type=["csv"],
+                key="tecnico_meteo_csv_upload",
+            )
+            st.caption(
+                "Debe solapar el periodo del sensor. Si la meteo acaba un día antes "
+                "(p. ej. hoy aún no cerrado), el cálculo continúa con aviso."
+            )
+    return float(lat), float(lon), bool(usar_meteo_csv), meteo_upload
 
 
 def _render_umbrales_avanzadas() -> tuple[float, float, bool]:
@@ -769,7 +790,7 @@ def _render_tab_umbrales(contacts_df: pd.DataFrame) -> None:
     csv_upload, con_cabecera, fecha_inicio, fecha_fin = _render_umbrales_sensor()
     textura_key = _render_umbrales_suelo()
     p_tabla, kc, coef_seguridad_vwc = _render_umbrales_cultivo()
-    lat, lon = _render_umbrales_ubicacion()
+    lat, lon, usar_meteo_csv, meteo_upload = _render_umbrales_ubicacion()
     umbral_lluvia_mm, percentil_valle, excluir_posible_lluvia = _render_umbrales_avanzadas()
     # Mantener backup fresco por si el siguiente interacción es el diálogo Kc.
     _snapshot_tecnico_form_backup()
@@ -786,6 +807,9 @@ def _render_tab_umbrales(contacts_df: pd.DataFrame) -> None:
     if csv_upload is None:
         st.error("Selecciona primero un CSV.")
         return
+    if usar_meteo_csv and meteo_upload is None:
+        st.error("Marca «Usar meteo desde CSV» y sube el CSV hourly de Open-Meteo, o desmarca la opción.")
+        return
     if float(lat) == 0.0 and float(lon) == 0.0:
         st.error("Indica latitud y longitud reales del sensor (no dejes 0.0 / 0.0).")
         return
@@ -796,10 +820,18 @@ def _render_tab_umbrales(contacts_df: pd.DataFrame) -> None:
     try:
         fecha_inicio_val = fecha_inicio.strftime("%Y-%m-%d") if fecha_inicio is not None else None
         fecha_fin_val = fecha_fin.strftime("%Y-%m-%d") if fecha_fin is not None else None
-        st.info(f"Calculando con Kc = {float(kc):.3f} (puede tardar unos segundos por Open-Meteo)...")
+        if usar_meteo_csv:
+            st.info(f"Calculando con Kc = {float(kc):.3f} (meteo desde CSV, sin Open-Meteo API)...")
+        else:
+            st.info(f"Calculando con Kc = {float(kc):.3f} (puede tardar unos segundos por Open-Meteo)...")
         with st.spinner("Procesando..."):
             ruta_csv_temp = _guardar_csv_upload_temp(csv_upload)
+            ruta_meteo_temp = None
             try:
+                df_meteo = None
+                if usar_meteo_csv and meteo_upload is not None:
+                    ruta_meteo_temp = _guardar_csv_upload_temp(meteo_upload)
+                    df_meteo = cargar_meteo_open_meteo_csv(ruta_meteo_temp)
                 informe = ejecutar_analisis_completo(
                     csv_path=ruta_csv_temp,
                     p_tabla=float(p_tabla),
@@ -816,7 +848,10 @@ def _render_tab_umbrales(contacts_df: pd.DataFrame) -> None:
                     params_cc=ParametrosDeteccion(),
                     params_pmp=ParametrosPMP(),
                     con_cabecera=bool(con_cabecera),
+                    df_meteo=df_meteo,
                 )
+                for aviso in getattr(informe, "avisos", []) or []:
+                    st.warning(aviso)
                 with st.container(border=True):
                     st.markdown("##### Informe")
                     texto = _texto_informe(informe)
@@ -832,11 +867,23 @@ def _render_tab_umbrales(contacts_df: pd.DataFrame) -> None:
             finally:
                 with contextlib.suppress(Exception):
                     Path(ruta_csv_temp).unlink(missing_ok=True)
+                if ruta_meteo_temp:
+                    with contextlib.suppress(Exception):
+                        Path(ruta_meteo_temp).unlink(missing_ok=True)
     except Exception as exc:
-        st.error("Error durante el cálculo.")
+        msg = str(exc)
+        is_429 = "429" in msg or "Too Many Requests" in msg
+        if is_429:
+            st.error(
+                "Open-Meteo ha limitado las peticiones (HTTP 429). "
+                "Espera unos minutos o marca **Usar meteo desde CSV (Open-Meteo)** "
+                "y sube el CSV hourly descargado desde open-meteo.com."
+            )
+        else:
+            st.error("Error durante el cálculo.")
         with st.expander("Detalle técnico"):
             st.code(traceback.format_exc())
-            st.caption(str(exc))
+            st.caption(msg)
 
 
 def _render_tab_texturas() -> None:

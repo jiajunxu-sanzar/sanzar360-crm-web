@@ -16,11 +16,12 @@ from services.history_service import (
     HISTORY_SPECS,
     HistoryService,
     ProjectIotAssignment,
+    apply_umbrales_draft,
     count_sensor_assets,
-    merge_historial_umbrales,
     parse_historial_umbrales,
     parse_projectiotid_assignments,
     sensor_association_tokens,
+    serialize_historial_umbrales,
     serialize_projectiotid_assignments,
     validate_projectiotid_assignments,
 )
@@ -799,49 +800,64 @@ def _render_campanas_form_fields(
 def _render_campanas_umbrales_section(prefix: str, initial: dict[str, str]) -> None:
     from datetime import date
 
-    entries = parse_historial_umbrales(str(initial.get("historial_umbrales_json", "") or ""))
-    st.markdown("**Añadir umbrales**")
-    if entries:
-        st.caption("Historial (solo lectura):")
-        for idx, entry in enumerate(entries, start=1):
-            st.markdown(
-                f"{idx}. **{entry.get('fecha_actualizacion', '') or '—'}** · "
-                f"sup {entry.get('umbral_superior', '') or '—'} / "
-                f"inf {entry.get('umbral_inferior', '') or '—'} · "
-                f"{entry.get('razon', '') or '—'}"
-            )
-    else:
-        st.caption("Sin entradas de umbrales todavía.")
+    entries_key = f"{prefix}_umbrales_entries"
+    source_key = f"{prefix}_umbrales_source"
+    draft_key = f"{prefix}_umbrales_draft"
+    raw_json = str(initial.get("historial_umbrales_json", "") or "")
+    source_fp = f"{initial.get('historial_campana_id', '')}|{raw_json}"
+    if st.session_state.get(source_key) != source_fp or entries_key not in st.session_state:
+        st.session_state[entries_key] = parse_historial_umbrales(raw_json)
+        st.session_state[source_key] = source_fp
+        st.session_state[draft_key] = None
 
-    mode_options = ["Añadir nueva"]
-    if entries:
-        mode_options.append("Editar última")
-    mode_key = f"{prefix}_umbrales_mode"
-    mode = st.radio(
-        "Acción umbrales",
-        mode_options,
-        horizontal=True,
-        key=mode_key,
-        help="Vacía superior/inferior/razón para guardar el resto sin tocar umbrales.",
-    )
-    edit_last = mode == "Editar última" and bool(entries)
-    seed_key = f"{prefix}_umbrales_seed"
-    fingerprint = f"{mode}|{len(entries)}|{initial.get('historial_campana_id', '')}"
-    if st.session_state.get(seed_key) != fingerprint:
-        if edit_last:
-            last = entries[-1]
-            st.session_state[f"{prefix}_umbral_fecha"] = last.get("fecha_actualizacion", "") or date.today().strftime(
-                "%d/%m/%Y"
-            )
-            st.session_state[f"{prefix}_umbral_superior"] = last.get("umbral_superior", "")
-            st.session_state[f"{prefix}_umbral_inferior"] = last.get("umbral_inferior", "")
-            st.session_state[f"{prefix}_umbral_razon"] = last.get("razon", "")
-        else:
+    entries: list[dict[str, str]] = list(st.session_state.get(entries_key) or [])
+    draft = st.session_state.get(draft_key)
+
+    st.markdown("**Umbrales**")
+    if not entries:
+        st.caption("Sin entradas de umbrales todavía.")
+    else:
+        for idx, entry in enumerate(entries):
+            cols = st.columns([0.88, 0.12], vertical_alignment="center")
+            with cols[0]:
+                st.markdown(
+                    f"{idx + 1}. **{entry.get('fecha_actualizacion', '') or '—'}** · "
+                    f"sup {entry.get('umbral_superior', '') or '—'} / "
+                    f"inf {entry.get('umbral_inferior', '') or '—'} · "
+                    f"{entry.get('razon', '') or '—'}"
+                )
+            with cols[1]:
+                if st.form_submit_button(
+                    "Editar",
+                    key=f"{prefix}_umbral_edit_{idx}",
+                    icon=":material/edit:",
+                    width="stretch",
+                ):
+                    st.session_state[draft_key] = {"mode": "edit", "index": idx}
+                    st.session_state[f"{prefix}_umbral_fecha"] = entry.get("fecha_actualizacion", "") or date.today().strftime(
+                        "%d/%m/%Y"
+                    )
+                    st.session_state[f"{prefix}_umbral_superior"] = entry.get("umbral_superior", "")
+                    st.session_state[f"{prefix}_umbral_inferior"] = entry.get("umbral_inferior", "")
+                    st.session_state[f"{prefix}_umbral_razon"] = entry.get("razon", "")
+                    st.rerun()
+
+    if draft is None:
+        if st.form_submit_button("+ Añadir umbral", key=f"{prefix}_umbral_add", width="stretch"):
+            st.session_state[draft_key] = {"mode": "add"}
             st.session_state[f"{prefix}_umbral_fecha"] = date.today().strftime("%d/%m/%Y")
             st.session_state[f"{prefix}_umbral_superior"] = ""
             st.session_state[f"{prefix}_umbral_inferior"] = ""
             st.session_state[f"{prefix}_umbral_razon"] = ""
-        st.session_state[seed_key] = fingerprint
+            st.rerun()
+        return
+
+    mode = str((draft or {}).get("mode", "add") or "add")
+    edit_idx = draft.get("index") if isinstance(draft, dict) else None
+    if mode == "edit" and isinstance(edit_idx, int):
+        st.caption(f"Editando entrada {edit_idx + 1}. Guarda la campaña para aplicar.")
+    else:
+        st.caption("Nueva entrada de umbrales. Guarda la campaña para aplicar.")
 
     c1, c2 = st.columns(2)
     with c1:
@@ -850,6 +866,12 @@ def _render_campanas_umbrales_section(prefix: str, initial: dict[str, str]) -> N
     with c2:
         st.text_input("Umbral inferior", key=f"{prefix}_umbral_inferior", placeholder="ej. 18,0")
         st.text_input("Razón", key=f"{prefix}_umbral_razon")
+
+    if st.form_submit_button("Cancelar umbral", key=f"{prefix}_umbral_cancel", width="stretch"):
+        st.session_state[draft_key] = None
+        for k in ("umbral_fecha", "umbral_superior", "umbral_inferior", "umbral_razon"):
+            st.session_state.pop(f"{prefix}_{k}", None)
+        st.rerun()
 
 
 def _render_history_form_body(
@@ -1076,21 +1098,28 @@ def _submit_history_form(
             values[header] = str(st.session_state.get(f"{prefix}_{header}", ""))
 
     if kind == "campanas":
-        base_umbrales = str((existing or {}).get("historial_umbrales_json", "") or "")
-        mode_label = str(st.session_state.get(f"{prefix}_umbrales_mode", "Añadir nueva") or "")
-        mode = "edit_last" if mode_label.startswith("Editar") else "add"
-        merged, umbral_error = merge_historial_umbrales(
-            base_umbrales,
-            mode=mode,
-            fecha_actualizacion=str(st.session_state.get(f"{prefix}_umbral_fecha", "") or ""),
-            umbral_superior=str(st.session_state.get(f"{prefix}_umbral_superior", "") or ""),
-            umbral_inferior=str(st.session_state.get(f"{prefix}_umbral_inferior", "") or ""),
-            razon=str(st.session_state.get(f"{prefix}_umbral_razon", "") or ""),
-        )
-        if umbral_error:
-            st.error(umbral_error)
-            return False
-        values["historial_umbrales_json"] = merged
+        entries = list(st.session_state.get(f"{prefix}_umbrales_entries") or [])
+        if not entries:
+            entries = parse_historial_umbrales(str((existing or {}).get("historial_umbrales_json", "") or ""))
+        draft = st.session_state.get(f"{prefix}_umbrales_draft")
+        if isinstance(draft, dict) and draft.get("mode"):
+            mode = str(draft.get("mode") or "add")
+            idx = draft.get("index")
+            edit_index = int(idx) if mode == "edit" and idx is not None else None
+            updated, umbral_error = apply_umbrales_draft(
+                entries,
+                mode=mode,
+                index=edit_index,
+                fecha_actualizacion=str(st.session_state.get(f"{prefix}_umbral_fecha", "") or ""),
+                umbral_superior=str(st.session_state.get(f"{prefix}_umbral_superior", "") or ""),
+                umbral_inferior=str(st.session_state.get(f"{prefix}_umbral_inferior", "") or ""),
+                razon=str(st.session_state.get(f"{prefix}_umbral_razon", "") or ""),
+            )
+            if umbral_error:
+                st.error(umbral_error)
+                return False
+            entries = updated
+        values["historial_umbrales_json"] = serialize_historial_umbrales(entries)
 
     if kind == "incidencias":
         for header in _INCIDENCIA_ASSOC_HEADERS:
@@ -1143,6 +1172,14 @@ def _submit_history_form(
                     close_target_location=close_target_location,
                     previous_sensor_serial_number=previous_sensor_serial_number,
                 )
+        if kind == "campanas":
+            st.session_state[f"{prefix}_umbrales_entries"] = parse_historial_umbrales(
+                values.get("historial_umbrales_json", "")
+            )
+            st.session_state[f"{prefix}_umbrales_draft"] = None
+            st.session_state[f"{prefix}_umbrales_source"] = (
+                f"{values.get(spec.id_column, '')}|{values.get('historial_umbrales_json', '')}"
+            )
         bump_history_cache()
         # Toast: sobrevive al rerun que cierra el diálogo (st.success no se ve).
         st.toast("Histórico guardado correctamente.", icon="✅")

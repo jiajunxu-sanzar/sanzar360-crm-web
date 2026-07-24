@@ -591,6 +591,91 @@ def obtener_et_precipitacion(lat: float, lon: float, past_days: int = 30,
     return df
 
 
+def _normalize_meteo_column_name(name: object) -> str:
+    raw = str(name or "").strip().lower()
+    if raw in {"time", "timestamp", "fecha", "datetime"}:
+        return "timestamp"
+    if "et0" in raw or "evapotranspiration" in raw:
+        return "et0"
+    if "precip" in raw or raw in {"lluvia", "rain"}:
+        return "precipitacion"
+    return ""
+
+
+def cargar_meteo_open_meteo_csv(path: str) -> pd.DataFrame:
+    """Carga un CSV hourly de Open-Meteo (export web o limpio) a timestamp/et0/precipitacion.
+
+    Soporta el export con filas de metadata (latitude, longitude, …) antes de la
+    cabecera ``time, et0_fao_evapotranspiration (mm), precipitation (mm)``.
+    """
+    peek = pd.read_csv(path, header=None, dtype=str, nrows=30)
+    header_row: int | None = None
+    for i, row in peek.iterrows():
+        mapped = [_normalize_meteo_column_name(v) for v in row.tolist()]
+        if "timestamp" in mapped and "et0" in mapped and "precipitacion" in mapped:
+            header_row = int(i)
+            break
+
+    if header_row is None:
+        df = pd.read_csv(path)
+    else:
+        df = pd.read_csv(path, skiprows=header_row)
+
+    rename: dict[str, str] = {}
+    for col in df.columns:
+        canon = _normalize_meteo_column_name(col)
+        if canon and canon not in rename.values():
+            rename[col] = canon
+    df = df.rename(columns=rename)
+    missing = [c for c in ("timestamp", "et0", "precipitacion") if c not in df.columns]
+    if missing:
+        raise ValueError(
+            "El CSV de meteo no tiene las columnas esperadas "
+            f"(faltan: {', '.join(missing)}). "
+            "Usa el export hourly de Open-Meteo con time, ET0 y precipitation."
+        )
+
+    out = pd.DataFrame(
+        {
+            "timestamp": _ensure_datetime64_ns(df["timestamp"]),
+            "et0": pd.to_numeric(df["et0"], errors="coerce"),
+            "precipitacion": pd.to_numeric(df["precipitacion"], errors="coerce"),
+        }
+    )
+    out = out.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    if out.empty:
+        raise ValueError("El CSV de meteo no contiene filas horarias válidas.")
+    return out
+
+
+def aviso_solape_meteo_sensor(
+    sensor_inicio: pd.Timestamp,
+    sensor_fin: pd.Timestamp,
+    df_meteo: pd.DataFrame,
+) -> str | None:
+    """Aviso si la meteo acaba antes (o empieza después) que el sensor; None si OK."""
+    if df_meteo is None or df_meteo.empty:
+        return None
+    meteo_ini = pd.Timestamp(df_meteo["timestamp"].min())
+    meteo_fin = pd.Timestamp(df_meteo["timestamp"].max())
+    s_ini = pd.Timestamp(sensor_inicio)
+    s_fin = pd.Timestamp(sensor_fin)
+    # Más de ~12h de hueco al final o al inicio → avisar.
+    if meteo_fin + pd.Timedelta(hours=12) < s_fin:
+        return (
+            f"Meteo cubre hasta {meteo_fin.strftime('%d/%m/%Y')}; "
+            f"el sensor llega al {s_fin.strftime('%d/%m/%Y')}. "
+            "El tramo sin meteo se ignora para ET/lluvia; CC/PMP por humedad sí usa todo el sensor."
+        )
+    if meteo_ini > s_ini + pd.Timedelta(hours=12):
+        return (
+            f"Meteo empieza el {meteo_ini.strftime('%d/%m/%Y')}; "
+            f"el sensor desde {s_ini.strftime('%d/%m/%Y')}. "
+            "El tramo inicial sin meteo se ignora para ET/lluvia."
+        )
+    return None
+
+
 # ----------------------------------------------------------------------
 # 1. Riego vs lluvia
 # ----------------------------------------------------------------------
@@ -1045,6 +1130,12 @@ class InformeCompleto:
     eventos_pmp_et: list = field(default_factory=list)
     df_meteo: Optional[pd.DataFrame] = None
     tabla_p: Optional[pd.DataFrame] = None
+    avisos: list[str] = field(default_factory=list)
+    sensor_fecha_inicio: Optional[pd.Timestamp] = None
+    sensor_fecha_fin: Optional[pd.Timestamp] = None
+    meteo_fecha_inicio: Optional[pd.Timestamp] = None
+    meteo_fecha_fin: Optional[pd.Timestamp] = None
+    fuente_meteo: str = "open_meteo_api"  # "csv" | "open_meteo_api"
 
 
 # ----------------------------------------------------------------------
@@ -1106,12 +1197,14 @@ def ejecutar_analisis_completo(
     params_pmp: Optional[ParametrosPMP] = None,
     col_timestamp: int = 5,
     col_valor: int = 6,
+    df_meteo: Optional[pd.DataFrame] = None,
     _obtener_meteo_fn=obtener_et_precipitacion,   # inyectable para pruebas sin red
 ) -> InformeCompleto:
 
     pmp_teorico_val = _resolver_pmp_teorico(textura, pmp_teorico)
     params_cc = params_cc or ParametrosDeteccion()
     params_pmp = params_pmp or ParametrosPMP()
+    avisos: list[str] = []
 
     # 1. Carga y recorte de la serie del sensor
     df = cargar_serie(csv_path, col_timestamp=col_timestamp, col_valor=col_valor, con_cabecera=con_cabecera)
@@ -1137,18 +1230,37 @@ def ejecutar_analisis_completo(
     cc_optima = float(np.median([e.cc_evento for e in eventos_validos])) if eventos_validos else None
     robusto_cc = len(eventos_validos) >= params_cc.n_min_eventos
 
-    # 3. Descarga de ET0 y precipitacion
-    modo, past_days, forecast_days = _elegir_modo_meteo(fecha_inicio_ts, fecha_fin_ts)
-    if modo == "forecast":
-        df_meteo = _obtener_meteo_fn(lat, lon, past_days=past_days, forecast_days=forecast_days)
+    # 3. ET0 y precipitacion (CSV local o Open-Meteo API)
+    fuente_meteo = "csv" if df_meteo is not None else "open_meteo_api"
+    if df_meteo is not None:
+        df_meteo_src = df_meteo.copy()
+        if "timestamp" not in df_meteo_src.columns:
+            raise ValueError("df_meteo debe tener columnas timestamp, et0, precipitacion.")
+        df_meteo_src["timestamp"] = _ensure_datetime64_ns(df_meteo_src["timestamp"])
+        aviso = aviso_solape_meteo_sensor(df["timestamp"].min(), df["timestamp"].max(), df_meteo_src)
+        if aviso:
+            avisos.append(aviso)
     else:
-        df_meteo = _obtener_meteo_fn(
-            lat, lon, usar_archivo_historico=True,
-            fecha_inicio=fecha_inicio_ts.strftime("%Y-%m-%d"),
-            fecha_fin=fecha_fin_ts.strftime("%Y-%m-%d"),
+        modo, past_days, forecast_days = _elegir_modo_meteo(fecha_inicio_ts, fecha_fin_ts)
+        if modo == "forecast":
+            df_meteo_src = _obtener_meteo_fn(lat, lon, past_days=past_days, forecast_days=forecast_days)
+        else:
+            df_meteo_src = _obtener_meteo_fn(
+                lat, lon, usar_archivo_historico=True,
+                fecha_inicio=fecha_inicio_ts.strftime("%Y-%m-%d"),
+                fecha_fin=fecha_fin_ts.strftime("%Y-%m-%d"),
+            )
+        df_meteo_src["timestamp"] = _ensure_datetime64_ns(df_meteo_src["timestamp"])
+
+    df_meteo = df_meteo_src[
+        (df_meteo_src["timestamp"] >= fecha_inicio_ts)
+        & (df_meteo_src["timestamp"] <= fecha_fin_ts + pd.Timedelta(hours=23))
+    ].reset_index(drop=True)
+    if df_meteo.empty:
+        raise ValueError(
+            "El CSV meteo no cubre el periodo del sensor (solape nulo). "
+            "Descarga un rango Open-Meteo que solape las fechas del sensor."
         )
-    df_meteo = df_meteo[(df_meteo["timestamp"] >= fecha_inicio_ts) &
-                         (df_meteo["timestamp"] <= fecha_fin_ts + pd.Timedelta(hours=23))].reset_index(drop=True)
 
     # 4. Riego vs lluvia
     diagnostico_lluvia = marcar_posible_lluvia(eventos, df_meteo, umbral_mm=umbral_lluvia_mm)
@@ -1226,6 +1338,11 @@ def ejecutar_analisis_completo(
 
     umbral_superior_final = (cc_optima + coef_seguridad_vwc) if cc_optima is not None else None
 
+    sensor_fecha_inicio = pd.Timestamp(df["timestamp"].min())
+    sensor_fecha_fin = pd.Timestamp(df["timestamp"].max())
+    meteo_fecha_inicio = pd.Timestamp(df_meteo["timestamp"].min()) if not df_meteo.empty else None
+    meteo_fecha_fin = pd.Timestamp(df_meteo["timestamp"].max()) if not df_meteo.empty else None
+
     return InformeCompleto(
         cc_optima=cc_optima,
         n_eventos_detectados=len(eventos),
@@ -1254,16 +1371,48 @@ def ejecutar_analisis_completo(
         eventos_pmp_et=resultados_pmp_et,
         df_meteo=df_meteo,
         tabla_p=tabla_p,
+        avisos=avisos,
+        sensor_fecha_inicio=sensor_fecha_inicio,
+        sensor_fecha_fin=sensor_fecha_fin,
+        meteo_fecha_inicio=meteo_fecha_inicio,
+        meteo_fecha_fin=meteo_fecha_fin,
+        fuente_meteo=fuente_meteo,
     )
 
 
 # ----------------------------------------------------------------------
 # Informe en consola
 # ----------------------------------------------------------------------
+def _fmt_informe_ts(ts: Optional[pd.Timestamp]) -> str:
+    if ts is None or pd.isna(ts):
+        return "n/d"
+    t = pd.Timestamp(ts)
+    return t.strftime("%d/%m/%Y %H:%M")
+
+
 def imprimir_informe_completo(inf: InformeCompleto) -> None:
     print("=" * 70)
     print("INFORME COMPLETO DE UMBRALES DE RIEGO")
     print("=" * 70)
+
+    print("\n[DATOS CONSIDERADOS]")
+    print(
+        f"  Sensor (humedad) : {_fmt_informe_ts(inf.sensor_fecha_inicio)} → "
+        f"{_fmt_informe_ts(inf.sensor_fecha_fin)}"
+    )
+    fuente_label = "CSV Open-Meteo" if inf.fuente_meteo == "csv" else "API Open-Meteo"
+    if inf.meteo_fecha_inicio is not None and inf.meteo_fecha_fin is not None:
+        print(
+            f"  Meteo (ET0/lluvia): {_fmt_informe_ts(inf.meteo_fecha_inicio)} → "
+            f"{_fmt_informe_ts(inf.meteo_fecha_fin)}  (fuente: {fuente_label})"
+        )
+    else:
+        print(f"  Meteo (ET0/lluvia): n/d  (fuente: {fuente_label})")
+
+    if inf.avisos:
+        print("\n[AVISOS]")
+        for aviso in inf.avisos:
+            print(f"  - {aviso}")
 
     print(f"\n[CC OPTIMA / UMBRAL SUPERIOR]")
     print(f"  Eventos detectados/validos : {inf.n_eventos_detectados} / {inf.n_eventos_validos}"
