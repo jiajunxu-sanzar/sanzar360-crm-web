@@ -70,6 +70,13 @@ def mark_contact_dirty(contact_id: str) -> None:
 
 def bump_history_cache() -> None:
     st.session_state.history_cache_version = int(st.session_state.get("history_cache_version", 0)) + 1
+    # Evita filas "fantasma" en memoria tras un append; el siguiente read va a Sheets.
+    try:
+        from app.cache import history_service
+
+        history_service().invalidate_all()
+    except Exception:
+        pass
 
 
 def bump_contacts_cache() -> None:

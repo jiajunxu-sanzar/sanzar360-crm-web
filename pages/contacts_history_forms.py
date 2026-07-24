@@ -12,10 +12,13 @@ from services.commercial_action_validation import validate_commercial_action_val
 from services.notas_validation import validate_nota_history_values
 from services.tareas_validation import filter_open_tareas, validate_tarea_history_values
 from services.history_service import (
+    CAMPANAS_FORM_FIELD_ORDER,
     HISTORY_SPECS,
     HistoryService,
     ProjectIotAssignment,
     count_sensor_assets,
+    merge_historial_umbrales,
+    parse_historial_umbrales,
     parse_projectiotid_assignments,
     sensor_association_tokens,
     serialize_projectiotid_assignments,
@@ -772,6 +775,83 @@ def _render_seguimiento_comercial_fields(
             prefix,
         )
 
+def _render_campanas_form_fields(
+    kind: str,
+    prefix: str,
+    initial: dict[str, str],
+    excluded_headers: frozenset[str],
+) -> None:
+    """Orden fijo de campaña: sensor/textura/coords → umbrales → detalles al final."""
+    st.markdown("**Datos principales**")
+    for header in CAMPANAS_FORM_FIELD_ORDER:
+        if header in excluded_headers or header == "detalles":
+            continue
+        if header == "longitud":
+            _field_for_header(kind, header, initial.get(header, ""), prefix)
+            _render_campanas_umbrales_section(prefix, initial)
+            continue
+        _field_for_header(kind, header, initial.get(header, ""), prefix)
+    if "detalles" not in excluded_headers:
+        st.markdown("**Detalles**")
+        _field_for_header(kind, "detalles", initial.get("detalles", ""), prefix)
+
+
+def _render_campanas_umbrales_section(prefix: str, initial: dict[str, str]) -> None:
+    from datetime import date
+
+    entries = parse_historial_umbrales(str(initial.get("historial_umbrales_json", "") or ""))
+    st.markdown("**Añadir umbrales**")
+    if entries:
+        st.caption("Historial (solo lectura):")
+        for idx, entry in enumerate(entries, start=1):
+            st.markdown(
+                f"{idx}. **{entry.get('fecha_actualizacion', '') or '—'}** · "
+                f"sup {entry.get('umbral_superior', '') or '—'} / "
+                f"inf {entry.get('umbral_inferior', '') or '—'} · "
+                f"{entry.get('razon', '') or '—'}"
+            )
+    else:
+        st.caption("Sin entradas de umbrales todavía.")
+
+    mode_options = ["Añadir nueva"]
+    if entries:
+        mode_options.append("Editar última")
+    mode_key = f"{prefix}_umbrales_mode"
+    mode = st.radio(
+        "Acción umbrales",
+        mode_options,
+        horizontal=True,
+        key=mode_key,
+        help="Vacía superior/inferior/razón para guardar el resto sin tocar umbrales.",
+    )
+    edit_last = mode == "Editar última" and bool(entries)
+    seed_key = f"{prefix}_umbrales_seed"
+    fingerprint = f"{mode}|{len(entries)}|{initial.get('historial_campana_id', '')}"
+    if st.session_state.get(seed_key) != fingerprint:
+        if edit_last:
+            last = entries[-1]
+            st.session_state[f"{prefix}_umbral_fecha"] = last.get("fecha_actualizacion", "") or date.today().strftime(
+                "%d/%m/%Y"
+            )
+            st.session_state[f"{prefix}_umbral_superior"] = last.get("umbral_superior", "")
+            st.session_state[f"{prefix}_umbral_inferior"] = last.get("umbral_inferior", "")
+            st.session_state[f"{prefix}_umbral_razon"] = last.get("razon", "")
+        else:
+            st.session_state[f"{prefix}_umbral_fecha"] = date.today().strftime("%d/%m/%Y")
+            st.session_state[f"{prefix}_umbral_superior"] = ""
+            st.session_state[f"{prefix}_umbral_inferior"] = ""
+            st.session_state[f"{prefix}_umbral_razon"] = ""
+        st.session_state[seed_key] = fingerprint
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.text_input("Fecha actualización", key=f"{prefix}_umbral_fecha", placeholder="DD/MM/YYYY")
+        st.text_input("Umbral superior", key=f"{prefix}_umbral_superior", placeholder="ej. 32,5")
+    with c2:
+        st.text_input("Umbral inferior", key=f"{prefix}_umbral_inferior", placeholder="ej. 18,0")
+        st.text_input("Razón", key=f"{prefix}_umbral_razon")
+
+
 def _render_history_form_body(
     kind: str,
     base: dict[str, str],
@@ -802,6 +882,10 @@ def _render_history_form_body(
 
     if kind == "seguimiento_comercial":
         _render_seguimiento_comercial_fields(kind, prefix, initial, excluded_headers)
+        return
+
+    if kind == "campanas":
+        _render_campanas_form_fields(kind, prefix, initial, excluded_headers)
         return
 
     st.markdown("**Datos principales**")
@@ -851,6 +935,11 @@ def _render_history_form_grouped_body(
     if kind == "seguimiento_comercial":
         with st.container(border=True):
             _render_seguimiento_comercial_fields(kind, prefix, initial, excluded_headers)
+        return
+
+    if kind == "campanas":
+        with st.container(border=True):
+            _render_campanas_form_fields(kind, prefix, initial, excluded_headers)
         return
 
     _always_skip = {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}
@@ -978,10 +1067,30 @@ def _submit_history_form(
     for header in spec.headers:
         if header in {spec.id_column, "contact_id", "nombre_cliente", "created_at", "updated_at"}:
             continue
+        if header == "historial_umbrales_json":
+            # Se construye abajo desde el draft de umbrales (no desde un text_input).
+            continue
         if prefilled_values is not None:
             values[header] = str(prefilled_values.get(header, ""))
         else:
             values[header] = str(st.session_state.get(f"{prefix}_{header}", ""))
+
+    if kind == "campanas":
+        base_umbrales = str((existing or {}).get("historial_umbrales_json", "") or "")
+        mode_label = str(st.session_state.get(f"{prefix}_umbrales_mode", "Añadir nueva") or "")
+        mode = "edit_last" if mode_label.startswith("Editar") else "add"
+        merged, umbral_error = merge_historial_umbrales(
+            base_umbrales,
+            mode=mode,
+            fecha_actualizacion=str(st.session_state.get(f"{prefix}_umbral_fecha", "") or ""),
+            umbral_superior=str(st.session_state.get(f"{prefix}_umbral_superior", "") or ""),
+            umbral_inferior=str(st.session_state.get(f"{prefix}_umbral_inferior", "") or ""),
+            razon=str(st.session_state.get(f"{prefix}_umbral_razon", "") or ""),
+        )
+        if umbral_error:
+            st.error(umbral_error)
+            return False
+        values["historial_umbrales_json"] = merged
 
     if kind == "incidencias":
         for header in _INCIDENCIA_ASSOC_HEADERS:
@@ -1386,6 +1495,14 @@ def _field_for_header(kind: str, header: str, value: str, prefix: str) -> str:
         return _render_campana_cultivo_field(prefix, value, key)
     if kind == "campanas" and header in {"latitud", "longitud"}:
         return st.text_input(label, value=value, key=key, placeholder="ej. 40.4168")
+    if kind == "campanas" and header == "razon_textura_suelo":
+        return st.text_area(
+            "Razón textura suelo",
+            value=value,
+            key=key,
+            height=70,
+            placeholder="Por qué se definió esta textura de suelo",
+        )
     if kind == "campanas" and header == "dias_campana":
         computed = HistoryService._campaign_days(
             {

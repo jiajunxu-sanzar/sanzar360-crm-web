@@ -403,25 +403,46 @@ class SheetsService:
             self._with_retry(lambda: (worksheet.clear(), worksheet.update(rows, "A1")))
         self._worksheet_headers_cache[name] = list(headers)
 
-    def append_worksheet_row(self, name: str, headers: list[str], row: dict[str, Any]) -> int:
-        """Añade una fila y devuelve su número (1-based) parseado de la respuesta.
+    def _resolve_sheet_headers_for_write(self, name: str, required_headers: list[str]) -> tuple[Any, list[str]]:
+        """Devuelve (worksheet, cabeceras en orden real de la fila 1).
 
-        No hace ninguna lectura extra: la propia respuesta del append incluye
-        ``updates.updatedRange``. Devuelve ``-1`` si no se pudo determinar.
+        Siempre relee la fila 1 antes de escribir para no usar un orden de
+        columnas distinto al de la hoja (evita datos en columnas locas).
+        Añade columnas de ``required_headers`` que falten, con su título.
         """
-        worksheet = self.get_or_create_worksheet(name, headers)
-        sheet_headers = self._worksheet_headers_cache.get(name, []) or headers
+        worksheet = self.get_or_create_worksheet(name, required_headers)
+        raw = [str(h) for h in self._with_retry(lambda: worksheet.row_values(1))]
+        while raw and not str(raw[-1]).strip():
+            raw.pop()
+        current = [str(h).strip() for h in raw]
+        if not any(current):
+            current = [h for h in required_headers if h]
+            self._with_retry(lambda: worksheet.update([current], "A1"))
+        else:
+            # Conservar orden de la hoja; no reintroducir cabeceras vacías.
+            current = [h for h in current if h]
+            missing = [h for h in required_headers if h and h not in current]
+            if missing:
+                current = current + missing
+                self._with_retry(lambda: worksheet.update([current], "A1"))
+        self._worksheet_headers_cache[name] = list(current)
+        return worksheet, list(current)
+
+    def append_worksheet_row(self, name: str, headers: list[str], row: dict[str, Any]) -> int:
+        """Añade una fila alineada al orden real de la fila 1.
+
+        Devuelve el nº de fila (1-based) de ``updatedRange``, o ``-1`` si no se pudo.
+        """
+        worksheet, sheet_headers = self._resolve_sheet_headers_for_write(name, headers)
         values = [str(row.get(header, "") or "") for header in sheet_headers]
         with timed("sheets.append_worksheet_row", worksheet=name):
-            # RAW: conserva decimales con punto (lat/lon, etc.) sin parseo de locale.
             response = self._with_retry(
                 lambda: worksheet.append_row(values, value_input_option="RAW")
             )
             return self._row_number_from_append_response(response)
 
     def update_worksheet_row(self, name: str, headers: list[str], row_number: int, row: dict[str, Any]) -> None:
-        worksheet = self.get_or_create_worksheet(name, headers)
-        sheet_headers = self._worksheet_headers_cache.get(name, []) or headers
+        worksheet, sheet_headers = self._resolve_sheet_headers_for_write(name, headers)
         values = [str(row.get(header, "") or "") for header in sheet_headers]
         with timed("sheets.update_worksheet_row", worksheet=name):
             self._with_retry(

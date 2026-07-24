@@ -118,23 +118,26 @@ HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
         "historial_campana_id",
         "fecha_campana_inicio",
         (
+            # Orden alineado a la fila 1 de producción (HistoricoCampanas).
             "historial_campana_id",
             "contact_id",
             "nombre_cliente",
-            "historial_sensor_id",
             "nombre_campana",
             "fecha_campana_inicio",
             "fecha_campana_fin",
-            "estado_cierre_campana",
             "dias_campana",
             "cultivo",
-            "textura_suelo",
-            "latitud",
-            "longitud",
-            "coordenadas_parcela",
             "detalles",
             "created_at",
             "updated_at",
+            "historial_sensor_id",
+            "estado_cierre_campana",
+            "textura_suelo",
+            "latitud",
+            "longitud",
+            # Columnas nuevas al final (se añaden a Sheets con título en el primer write).
+            "razon_textura_suelo",
+            "historial_umbrales_json",
         ),
         (
             "nombre_campana",
@@ -405,6 +408,128 @@ def serialize_projectiotid_assignments(assignments: list[ProjectIotAssignment]) 
         if item.projectiotid.strip()
     ]
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+# Orden de campos del popup de campañas (detalles al final; umbrales es sección aparte).
+CAMPANAS_FORM_FIELD_ORDER: tuple[str, ...] = (
+    "nombre_campana",
+    "fecha_campana_inicio",
+    "fecha_campana_fin",
+    "dias_campana",
+    "historial_sensor_id",
+    "estado_cierre_campana",
+    "textura_suelo",
+    "razon_textura_suelo",
+    "latitud",
+    "longitud",
+    "detalles",
+)
+
+_UMBRAL_KEYS = ("fecha_actualizacion", "umbral_superior", "umbral_inferior", "razon")
+
+
+def parse_historial_umbrales(raw: str) -> list[dict[str, str]]:
+    """Parsea la celda JSON de historial de umbrales de una campaña."""
+    value = (raw or "").strip()
+    if not value:
+        return []
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        entry = {k: str(item.get(k, "") or "").strip() for k in _UMBRAL_KEYS}
+        if not any(entry.values()):
+            continue
+        out.append(entry)
+    return out
+
+
+def serialize_historial_umbrales(entries: list[dict[str, str]]) -> str:
+    payload = []
+    for item in entries:
+        entry = {k: str(item.get(k, "") or "").strip() for k in _UMBRAL_KEYS}
+        if not any(entry.values()):
+            continue
+        payload.append(entry)
+    if not payload:
+        return ""
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def umbrales_draft_is_empty(*, umbral_superior: str, umbral_inferior: str, razon: str) -> bool:
+    """True si no hay datos de umbral/razón (la fecha sola no cuenta)."""
+    return not any(str(x or "").strip() for x in (umbral_superior, umbral_inferior, razon))
+
+
+def summarize_historial_umbrales(raw: str) -> str:
+    """Resumen corto para tablas/cards (no el JSON crudo)."""
+    entries = parse_historial_umbrales(raw)
+    if not entries:
+        return ""
+    last = entries[-1]
+    sup = last.get("umbral_superior", "")
+    inf = last.get("umbral_inferior", "")
+    n = len(entries)
+    if sup or inf:
+        return f"{n} · {sup}/{inf}" if n > 1 else f"{sup}/{inf}"
+    return f"{n} entrada{'s' if n != 1 else ''}"
+
+
+def merge_historial_umbrales(
+    existing_raw: str,
+    *,
+    mode: str,
+    fecha_actualizacion: str,
+    umbral_superior: str,
+    umbral_inferior: str,
+    razon: str,
+) -> tuple[str, str | None]:
+    """Añade o reemplaza la última entrada. Si el draft está vacío, no muta.
+
+    ``mode``: ``add`` | ``edit_last``.
+    Devuelve ``(json_serializado, error_o_None)``.
+    """
+    from services.locale_numbers import parse_locale_float
+    from services.sheet_date_format import is_valid_dd_mm_yyyy, normalize_dd_mm_yyyy
+
+    entries = parse_historial_umbrales(existing_raw)
+    if umbrales_draft_is_empty(
+        umbral_superior=umbral_superior,
+        umbral_inferior=umbral_inferior,
+        razon=razon,
+    ):
+        return serialize_historial_umbrales(entries), None
+
+    fecha = normalize_dd_mm_yyyy(str(fecha_actualizacion or "").strip()) or str(fecha_actualizacion or "").strip()
+    if not fecha or not is_valid_dd_mm_yyyy(fecha):
+        return existing_raw, "Fecha de actualización de umbrales inválida (usa DD/MM/YYYY)."
+    if parse_locale_float(umbral_superior) is None:
+        return existing_raw, "Umbral superior debe ser un número."
+    if parse_locale_float(umbral_inferior) is None:
+        return existing_raw, "Umbral inferior debe ser un número."
+    if not str(razon or "").strip():
+        return existing_raw, "Indica la razón del cambio de umbrales."
+
+    entry = {
+        "fecha_actualizacion": fecha,
+        "umbral_superior": str(umbral_superior or "").strip(),
+        "umbral_inferior": str(umbral_inferior or "").strip(),
+        "razon": str(razon or "").strip(),
+    }
+    mode_norm = str(mode or "add").strip().lower()
+    if mode_norm in {"edit_last", "editar última", "editar ultima"}:
+        if not entries:
+            return existing_raw, "No hay entradas de umbrales para editar."
+        entries[-1] = entry
+    else:
+        entries.append(entry)
+    return serialize_historial_umbrales(entries), None
 
 
 def validate_projectiotid_assignments(
@@ -679,14 +804,23 @@ class HistoryService:
         if kind == "seguimiento_comercial" and not str(row.get("origen_registro", "") or "").strip():
             row["origen_registro"] = "manual"
         appended_row = self._sheets_service.append_worksheet_row(spec.worksheet_name, list(spec.headers), row)
+        row_id = str(row[spec.id_column])
+        # Verificar que la fila quedó en Sheets (evita toast OK con datos fantasma).
+        id_map = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
+        verified_row = id_map.get(row_id)
+        if verified_row is None:
+            raise RuntimeError(
+                f"No se confirmó el guardado en Google Sheets ({spec.worksheet_name} / {row_id}). "
+                "Revisa la pestaña y reintenta."
+            )
         df = pd.concat([self._frames[kind], pd.DataFrame([row])], ignore_index=True)
         self._frames[kind] = self._normalize_dataframe(df, spec)
         if isinstance(appended_row, int) and appended_row > 1:
-            # La respuesta del append ya trae la fila exacta: sin relecturas.
-            self._row_numbers[kind][str(row[spec.id_column])] = appended_row
+            self._row_numbers[kind][row_id] = appended_row
         else:
-            # Fallback (stubs de test o respuesta sin updatedRange).
-            self._row_numbers[kind] = self._sheets_service.row_numbers_by_id(spec.worksheet_name, spec.id_column)
+            self._row_numbers[kind] = id_map
+        if verified_row is not None:
+            self._row_numbers[kind][row_id] = verified_row
         if kind == "sensores":
             self._sensor_occurrences_cache = None
         self._loaded.add(kind)

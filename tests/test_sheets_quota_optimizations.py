@@ -270,13 +270,31 @@ class _CountingHistorySheets:
         return removed
 
 
-def test_history_add_row_uses_append_response_without_reindex() -> None:
+def test_history_add_row_verifies_id_and_keeps_row_number() -> None:
     sheets = _CountingHistorySheets()
     service = HistoryService(sheets)  # type: ignore[arg-type]
     row = service.add_row("sensores", {"contact_id": "c-1", "sensor_serial_number": "SN 123"})
-    assert sheets.row_numbers_calls == 0
+    # Tras el append se verifica el id (1 lectura de columna), no un get_all_values.
+    assert sheets.row_numbers_calls == 1
     row_id = row["historial_sensor_id"]
     assert service._row_numbers["sensores"][row_id] > 1
+
+
+def test_history_add_row_raises_if_id_not_in_sheets() -> None:
+    class _NoPersistSheets(_CountingHistorySheets):
+        def append_worksheet_row(self, name: str, headers: list[str], row: dict) -> int:
+            return 99  # simula append OK pero no persiste en frames
+
+        def row_numbers_by_id(self, name: str, id_header: str) -> dict[str, int]:
+            self.row_numbers_calls += 1
+            return {}
+
+    service = HistoryService(_NoPersistSheets())  # type: ignore[arg-type]
+    try:
+        service.add_row("campanas", {"contact_id": "c-1", "nombre_campana": "X"})
+        assert False, "expected RuntimeError"
+    except RuntimeError as exc:
+        assert "No se confirmó el guardado" in str(exc)
 
 
 def test_history_delete_row_shifts_index_locally() -> None:
@@ -343,3 +361,124 @@ def test_history_load_kinds_batches_requested_together() -> None:
     service.rows("sensores")
     service.rows("incidencias")
     assert len(sheets.batch_calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Append/update alineado al orden real de la fila 1
+# ---------------------------------------------------------------------------
+
+
+class _WritableFakeWorksheet:
+    """Worksheet en memoria con update/append_row para tests de escritura."""
+
+    def __init__(self, header_row: list[str]) -> None:
+        self.rows: list[list[str]] = [list(header_row)]
+        self.appended: list[list[str]] = []
+        self.header_updates: list[list[str]] = []
+
+    def row_values(self, row: int) -> list[str]:
+        idx = row - 1
+        return list(self.rows[idx]) if 0 <= idx < len(self.rows) else []
+
+    def update(self, values, range_name="A1", value_input_option=None):  # noqa: ANN001
+        if str(range_name).upper().startswith("A1") and values and isinstance(values[0], list):
+            # Cabeceras (fila 1) o actualización de una fila completa.
+            if range_name in ("A1",) or str(range_name) == "A1":
+                self.rows[0] = list(values[0])
+                self.header_updates.append(list(values[0]))
+                return
+            # A{n} — actualizar fila n
+            try:
+                row_num = int(str(range_name)[1:].split(":")[0])
+            except ValueError:
+                row_num = 1
+            while len(self.rows) < row_num:
+                self.rows.append([])
+            self.rows[row_num - 1] = list(values[0])
+            return
+        if values and isinstance(values[0], list):
+            self.rows[0] = list(values[0])
+            self.header_updates.append(list(values[0]))
+
+    def append_row(self, values, value_input_option=None):  # noqa: ANN001
+        vals = [str(v) for v in values]
+        self.appended.append(vals)
+        self.rows.append(vals)
+        last = len(self.rows)
+        return {"updates": {"updatedRange": f"Sheet!A{last}:Z{last}"}}
+
+
+class _WriteAlignService(SheetsService):
+    def __init__(self, ws: _WritableFakeWorksheet) -> None:
+        super().__init__()
+        self._ws = ws
+
+    def get_or_create_worksheet(self, name: str, headers: list[str]):  # type: ignore[override]
+        return self._ws
+
+
+def test_append_worksheet_row_follows_sheet_header_order_not_code_order() -> None:
+    """Reproduce el bug: orden del código ≠ fila 1 → valores en columnas locas."""
+    # Orden real de HistoricoCampanas (producción).
+    sheet_order = [
+        "historial_campana_id",
+        "contact_id",
+        "nombre_cliente",
+        "nombre_campana",
+        "fecha_campana_inicio",
+        "historial_sensor_id",
+        "estado_cierre_campana",
+    ]
+    # Orden "del código" distinto (sensor/estado antes que nombre_campana).
+    code_order = [
+        "historial_campana_id",
+        "contact_id",
+        "nombre_cliente",
+        "historial_sensor_id",
+        "estado_cierre_campana",
+        "nombre_campana",
+        "fecha_campana_inicio",
+    ]
+    ws = _WritableFakeWorksheet(sheet_order)
+    service = _WriteAlignService(ws)
+    service.append_worksheet_row(
+        "HistoricoCampanas",
+        code_order,
+        {
+            "historial_campana_id": "hc-1",
+            "contact_id": "c-1",
+            "nombre_cliente": "Ana",
+            "nombre_campana": "Campaña primavera",
+            "fecha_campana_inicio": "01/03/2026",
+            "historial_sensor_id": "hs-9",
+            "estado_cierre_campana": "abierto",
+        },
+    )
+    assert len(ws.appended) == 1
+    written = ws.appended[0]
+    assert written[sheet_order.index("nombre_campana")] == "Campaña primavera"
+    assert written[sheet_order.index("historial_sensor_id")] == "hs-9"
+    assert written[sheet_order.index("estado_cierre_campana")] == "abierto"
+    # Sin el fix, nombre_campana habría caído donde está historial_sensor_id.
+    assert written[sheet_order.index("historial_sensor_id")] != "Campaña primavera"
+
+
+def test_append_adds_missing_required_headers_with_title() -> None:
+    ws = _WritableFakeWorksheet(["historial_campana_id", "contact_id", "nombre_campana"])
+    service = _WriteAlignService(ws)
+    service.append_worksheet_row(
+        "HistoricoCampanas",
+        ["historial_campana_id", "contact_id", "nombre_campana", "latitud", "longitud"],
+        {
+            "historial_campana_id": "hc-2",
+            "contact_id": "c-2",
+            "nombre_campana": "X",
+            "latitud": "40.1",
+            "longitud": "-3.7",
+        },
+    )
+    assert ws.rows[0][-2:] == ["latitud", "longitud"]
+    assert "" not in ws.rows[0]
+    written = ws.appended[0]
+    assert written[ws.rows[0].index("latitud")] == "40.1"
+    assert written[ws.rows[0].index("longitud")] == "-3.7"

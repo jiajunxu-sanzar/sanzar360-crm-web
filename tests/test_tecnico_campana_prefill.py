@@ -29,7 +29,11 @@ def test_campanas_spec_uses_textura_suelo() -> None:
     assert "tipo_suelo" not in headers
     assert "latitud" in headers
     assert "longitud" in headers
-    assert "coordenadas_parcela" in headers
+    # coordenadas_parcela es legacy opcional en lectura; no se fuerza al escribir.
+    assert "coordenadas_parcela" not in headers
+    # Orden de producción: nombre_campana antes que historial_sensor_id.
+    assert headers.index("nombre_campana") < headers.index("historial_sensor_id")
+    assert list(headers[-2:]) == ["razon_textura_suelo", "historial_umbrales_json"]
     for removed in (
         "p_tabla",
         "k_1",

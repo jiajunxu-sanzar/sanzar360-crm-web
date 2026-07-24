@@ -6,7 +6,7 @@ import html
 import pandas as pd
 import streamlit as st
 
-from services.history_service import HISTORY_SPECS, HistoryKind
+from services.history_service import HISTORY_SPECS, HistoryKind, summarize_historial_umbrales
 from ui import modal_state
 from ui.components.cards import chip
 from ui.components.tables import filter_dataframe
@@ -171,6 +171,7 @@ def build_campana_card_html(row: dict[str, str]) -> str:
     )
     dias = str(row.get("dias_campana", "") or "").strip()
     sub = _esc(_join_bits([period, f"{dias} días" if dias else ""]))
+    umbrales_summary = summarize_historial_umbrales(str(row.get("historial_umbrales_json", "") or ""))
     body = _esc(
         _join_bits(
             [
@@ -180,6 +181,12 @@ def build_campana_card_html(row: dict[str, str]) -> str:
                     if str(row.get("textura_suelo", "") or row.get("tipo_suelo", "") or "").strip()
                     else ""
                 ),
+                (
+                    f"Razón textura: {row.get('razon_textura_suelo', '')}"
+                    if str(row.get("razon_textura_suelo", "") or "").strip()
+                    else ""
+                ),
+                f"Umbrales: {umbrales_summary}" if umbrales_summary else "",
                 (
                     f"Lat/Lon: {row.get('latitud', '')}, {row.get('longitud', '')}"
                     if str(row.get("latitud", "") or "").strip() and str(row.get("longitud", "") or "").strip()

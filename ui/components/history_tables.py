@@ -12,7 +12,12 @@ import pandas as pd
 import streamlit as st
 
 from services.contact_proxima_index import sort_commercial_rows_by_contact_date
-from services.history_service import HISTORY_SPECS, HistoryKind
+from services.history_service import (
+    HISTORY_SPECS,
+    HistoryKind,
+    parse_historial_umbrales,
+    summarize_historial_umbrales,
+)
 from services.tareas_validation import sort_tareas_by_fecha_limite
 from ui import modal_state
 from ui.components.history import (
@@ -71,6 +76,8 @@ _FIELD_LABELS: dict[str, str] = {
     "fecha_campana_fin": "Fin campaña",
     "dias_campana": "Días",
     "textura_suelo": "Textura suelo",
+    "razon_textura_suelo": "Razón textura suelo",
+    "historial_umbrales_json": "Umbrales",
     "latitud": "Latitud",
     "longitud": "Longitud",
     "coordenadas_parcela": "Coordenadas parcela",
@@ -115,6 +122,8 @@ _LONG_FIELDS = frozenset(
         "resolucion",
         "proxima_accion_detalle",
         "projectiotid",
+        "razon_textura_suelo",
+        "historial_umbrales_json",
     }
 )
 _SKIP_FIELDS = frozenset({"contact_id", "nombre_cliente"})
@@ -227,6 +236,8 @@ _TABLE_COLUMNS: dict[str, list[tuple[str, object]]] = {
         ("Días", lambda r: _fmt(r, "dias_campana") or "—"),
         ("Cultivo", lambda r: _fmt(r, "cultivo") or "—"),
         ("Textura", lambda r: _label(_fmt(r, "textura_suelo")) or "—"),
+        ("Razón textura", lambda r: _short(_fmt(r, "razon_textura_suelo"), 40) or "—"),
+        ("Umbrales", lambda r: summarize_historial_umbrales(_fmt(r, "historial_umbrales_json")) or "—"),
         ("Lat/Lon", lambda r: _coords_display(r)),
         ("Estado", lambda r: _label(_fmt(r, "estado_cierre_campana")) if _fmt(r, "estado_cierre_campana") else "Abierto"),
         ("Detalles", lambda r: _short(_fmt(r, "detalles"), 80) or "—"),
@@ -431,6 +442,18 @@ def _render_row_detail(kind: str, row: dict[str, str], contact_id: str, spec) ->
             if not value:
                 continue
             label = _FIELD_LABELS.get(header, header.replace("_", " ").capitalize())
+            if header == "historial_umbrales_json":
+                entries = []
+                for idx, entry in enumerate(parse_historial_umbrales(value), start=1):
+                    entries.append(
+                        f"{idx}. {entry.get('fecha_actualizacion', '') or '—'} · "
+                        f"sup {entry.get('umbral_superior', '') or '—'} / "
+                        f"inf {entry.get('umbral_inferior', '') or '—'} · "
+                        f"{entry.get('razon', '') or '—'}"
+                    )
+                value = "\n".join(entries) if entries else summarize_historial_umbrales(value)
+                if not value:
+                    continue
             if header in _LONG_FIELDS:
                 long_items.append((label, value))
             else:
