@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 import smtplib
 import ssl
+from contextlib import contextmanager
 from email.message import EmailMessage
+from typing import Iterator
 
 from app.smtp_profiles import SmtpDeliveryConfig, default_smtp_from_config
 from config.settings import TEMPLATE_LABEL_ALIASES
@@ -64,21 +66,62 @@ def _deliver_smtp_message(msg: EmailMessage, cfg: SmtpDeliveryConfig) -> None:
         smtp.send_message(msg)
 
 
+@contextmanager
+def smtp_connection(cfg: SmtpDeliveryConfig) -> Iterator[smtplib.SMTP]:
+    """Abre una conexión SMTP (STARTTLS + login) una sola vez y la deja abierta
+    para que el llamador mande varios mensajes por ella.
+
+    Pensado para envíos masivos (newsletter): evita pagar el coste de
+    handshake TCP + TLS + login en cada correo, que es lo que hace lento un
+    envío a muchos destinatarios cuando se abre/cierra conexión por cada uno.
+    El llamador es responsable de reconectar periódicamente en listas largas
+    (ver ``config.settings.NEWSLETTER_SMTP_RECONNECT_EVERY``): mantener una
+    única conexión persistente durante cientos de envíos no es fiable, muchos
+    proveedores (Gmail incluido) pueden cerrarla o limitarla.
+    """
+    if not cfg.host or not cfg.user:
+        raise RuntimeError("SMTP no está configurado.")
+    smtp = smtplib.SMTP(cfg.host, cfg.port)
+    try:
+        if cfg.use_tls:
+            smtp.starttls()
+        if cfg.password:
+            smtp.login(cfg.user, cfg.password)
+        # smtplib.SMTP no expone la dirección autenticada; la guardamos como
+        # atributo propio para que send_email/send_html_email puedan rellenar
+        # el "From" sin que el llamador tenga que pasar `delivery` otra vez.
+        smtp.user = cfg.user  # type: ignore[attr-defined]
+        yield smtp
+    finally:
+        try:
+            smtp.quit()
+        except Exception:
+            pass
+
+
 def send_email(
     to: str,
     subject: str,
     body: str,
     *,
     delivery: SmtpDeliveryConfig | None = None,
+    connection: smtplib.SMTP | None = None,
 ) -> None:
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["To"] = to
+    msg.set_content(body)
+    if connection is not None:
+        from_addr = getattr(connection, "user", "") or (delivery.user if delivery else "")
+        if not from_addr:
+            raise RuntimeError("No se pudo determinar el remitente para la conexión SMTP reutilizada.")
+        msg["From"] = from_addr
+        connection.send_message(msg)
+        return
     cfg = delivery or default_smtp_from_config()
     if not cfg.host or not cfg.user:
         raise RuntimeError("SMTP no está configurado.")
-    msg = EmailMessage()
     msg["From"] = cfg.user
-    msg["To"] = to
-    msg["Subject"] = subject
-    msg.set_content(body)
     _deliver_smtp_message(msg, cfg)
 
 
@@ -90,6 +133,7 @@ def send_html_email(
     plain_fallback: str = "",
     inline_images: dict[str, tuple[bytes, str]] | None = None,
     delivery: SmtpDeliveryConfig | None = None,
+    connection: smtplib.SMTP | None = None,
 ) -> None:
     """Envía un correo HTML (con texto plano de respaldo) y opcionalmente
     imágenes incrustadas dentro del propio correo (no enlaces externos).
@@ -98,12 +142,13 @@ def send_html_email(
     ``{"logo": (b"...", "png")}``); el HTML debe referenciarlas como
     ``<img src="cid:logo">``. Usado por la newsletter; ``send_email`` (texto
     plano) sigue igual para el envío individual existente.
+
+    Si se pasa ``connection`` (una conexión SMTP ya abierta y autenticada, ver
+    ``smtp_connection``), el mensaje se manda por ella y se ignora
+    ``delivery``. Si no, se abre y cierra una conexión nueva como antes
+    (comportamiento sin cambios para quien no use envío masivo).
     """
-    cfg = delivery or default_smtp_from_config()
-    if not cfg.host or not cfg.user:
-        raise RuntimeError("SMTP no está configurado.")
     msg = EmailMessage()
-    msg["From"] = cfg.user
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(
@@ -114,4 +159,17 @@ def send_html_email(
         html_part = msg.get_payload()[-1]
         for cid, (data, subtype) in inline_images.items():
             html_part.add_related(data, maintype="image", subtype=subtype, cid=f"<{cid}>")
+
+    if connection is not None:
+        from_addr = getattr(connection, "user", "") or (delivery.user if delivery else "")
+        if not from_addr:
+            raise RuntimeError("No se pudo determinar el remitente para la conexión SMTP reutilizada.")
+        msg["From"] = from_addr
+        connection.send_message(msg)
+        return
+
+    cfg = delivery or default_smtp_from_config()
+    if not cfg.host or not cfg.user:
+        raise RuntimeError("SMTP no está configurado.")
+    msg["From"] = cfg.user
     _deliver_smtp_message(msg, cfg)

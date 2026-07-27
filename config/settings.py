@@ -360,6 +360,24 @@ NEWSLETTER_TEST_RECIPIENTS_DEFAULT = get_secret(
     "NEWSLETTER_TEST_RECIPIENTS", _NEWSLETTER_TEST_RECIPIENTS_DEFAULT
 )
 
+# Envío masivo: cuántos correos mandar por conexión SMTP antes de reconectar
+# (evita encadenar cientos de comandos en una misma conexión persistente, que
+# algunos proveedores —Gmail incluido— pueden cerrar o limitar) y cuántos
+# segundos esperar entre un envío y el siguiente (mitiga que el proveedor lo
+# trate como ráfaga de spam). Ajustables sin tocar código vía secrets/.env.
+NEWSLETTER_SMTP_RECONNECT_EVERY = get_int_secret("NEWSLETTER_SMTP_RECONNECT_EVERY", 60)
+
+
+def _get_float_secret(key: str, default: float) -> float:
+    raw = get_secret(key, "")
+    try:
+        return float(raw) if str(raw).strip() else default
+    except (TypeError, ValueError):
+        return default
+
+
+NEWSLETTER_SEND_DELAY_SECONDS = _get_float_secret("NEWSLETTER_SEND_DELAY_SECONDS", 0.3)
+
 # Destinatarios internos opcionales al enviar newsletter (checkbox en Envío).
 NEWSLETTER_SANZAR_CC_DEFAULT: tuple[str, ...] = (
     "andrei.pop@sanzar-group.com",

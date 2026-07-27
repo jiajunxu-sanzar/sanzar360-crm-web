@@ -15,6 +15,8 @@ fija, y envío masivo que excluye automáticamente a quien se haya dado de baja.
 from __future__ import annotations
 
 import json
+import smtplib
+import time
 import uuid
 
 import pandas as pd
@@ -35,6 +37,8 @@ from config.settings import (
     EMAIL_CLASIFICACION_OPCIONES,
     NEWSLETTER_NOTIFY_EMAIL,
     NEWSLETTER_SANZAR_CC_DEFAULT,
+    NEWSLETTER_SEND_DELAY_SECONDS,
+    NEWSLETTER_SMTP_RECONNECT_EVERY,
     NEWSLETTER_TEST_RECIPIENTS_DEFAULT,
 )
 from services.commercial_action_validation import validate_commercial_action_values
@@ -42,6 +46,7 @@ from services.email_service import (
     render_template,
     send_email,
     send_html_email,
+    smtp_connection,
     smtp_exception_user_message,
     validate_placeholders,
 )
@@ -649,19 +654,26 @@ def _do_send_newsletter_test(
     )
 
     sent, errors = 0, []
-    for to in recipients:
-        try:
-            send_html_email(
-                to,
-                f"[PRUEBA] {_newsletter_email_subject(content)}",
-                html,
-                inline_images=inline_images,
-                delivery=smtp_detail.delivery,
-            )
-            sent += 1
-        except Exception as exc:
-            friendly = smtp_exception_user_message(exc, routed_profile_slug=smtp_detail.routed_profile_slug)
-            errors.append(f"{to}: {friendly}")
+    try:
+        with smtp_connection(smtp_detail.delivery) as conn:
+            for i, to in enumerate(recipients):
+                try:
+                    send_html_email(
+                        to,
+                        f"[PRUEBA] {_newsletter_email_subject(content)}",
+                        html,
+                        inline_images=inline_images,
+                        connection=conn,
+                    )
+                    sent += 1
+                except Exception as exc:
+                    friendly = smtp_exception_user_message(exc, routed_profile_slug=smtp_detail.routed_profile_slug)
+                    errors.append(f"{to}: {friendly}")
+                if i < len(recipients) - 1:
+                    time.sleep(NEWSLETTER_SEND_DELAY_SECONDS)
+    except Exception as exc:
+        friendly = smtp_exception_user_message(exc, routed_profile_slug=smtp_detail.routed_profile_slug)
+        errors.append(f"Conexión SMTP: {friendly}")
 
     if sent:
         st.success(f"Prueba enviada a {sent}/{len(recipients)} direcciones.")
@@ -695,47 +707,116 @@ def _do_send_newsletter(
 
     sent_records: list[dict[str, str]] = []
     send_errors: list[str] = []
-    for target in targets:
-        to = str(target.get("correo", "") or "").strip()
-        if not to:
-            continue
-        cid = str(target.get("contact_id", "") or "").strip() or f"__extra__:{_normalize_email(to)}"
-        nombre = str(target.get("nombre", "") or "")
+    total = len(targets)
+    progress = st.progress(0.0, text=f"Enviando 0/{total}…") if total else None
 
-        inline_images: dict[str, tuple[bytes, str]] = {
-            "logo": (logo_bytes, "png"),
-            "icon_web": (load_web_icon_bytes(), "png"),
-            "icon_linkedin": (load_linkedin_icon_bytes(), "png"),
-        }
-        if hero:
-            inline_images["hero"] = hero
-        unsubscribe_url = build_unsubscribe_url(cid, newsletter_id)
-        html = render_newsletter_html(
-            content,
-            logo_src="cid:logo",
-            hero_src=hero_src,
-            unsubscribe_url=unsubscribe_url,
-            icon_web_src="cid:icon_web",
-            icon_linkedin_src="cid:icon_linkedin",
-        )
-        try:
-            send_html_email(
-                to,
-                _newsletter_email_subject(content),
-                html,
-                inline_images=inline_images,
-                delivery=smtp_detail.delivery,
+    # Reutilizamos una única conexión SMTP para todo el envío en vez de
+    # abrir/cerrar una por destinatario (lo que hacía el envío muchísimo más
+    # lento cuanto más larga era la lista). Reconectamos cada
+    # NEWSLETTER_SMTP_RECONNECT_EVERY correos y esperamos
+    # NEWSLETTER_SEND_DELAY_SECONDS entre envíos, para no encadenar cientos de
+    # comandos en la misma conexión ni parecer una ráfaga de spam ante Gmail.
+    conn_cm = None
+    conn: smtplib.SMTP | None = None
+    sent_since_reconnect = 0
+
+    def _open_connection() -> None:
+        nonlocal conn_cm, conn, sent_since_reconnect
+        conn_cm = smtp_connection(smtp_detail.delivery)
+        conn = conn_cm.__enter__()
+        sent_since_reconnect = 0
+
+    def _close_connection() -> None:
+        nonlocal conn_cm, conn
+        if conn_cm is not None:
+            try:
+                conn_cm.__exit__(None, None, None)
+            except Exception:
+                pass
+        conn_cm = None
+        conn = None
+
+    try:
+        if total:
+            _open_connection()
+        for i, target in enumerate(targets, start=1):
+            to = str(target.get("correo", "") or "").strip()
+            if not to:
+                continue
+            cid = str(target.get("contact_id", "") or "").strip() or f"__extra__:{_normalize_email(to)}"
+            nombre = str(target.get("nombre", "") or "")
+
+            inline_images: dict[str, tuple[bytes, str]] = {
+                "logo": (logo_bytes, "png"),
+                "icon_web": (load_web_icon_bytes(), "png"),
+                "icon_linkedin": (load_linkedin_icon_bytes(), "png"),
+            }
+            if hero:
+                inline_images["hero"] = hero
+            unsubscribe_url = build_unsubscribe_url(cid, newsletter_id)
+            html = render_newsletter_html(
+                content,
+                logo_src="cid:logo",
+                hero_src=hero_src,
+                unsubscribe_url=unsubscribe_url,
+                icon_web_src="cid:icon_web",
+                icon_linkedin_src="cid:icon_linkedin",
             )
-            sent_records.append(
-                {
-                    "contact_id": str(target.get("contact_id", "") or ""),
-                    "nombre": nombre,
-                    "correo": to,
-                }
-            )
-        except Exception as exc:
-            friendly = smtp_exception_user_message(exc, routed_profile_slug=smtp_detail.routed_profile_slug)
-            send_errors.append(f"{nombre or to}: {friendly}")
+
+            if sent_since_reconnect >= NEWSLETTER_SMTP_RECONNECT_EVERY:
+                _close_connection()
+                _open_connection()
+
+            def _record_sent() -> None:
+                sent_records.append(
+                    {
+                        "contact_id": str(target.get("contact_id", "") or ""),
+                        "nombre": nombre,
+                        "correo": to,
+                    }
+                )
+
+            try:
+                send_html_email(
+                    to,
+                    _newsletter_email_subject(content),
+                    html,
+                    inline_images=inline_images,
+                    connection=conn,
+                )
+                sent_since_reconnect += 1
+                _record_sent()
+            except (smtplib.SMTPServerDisconnected, OSError):
+                # La conexión persistente se cayó (timeout del servidor, red, …):
+                # reconectamos una vez y reintentamos este mismo destinatario
+                # antes de darlo por fallido.
+                try:
+                    _close_connection()
+                    _open_connection()
+                    send_html_email(
+                        to,
+                        _newsletter_email_subject(content),
+                        html,
+                        inline_images=inline_images,
+                        connection=conn,
+                    )
+                    sent_since_reconnect += 1
+                    _record_sent()
+                except Exception as exc2:
+                    friendly = smtp_exception_user_message(exc2, routed_profile_slug=smtp_detail.routed_profile_slug)
+                    send_errors.append(f"{nombre or to}: {friendly}")
+            except Exception as exc:
+                friendly = smtp_exception_user_message(exc, routed_profile_slug=smtp_detail.routed_profile_slug)
+                send_errors.append(f"{nombre or to}: {friendly}")
+
+            if progress is not None:
+                progress.progress(i / total, text=f"Enviando {i}/{total}…")
+            if i < total:
+                time.sleep(NEWSLETTER_SEND_DELAY_SECONDS)
+    finally:
+        _close_connection()
+        if progress is not None:
+            progress.empty()
 
     if sent_records:
         st.success(

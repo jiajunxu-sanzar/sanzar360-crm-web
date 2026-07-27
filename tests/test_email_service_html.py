@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from app.smtp_profiles import SmtpDeliveryConfig
-from services.email_service import send_html_email
+from services.email_service import send_email, send_html_email, smtp_connection
 
 
 class _FakeSMTP:
@@ -17,6 +17,8 @@ class _FakeSMTP:
         self.starttls_called = False
         self.login_args: tuple[str, str] | None = None
         self.sent_message = None
+        self.sent_messages: list[object] = []
+        self.quit_called = False
         _FakeSMTP.instances.append(self)
 
     def __enter__(self) -> "_FakeSMTP":
@@ -33,6 +35,10 @@ class _FakeSMTP:
 
     def send_message(self, msg) -> None:
         self.sent_message = msg
+        self.sent_messages.append(msg)
+
+    def quit(self) -> None:
+        self.quit_called = True
 
 
 def _cfg(**overrides: object) -> SmtpDeliveryConfig:
@@ -91,3 +97,53 @@ def test_send_html_email_raises_without_smtp_config() -> None:
         assert False, "debería haber lanzado RuntimeError"
     except RuntimeError:
         pass
+
+
+def test_smtp_connection_reused_across_several_sends() -> None:
+    """Envío masivo: una sola conexión (un solo handshake+login) para N correos."""
+    _FakeSMTP.instances.clear()
+    with patch("smtplib.SMTP", _FakeSMTP):
+        with smtp_connection(_cfg()) as conn:
+            for i in range(5):
+                send_html_email(f"dest{i}@example.com", "Asunto", "<html></html>", connection=conn)
+
+    # Una única conexión abierta y autenticada, no una por destinatario.
+    assert len(_FakeSMTP.instances) == 1
+    fake = _FakeSMTP.instances[0]
+    assert fake.starttls_called is True
+    assert fake.login_args == ("a@sanzar-group.com", "secret")
+    assert len(fake.sent_messages) == 5
+    assert [m["To"] for m in fake.sent_messages] == [f"dest{i}@example.com" for i in range(5)]
+    assert all(m["From"] == "a@sanzar-group.com" for m in fake.sent_messages)
+    # La conexión se cierra sola al salir del context manager.
+    assert fake.quit_called is True
+
+
+def test_smtp_connection_closes_even_if_send_raises() -> None:
+    _FakeSMTP.instances.clear()
+    with patch("smtplib.SMTP", _FakeSMTP):
+        try:
+            with smtp_connection(_cfg()) as conn:
+                conn.send_message  # noqa: B018 - solo para referenciarlo, no lo llamamos
+                raise ValueError("fallo simulado a mitad del envío masivo")
+        except ValueError:
+            pass
+    assert _FakeSMTP.instances[0].quit_called is True
+
+
+def test_send_email_reuses_connection_too() -> None:
+    _FakeSMTP.instances.clear()
+    with patch("smtplib.SMTP", _FakeSMTP):
+        with smtp_connection(_cfg()) as conn:
+            send_email("dest@example.com", "Asunto texto", "Cuerpo", connection=conn)
+    fake = _FakeSMTP.instances[0]
+    assert fake.sent_message["To"] == "dest@example.com"
+    assert fake.sent_message["From"] == "a@sanzar-group.com"
+
+
+def test_send_html_email_without_connection_still_opens_and_closes_one_connection() -> None:
+    """Comportamiento sin cambios para quien no pase `connection` (envío individual)."""
+    _FakeSMTP.instances.clear()
+    with patch("smtplib.SMTP", _FakeSMTP):
+        send_html_email("dest@example.com", "Asunto", "<html></html>", delivery=_cfg())
+    assert len(_FakeSMTP.instances) == 1
