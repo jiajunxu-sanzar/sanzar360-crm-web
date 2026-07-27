@@ -6,11 +6,27 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from app.cache import sheets_service
+from app import auth
+from app.cache import load_users_cached, sheets_service
+from app.navigation import ROLE_ADMIN, normalize_role
 from ui.components.page_header import render_page_header
 from services.vacations_service import VacationsService, expand_absence_day_types
 
 _VAC_OVERLAY_KEY = "vacaciones.manage_absences_open"
+
+
+def can_manage_vacaciones(role: str) -> bool:
+    """Solo administradores pueden añadir/editar/eliminar ausencias."""
+    return normalize_role(role) == ROLE_ADMIN
+
+
+def _authenticated_user_role() -> str:
+    uid = auth.get_authenticated_user_id()
+    users = load_users_cached(st.session_state.get("users_cache_version", 0))
+    for user in users:
+        if user.employee_id == uid:
+            return str(user.role or "")
+    return ""
 
 
 @st.cache_resource
@@ -40,14 +56,21 @@ def render(_: pd.DataFrame) -> None:
         st.warning("No hay empleados cargados en la hoja de vacaciones.")
         return
 
+    is_admin = can_manage_vacaciones(_authenticated_user_role())
+    if not is_admin:
+        st.session_state.pop(_VAC_OVERLAY_KEY, None)
+
     selected_name = ""
     if not summary.empty:
         title_col, action_col = st.columns([4, 1])
         with title_col:
             st.subheader("Resumen anual")
         with action_col:
-            if st.button("Gestionar ausencias", width="stretch"):
-                st.session_state[_VAC_OVERLAY_KEY] = True
+            if is_admin:
+                if st.button("Gestionar ausencias", width="stretch"):
+                    st.session_state[_VAC_OVERLAY_KEY] = True
+            else:
+                st.caption("Solo admin puede gestionar ausencias.")
         summary_view = summary.rename(
             columns={
                 "nombre": "Nombre",
@@ -77,7 +100,7 @@ def render(_: pd.DataFrame) -> None:
         else:
             st.caption("Haz click en una fila del resumen para ver su calendario.")
 
-    if st.session_state.get(_VAC_OVERLAY_KEY, False):
+    if is_admin and st.session_state.get(_VAC_OVERLAY_KEY, False):
         _manage_absences_dialog(employees, absences)
 
     st.subheader("Calendario de ausencias (12 meses)")
