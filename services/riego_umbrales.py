@@ -1356,6 +1356,13 @@ class InformeCompleto:
     confianza_cc: str = "sin_datos"        # "alta" | "media" | "baja" | "sin_datos"
     metodo_cc: Optional[str] = None        # descripcion de como se agrego la CCoptima final
 
+    # Parámetros de la corrida (para el informe)
+    horas_min_estable: float = 4.0
+    umbral_lluvia_mm: float = 1.0
+    percentil_valle: float = 75.0
+    excluir_posible_lluvia: bool = False
+    kc: float = 1.0
+
 
 # ----------------------------------------------------------------------
 # Utilidades internas
@@ -1593,6 +1600,11 @@ def ejecutar_analisis_completo(
         n_eventos_robustos=len(eventos_robustos),
         confianza_cc=confianza_cc,
         metodo_cc=metodo_cc,
+        horas_min_estable=float(params_cc.horas_min_estable),
+        umbral_lluvia_mm=float(umbral_lluvia_mm),
+        percentil_valle=float(percentil_valle),
+        excluir_posible_lluvia=bool(excluir_posible_lluvia),
+        kc=float(kc),
     )
 
 
@@ -1624,6 +1636,15 @@ def imprimir_informe_completo(inf: InformeCompleto) -> None:
         )
     else:
         print(f"  Meteo (ET0/lluvia): n/d  (fuente: {fuente_label})")
+
+    print("\n[PARAMETROS CONSIDERADOS]")
+    print(f"  Horas mín. estables para CC : {inf.horas_min_estable:.1f} h")
+    print(f"  Umbral de lluvia            : {inf.umbral_lluvia_mm:.1f} mm")
+    print(f"  Percentil valle seguridad   : {inf.percentil_valle:.1f}")
+    print(f"  Excluir posible lluvia      : {'sí' if inf.excluir_posible_lluvia else 'no'}")
+    print(f"  Coef. seguridad             : {inf.coef_seguridad_vwc:.1f} %VWC")
+    print(f"  p de tabla                  : {inf.p_tabla:.3f}")
+    print(f"  Kc                          : {inf.kc:.2f}")
 
     if inf.avisos:
         print("\n[AVISOS]")

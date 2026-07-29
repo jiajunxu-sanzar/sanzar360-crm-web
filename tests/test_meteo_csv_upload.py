@@ -122,7 +122,7 @@ def test_ejecutar_analisis_con_df_meteo_no_llama_api(tmp_path: Path) -> None:
 
 
 def test_imprimir_informe_incluye_datos_considerados(tmp_path: Path, capsys) -> None:
-    from services.riego_umbrales import imprimir_informe_completo
+    from services.riego_umbrales import ParametrosDeteccion, imprimir_informe_completo
 
     sensor = _write(
         tmp_path / "sensor_print.csv",
@@ -152,6 +152,12 @@ def test_imprimir_informe_incluye_datos_considerados(tmp_path: Path, capsys) -> 
         fecha_fin="2026-07-22",
         con_cabecera=False,
         df_meteo=meteo,
+        params_cc=ParametrosDeteccion(horas_min_estable=6.0),
+        umbral_lluvia_mm=1.5,
+        percentil_valle=80.0,
+        excluir_posible_lluvia=True,
+        coef_seguridad_vwc=2.5,
+        kc=0.85,
         _obtener_meteo_fn=lambda *a, **k: (_ for _ in ()).throw(AssertionError("api")),
     )
     imprimir_informe_completo(informe)
@@ -161,6 +167,14 @@ def test_imprimir_informe_incluye_datos_considerados(tmp_path: Path, capsys) -> 
     assert "Meteo (ET0/lluvia)" in out
     assert "CSV Open-Meteo" in out
     assert "20/07/2026" in out
+    assert "[PARAMETROS CONSIDERADOS]" in out
+    assert "Horas mín. estables para CC : 6.0 h" in out
+    assert "Umbral de lluvia            : 1.5 mm" in out
+    assert "Percentil valle seguridad   : 80.0" in out
+    assert "Excluir posible lluvia      : sí" in out
+    assert "Coef. seguridad             : 2.5 %VWC" in out
+    assert "p de tabla                  : 0.400" in out
+    assert "Kc                          : 0.85" in out
 
 
 def test_ejecutar_analisis_meteo_sin_solape_error(tmp_path: Path) -> None:
