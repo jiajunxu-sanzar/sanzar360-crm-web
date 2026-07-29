@@ -45,7 +45,7 @@ class ParametrosDeteccion:
     # Deteccion de estabilizacion (drenaje completado)
     ventana_suavizado: int = 3            # nº de lecturas para la media movil de suavizado
     umbral_estable_vwc_h: float = 0.05    # %VWC/h -> por debajo, se considera "estable"
-    horas_min_estable: float = 6.0        # duracion minima sostenida por debajo del umbral
+    horas_min_estable: float = 4.0        # duracion minima sostenida por debajo del umbral
 
     # Validez del evento
     horas_min_ventana_drenaje: float = 24.0  # ventana minima disponible tras el pico para aceptar el evento

@@ -758,7 +758,7 @@ def _render_umbrales_ubicacion() -> tuple[float, float, bool, object]:
     return float(lat), float(lon), bool(usar_meteo_csv), meteo_upload
 
 
-def _render_umbrales_avanzadas() -> tuple[float, float, bool]:
+def _render_umbrales_avanzadas() -> tuple[float, float, bool, float]:
     with st.expander("Opciones avanzadas", expanded=False):
         umbral_lluvia_mm = st.number_input(
             "Umbral de lluvia (mm)", min_value=0.0, value=1.0, step=0.1, key="tecnico_umbral_lluvia"
@@ -775,12 +775,29 @@ def _render_umbrales_avanzadas() -> tuple[float, float, bool]:
                 "P75 (75) es el valor conservador por defecto."
             ),
         )
+        horas_min_estable = st.number_input(
+            "Horas mín. estables para CC",
+            min_value=0.5,
+            value=4.0,
+            step=0.5,
+            format="%.1f",
+            key="tecnico_horas_min_estable",
+            help=(
+                "Tras el pico de riego, la humedad debe permanecer estable este lapso "
+                "para aceptar el evento y calcular la CC real."
+            ),
+        )
         excluir_posible_lluvia = st.checkbox(
             "Excluir del cálculo los eventos que puedan ser lluvia",
             value=False,
             key="tecnico_excluir_lluvia",
         )
-    return float(umbral_lluvia_mm), float(percentil_valle), bool(excluir_posible_lluvia)
+    return (
+        float(umbral_lluvia_mm),
+        float(percentil_valle),
+        bool(excluir_posible_lluvia),
+        float(horas_min_estable),
+    )
 
 
 def _render_tab_umbrales(contacts_df: pd.DataFrame) -> None:
@@ -791,7 +808,9 @@ def _render_tab_umbrales(contacts_df: pd.DataFrame) -> None:
     textura_key = _render_umbrales_suelo()
     p_tabla, kc, coef_seguridad_vwc = _render_umbrales_cultivo()
     lat, lon, usar_meteo_csv, meteo_upload = _render_umbrales_ubicacion()
-    umbral_lluvia_mm, percentil_valle, excluir_posible_lluvia = _render_umbrales_avanzadas()
+    umbral_lluvia_mm, percentil_valle, excluir_posible_lluvia, horas_min_estable = (
+        _render_umbrales_avanzadas()
+    )
     # Mantener backup fresco por si el siguiente interacción es el diálogo Kc.
     _snapshot_tecnico_form_backup()
 
@@ -845,7 +864,7 @@ def _render_tab_umbrales(contacts_df: pd.DataFrame) -> None:
                     umbral_lluvia_mm=float(umbral_lluvia_mm),
                     excluir_posible_lluvia=bool(excluir_posible_lluvia),
                     percentil_valle=float(percentil_valle),
-                    params_cc=ParametrosDeteccion(),
+                    params_cc=ParametrosDeteccion(horas_min_estable=float(horas_min_estable)),
                     params_pmp=ParametrosPMP(),
                     con_cabecera=bool(con_cabecera),
                     df_meteo=df_meteo,

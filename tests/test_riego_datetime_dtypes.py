@@ -4,7 +4,12 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from services.riego_umbrales import _ensure_datetime64_ns
+from services.riego_umbrales import ParametrosDeteccion, _ensure_datetime64_ns
+
+
+def test_parametros_deteccion_horas_min_estable_default_4h() -> None:
+    assert ParametrosDeteccion().horas_min_estable == 4.0
+    assert ParametrosDeteccion(horas_min_estable=8.0).horas_min_estable == 8.0
 
 
 def test_ensure_datetime64_ns_from_ns() -> None:
