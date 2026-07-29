@@ -147,6 +147,33 @@ HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
             "textura_suelo",
         ),
     ),
+    "riego_campanas": HistorySpec(
+        "riego_campanas",
+        "Histórico de riegos (campaña)",
+        "HistoricoRiegos_Campanas",
+        "historial_riego_id",
+        "dia_riego",
+        (
+            "historial_riego_id",
+            "historial_campana_id",
+            "contact_id",
+            "dia_riego",
+            "hora_inicio_riego",
+            "horas_riego",
+            "litros",
+            "es_nota",
+            "nota",
+            "created_at",
+            "updated_at",
+        ),
+        (
+            "dia_riego",
+            "hora_inicio_riego",
+            "horas_riego",
+            "litros",
+            "es_nota",
+        ),
+    ),
     "suscripciones": HistorySpec(
         "suscripciones",
         "Histórico de suscripciones",
@@ -818,6 +845,27 @@ class HistoryService:
             return []
         rows = sub.to_dict("records")
         return sorted(rows, key=lambda row: _parse_date(row.get(HISTORY_SPECS[kind].date_column, "")) or date.min, reverse=True)
+
+    def rows_for_campaign(self, kind: HistoryKind, historial_campana_id: str) -> list[dict[str, str]]:
+        """Filas asociadas a una campaña, ordenadas por día y hora de inicio."""
+        self.load_kind(kind)
+        campana_id = str(historial_campana_id or "").strip()
+        if not campana_id:
+            return []
+        df = self._frames[kind]
+        if df.empty or "historial_campana_id" not in df.columns:
+            return []
+        sub = df[df["historial_campana_id"].astype(str).str.strip() == campana_id]
+        if sub.empty:
+            return []
+        rows = sub.to_dict("records")
+
+        def _sort_key(row: dict[str, str]) -> tuple:
+            d = _parse_date(str(row.get("dia_riego", "") or "")) or date.min
+            hora = str(row.get("hora_inicio_riego", "") or "").strip()
+            return (d, hora)
+
+        return sorted(rows, key=_sort_key)
 
     def latest_for_contact(self, kind: HistoryKind, contact_id: str) -> dict[str, str] | None:
         rows = self.rows_for_contact(kind, contact_id)

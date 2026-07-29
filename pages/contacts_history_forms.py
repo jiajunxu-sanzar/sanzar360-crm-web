@@ -33,6 +33,13 @@ from services.incidencia_association_options import (
 )
 from services.inventory_service import normalize_inventory_serial_for_match
 from ui.components.cultivo_kc_form import render_new_cultivo_kc_dialog_body
+from services.riego_campanas import (
+    build_riego_timeline_figure,
+    normalize_riego_row_values,
+    parse_es_nota,
+    serialize_es_nota,
+    validate_riego_campana_values,
+)
 from services.sheet_date_format import (
     SENSOR_SERIAL_NUMBER_FORMAT_HELP,
     is_valid_dd_mm_yyyy,
@@ -571,6 +578,186 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
                 _clear_incidencia_association_state(incidencia_prefix)
             _clear_history_selection(contact_id, kind)
             st.rerun()
+
+    if kind == "campanas":
+        st.divider()
+        _render_campana_riegos_block(contact, row)
+
+
+def _riego_edit_key(campana_id: str) -> str:
+    return f"riego_campanas_edit_id_{campana_id}"
+
+
+def _clear_riego_form_state(prefix: str) -> None:
+    for suffix in (
+        "es_nota",
+        "dia_riego",
+        "hora_inicio_riego",
+        "horas_riego",
+        "litros",
+        "nota",
+    ):
+        st.session_state.pop(f"{prefix}_{suffix}", None)
+
+
+def _render_campana_riegos_block(contact: dict[str, str], campana_row: dict[str, str]) -> None:
+    """Timeline + CRUD manual de riegos/notas asociados a la campaña."""
+    campana_id = str(campana_row.get("historial_campana_id", "") or "").strip()
+    contact_id = str(contact.get("contact_id", "") or "").strip()
+    if not campana_id:
+        st.info("Guarda la campaña antes de registrar riegos.")
+        return
+
+    st.markdown("### Histórico de riegos (campaña)")
+    st.caption("Registra riegos planificados o notas asociadas a esta campaña.")
+
+    svc = history_service()
+    rows = svc.rows_for_campaign("riego_campanas", campana_id)
+
+    left, right = st.columns([1.35, 1.0])
+    with left:
+        fig = build_riego_timeline_figure(rows)
+        if fig is None:
+            st.info("Sin riegos ni notas con fecha/hora válida para graficar.")
+        else:
+            st.pyplot(fig, clear_figure=True)
+            try:
+                import matplotlib.pyplot as plt
+
+                plt.close(fig)
+            except Exception:
+                pass
+    with right:
+        if not rows:
+            st.caption("Todavía no hay entradas.")
+        else:
+            for item in reversed(rows):
+                riego_id = str(item.get("historial_riego_id", "") or "")
+                es_nota = parse_es_nota(item.get("es_nota", ""))
+                dia = str(item.get("dia_riego", "") or "")
+                hora = str(item.get("hora_inicio_riego", "") or "")
+                if es_nota:
+                    resumen = str(item.get("nota", "") or "").strip() or "(nota)"
+                    label = f"📝 {dia} {hora} · {resumen[:60]}"
+                else:
+                    litros = str(item.get("litros", "") or "")
+                    horas = str(item.get("horas_riego", "") or "")
+                    label = f"💧 {dia} {hora} · {litros} L · {horas} h"
+                c_label, c_edit, c_del = st.columns([3.2, 1.0, 1.0])
+                c_label.markdown(label)
+                if c_edit.button("Editar", key=f"riego_edit_btn_{riego_id}", width="stretch"):
+                    st.session_state[_riego_edit_key(campana_id)] = riego_id
+                    st.rerun()
+                if c_del.button("Borrar", key=f"riego_del_btn_{riego_id}", width="stretch"):
+                    try:
+                        svc.delete_row("riego_campanas", riego_id)
+                        bump_history_cache()
+                        if st.session_state.get(_riego_edit_key(campana_id)) == riego_id:
+                            st.session_state.pop(_riego_edit_key(campana_id), None)
+                        st.success("Entrada de riego eliminada.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"No se pudo borrar: {exc}")
+
+    edit_id = str(st.session_state.get(_riego_edit_key(campana_id), "") or "").strip()
+    editing = next((r for r in rows if str(r.get("historial_riego_id", "")) == edit_id), None)
+    form_title = "Editar entrada" if editing else "Nueva entrada"
+    st.markdown(f"**{form_title}**")
+
+    prefix = f"riego_form_{campana_id}_{edit_id or 'new'}"
+    defaults = editing or {
+        "es_nota": "false",
+        "dia_riego": "",
+        "hora_inicio_riego": "",
+        "horas_riego": "",
+        "litros": "",
+        "nota": "",
+    }
+
+    es_nota_default = parse_es_nota(defaults.get("es_nota", ""))
+    es_nota = st.toggle("Es una nota (sin riego)", value=es_nota_default, key=f"{prefix}_es_nota")
+    if es_nota:
+        st.text_area("Nota", value=str(defaults.get("nota", "") or ""), key=f"{prefix}_nota", height=90)
+        st.text_input(
+            "Día",
+            value=str(defaults.get("dia_riego", "") or ""),
+            key=f"{prefix}_dia_riego",
+            placeholder="DD/MM/AAAA",
+        )
+        st.text_input(
+            "Hora inicio",
+            value=str(defaults.get("hora_inicio_riego", "") or ""),
+            key=f"{prefix}_hora_inicio_riego",
+            placeholder="HH:MM",
+        )
+    else:
+        c1, c2 = st.columns(2)
+        c1.text_input(
+            "Día de riego",
+            value=str(defaults.get("dia_riego", "") or ""),
+            key=f"{prefix}_dia_riego",
+            placeholder="DD/MM/AAAA",
+        )
+        c2.text_input(
+            "Hora inicio",
+            value=str(defaults.get("hora_inicio_riego", "") or ""),
+            key=f"{prefix}_hora_inicio_riego",
+            placeholder="HH:MM",
+        )
+        c3, c4 = st.columns(2)
+        c3.text_input(
+            "Horas de riego",
+            value=str(defaults.get("horas_riego", "") or ""),
+            key=f"{prefix}_horas_riego",
+        )
+        c4.text_input(
+            "Litros",
+            value=str(defaults.get("litros", "") or ""),
+            key=f"{prefix}_litros",
+        )
+        st.text_area(
+            "Nota (opcional)",
+            value=str(defaults.get("nota", "") or ""),
+            key=f"{prefix}_nota",
+            height=70,
+        )
+
+    save_label = "Aplicar cambios" if editing else ("Guardar nota" if es_nota else "Guardar riego")
+    b_save, b_cancel = st.columns(2)
+    if b_save.button(save_label, type="primary", width="stretch", key=f"{prefix}_save"):
+        values = {
+            "historial_campana_id": campana_id,
+            "contact_id": contact_id,
+            "es_nota": serialize_es_nota(bool(st.session_state.get(f"{prefix}_es_nota"))),
+            "dia_riego": str(st.session_state.get(f"{prefix}_dia_riego", "") or ""),
+            "hora_inicio_riego": str(st.session_state.get(f"{prefix}_hora_inicio_riego", "") or ""),
+            "horas_riego": str(st.session_state.get(f"{prefix}_horas_riego", "") or ""),
+            "litros": str(st.session_state.get(f"{prefix}_litros", "") or ""),
+            "nota": str(st.session_state.get(f"{prefix}_nota", "") or ""),
+        }
+        values = normalize_riego_row_values(values)
+        err = validate_riego_campana_values(values)
+        if err:
+            st.error(err)
+        else:
+            try:
+                if editing:
+                    svc.update_row("riego_campanas", edit_id, values)
+                    st.success("Riego actualizado.")
+                else:
+                    svc.add_row("riego_campanas", values)
+                    st.success("Riego guardado.")
+                bump_history_cache()
+                st.session_state.pop(_riego_edit_key(campana_id), None)
+                _clear_riego_form_state(prefix)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"No se pudo guardar: {exc}")
+    if editing and b_cancel.button("Cancelar edición", width="stretch", key=f"{prefix}_cancel"):
+        st.session_state.pop(_riego_edit_key(campana_id), None)
+        _clear_riego_form_state(prefix)
+        st.rerun()
+
 
 @st.dialog("Cierre de histórico sensor", on_dismiss=_on_dismiss_sensor_close_location)
 def _sensor_close_location_dialog(kind: str, contact: dict[str, str], row: dict[str, str]) -> None:

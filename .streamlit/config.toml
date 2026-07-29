@@ -7,6 +7,8 @@ font = "sans serif"
 
 [client]
 showSidebarNavigation = false
+# Minimal chrome; keep sidebar expand control available when collapsed.
+toolbarMode = "minimal"
 
 [server]
 maxUploadSize = 20

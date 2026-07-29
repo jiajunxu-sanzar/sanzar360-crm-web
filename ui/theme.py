@@ -14,14 +14,37 @@ def apply_theme() -> None:
         + css_variables()
         + """
         body, .stApp { font-family: var(--ui-font) !important; }
-        /* Ocultar la barra superior de Streamlit (Deploy + menú) para un
-           aspecto de producto. Se conserva el gancho de status por si acaso. */
-        [data-testid="stToolbar"] { display: none !important; }
+        /* Ocultar chrome de Streamlit (Deploy / menú / decoración) pero
+           mantener el header vivo: ahí vive el botón >> para reabrir el
+           sidebar cuando está compactado (stExpandSidebarButton). */
         [data-testid="stDecoration"] { display: none !important; }
+        [data-testid="stAppDeployButton"],
+        [data-testid="stToolbarActions"],
+        [data-testid="stMainMenu"],
+        [data-testid="stStatusWidget"] {
+          display: none !important;
+        }
         header[data-testid="stHeader"] {
           background: transparent !important;
-          height: 0 !important;
-          min-height: 0 !important;
+        }
+        /* Reabrir sidebar: siempre visible y clicable cuando el menú
+           izquierdo está compactado. */
+        [data-testid="stExpandSidebarButton"] {
+          display: flex !important;
+          visibility: visible !important;
+          opacity: 1 !important;
+          pointer-events: auto !important;
+          position: fixed !important;
+          top: 0.55rem !important;
+          left: 0.55rem !important;
+          z-index: 1000000 !important;
+        }
+        [data-testid="stExpandSidebarButton"] button {
+          background: var(--ui-bg-elevated) !important;
+          border: 1px solid var(--ui-border) !important;
+          border-radius: 8px !important;
+          color: var(--ui-text) !important;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
         }
         /* Page */
         .block-container {
@@ -357,9 +380,6 @@ def apply_theme() -> None:
           font-size: 0.875rem !important;
           font-weight: 500 !important;
         }
-        div[data-testid="stToolbar"] { opacity: 0.35; }
-        div[data-testid="stToolbar"]:hover { opacity: 1; }
-
         /* Cards & chips */
         .sanzar-card {
           border: 1px solid var(--ui-border);
