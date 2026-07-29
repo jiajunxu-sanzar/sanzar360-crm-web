@@ -36,6 +36,7 @@ from services.inventory_service import normalize_inventory_serial_for_match
 from ui.components.cultivo_kc_form import render_new_cultivo_kc_dialog_body
 from services.riego_campanas import (
     build_riego_timeline_figure,
+    export_riego_campanas_excel_bytes,
     normalize_riego_row_values,
     parse_es_nota,
     parse_nota_util,
@@ -639,6 +640,17 @@ def _riego_campanas_dialog(contact: dict[str, str], campana_row: dict[str, str])
     svc = history_service()
     rows = svc.rows_for_campaign("riego_campanas", campana_id)
     riegos, notas = split_riego_and_nota_rows(rows)
+
+    nombre_sanitizado = "".join(c for c in nombre if c.isalnum() or c in {"_", "-"}).strip("_-") or campana_id
+    excel_bytes = export_riego_campanas_excel_bytes(rows)
+    st.download_button(
+        "Exportar Excel",
+        data=excel_bytes,
+        file_name=f"riegos_campana_{nombre_sanitizado}_{campana_id}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"export_riego_xlsx_{campana_id}",
+        use_container_width=False,
+    )
 
     fig = build_riego_timeline_figure(riegos)
     if fig is None:

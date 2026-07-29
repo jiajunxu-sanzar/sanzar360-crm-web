@@ -5,6 +5,7 @@ import pandas as pd
 from services.history_service import HISTORY_SPECS, HistoryService
 from services.riego_campanas import (
     build_riego_timeline_figure,
+    export_riego_campanas_excel_bytes,
     normalize_riego_row_values,
     parse_es_nota,
     parse_nota_util,
@@ -333,3 +334,58 @@ def test_split_riego_and_nota_rows() -> None:
     )
     assert [r["historial_riego_id"] for r in riegos] == ["1"]
     assert [r["historial_riego_id"] for r in notas] == ["2", "3"]
+
+
+def test_export_riego_campanas_excel_separates_notas() -> None:
+    from io import BytesIO
+
+    # 1 riego + 1 nota: deben acabar en hojas distintas.
+    rows = [
+        {
+            "historial_riego_id": "r1",
+            "historial_campana_id": "camp-1",
+            "contact_id": "c-1",
+            "dia_riego": "10/06/2026",
+            "hora_inicio_riego": "08:00",
+            "horas_riego": "1",
+            "litros": "20",
+            "es_nota": "false",
+            "nota": "",
+            "nota_util": "false",
+            "created_at": "29/07/2026",
+            "updated_at": "29/07/2026",
+        },
+        {
+            "historial_riego_id": "n1",
+            "historial_campana_id": "camp-1",
+            "contact_id": "c-1",
+            "dia_riego": "",
+            "hora_inicio_riego": "",
+            "horas_riego": "",
+            "litros": "",
+            "es_nota": "true",
+            "nota": "Parada por viento",
+            "nota_util": "true",
+            "created_at": "29/07/2026",
+            "updated_at": "29/07/2026",
+        },
+    ]
+
+    xlsx = export_riego_campanas_excel_bytes(rows)
+    from openpyxl import load_workbook
+
+    wb = load_workbook(BytesIO(xlsx), data_only=True)
+    assert set(wb.sheetnames) == {"Riegos", "Notas"}
+
+    ws_r = wb["Riegos"]
+    data_r = list(ws_r.iter_rows(min_row=2, values_only=True))
+    assert len(data_r) == 1
+    # Columna 0 = dia_riego (orden fijo por DataFrame).
+    assert str(data_r[0][0]) == "10/06/2026"
+
+    ws_n = wb["Notas"]
+    data_n = list(ws_n.iter_rows(min_row=2, values_only=True))
+    assert len(data_n) == 1
+    # Columna 0 = nota, col 1 = nota_util.
+    assert str(data_n[0][0]) == "Parada por viento"
+    assert str(data_n[0][1]).strip() == "Útil"

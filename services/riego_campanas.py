@@ -189,3 +189,37 @@ def build_riego_timeline_figure(rows: list[dict[str, str]]) -> Any | None:
         paper_bgcolor="rgba(0,0,0,0)",
     )
     return fig
+
+
+def export_riego_campanas_excel_bytes(rows: list[dict[str, str]]) -> bytes:
+    """Exporta el histórico de riegos (campaña) a Excel (2 hojas).
+
+    - Hoja `Riegos`: eventos con `es_nota=false`.
+    - Hoja `Notas`: entradas con `es_nota=true` con `nota_util`.
+    """
+    import io
+
+    riegos, notas = split_riego_and_nota_rows(rows)
+    riego_cols = ["dia_riego", "hora_inicio_riego", "horas_riego", "litros", "nota", "created_at", "updated_at"]
+    nota_cols = ["nota", "nota_util", "created_at", "updated_at"]
+
+    df_riegos = pd.DataFrame([{c: r.get(c, "") for c in riego_cols} for r in riegos], columns=riego_cols)
+    df_notas = pd.DataFrame([{c: n.get(c, "") for c in nota_cols} for n in notas], columns=nota_cols)
+
+    # Make `nota_util` readable in Excel.
+    if "nota_util" in df_notas.columns:
+        df_notas["nota_util"] = df_notas["nota_util"].apply(
+            lambda v: "Útil" if str(v or "").strip().lower() == "true" else "No útil"
+        )
+
+    for c in riego_cols + nota_cols:
+        if c in df_riegos.columns:
+            df_riegos[c] = df_riegos[c].fillna("").astype(str)
+        if c in df_notas.columns:
+            df_notas[c] = df_notas[c].fillna("").astype(str)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df_riegos.to_excel(writer, sheet_name="Riegos", index=False)
+        df_notas.to_excel(writer, sheet_name="Notas", index=False)
+    return buf.getvalue()
