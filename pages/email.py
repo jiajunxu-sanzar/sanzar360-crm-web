@@ -409,13 +409,12 @@ def _do_send(
     body: str,
     smtp_detail: SmtpResolved,
 ) -> None:
-    from datetime import date, datetime
+    from services.madrid_time import madrid_dd_mm_yyyy, madrid_hh_mm
 
     update_seg: bool = st.session_state.get("email_update_seguimiento", False)
     actor = _email_actor_name()
-    now = datetime.now()
-    fecha_hoy = date.today().strftime("%d/%m/%Y")
-    hora_ahora = now.strftime("%H:%M")
+    fecha_hoy = madrid_dd_mm_yyyy()
+    hora_ahora = madrid_hh_mm()
 
     if update_seg:
         sample_row = {

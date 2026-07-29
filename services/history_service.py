@@ -12,6 +12,7 @@ from app.telemetry import timed
 from config.settings import CONFIG
 from services.geo_service import parse_coordinates
 from services.inventory_service import normalize_inventory_serial_for_match
+from services.madrid_time import madrid_dd_mm_yyyy
 from services.sheet_date_format import is_valid_sensor_serial_number, normalize_sensor_serial_number
 from services.sheets_service import SheetsService
 
@@ -333,7 +334,7 @@ HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
 
 
 def _today() -> str:
-    return date.today().strftime("%d/%m/%Y")
+    return madrid_dd_mm_yyyy()
 
 
 def _parse_date(value: str) -> date | None:

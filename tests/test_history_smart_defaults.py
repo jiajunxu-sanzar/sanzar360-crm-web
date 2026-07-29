@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date
-
 import pages.contacts_common as contacts
+from services.madrid_time import madrid_dd_mm_yyyy, madrid_hh_mm
 
 
 def _today() -> str:
-    return date.today().strftime("%d/%m/%Y")
+    return madrid_dd_mm_yyyy()
 
 
 def test_new_sensor_history_defaults_fecha_inicio_to_today() -> None:
@@ -33,7 +32,7 @@ def test_defaults_do_not_overwrite_user_values() -> None:
 def test_incidencia_and_suscripcion_and_campana_defaults() -> None:
     assert contacts._history_smart_defaults("incidencias")["fecha_apertura"] == _today()
     assert contacts._history_smart_defaults("suscripciones")["fecha_pago"] == _today()
-    assert contacts._history_smart_defaults("campanas")["fecha_campana_inicio"] == _today()
+    assert contacts._history_smart_defaults("campanas") == {}
 
 
 def test_seguimiento_defaults_use_logged_user_when_valid(monkeypatch) -> None:
@@ -43,9 +42,9 @@ def test_seguimiento_defaults_use_logged_user_when_valid(monkeypatch) -> None:
     monkeypatch.setattr(contacts, "load_users_cached", lambda version=0: [])
     defaults = contacts._history_smart_defaults("seguimiento_comercial")
     assert defaults["fecha_contacto"] == _today()
+    assert defaults["hora_contacto"] == madrid_hh_mm()
     assert defaults["persona_contacto"] == persona_valida
     assert defaults["proxima_accion_persona"] == persona_valida
-    assert len(defaults["hora_contacto"].split(":")) == 2
 
 
 def test_seguimiento_defaults_blank_persona_when_unknown_user(monkeypatch) -> None:

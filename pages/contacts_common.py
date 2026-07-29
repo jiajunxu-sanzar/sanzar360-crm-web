@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
-from datetime import date, datetime
-
 import pandas as pd
 import streamlit as st
 
@@ -19,6 +17,7 @@ from config.settings import (
     ESTADO_TAREA_OPCIONES,
 )
 from services.contact_use_cases import save_contact_by_id
+from services.madrid_time import madrid_dd_mm_yyyy, madrid_hh_mm
 from services.riego_umbrales import TABLA_TEXTURAS
 from services.users_service import commercial_user_names
 from ui.components.contact_overview_table import filter_overview_by_contact_ids, sort_overview_by_proxima_accion
@@ -337,18 +336,18 @@ def _actor_name() -> str:
 def _history_smart_defaults(kind: str) -> dict[str, str]:
     """Valores por defecto para un histórico NUEVO (menos clics por registro).
 
-    Fecha del día, hora actual y persona = usuario logado (si figura entre las
-    opciones comerciales). Solo se aplican sobre campos vacíos de registros
-    nuevos; nunca sobre filas existentes.
+    Fecha del día, hora actual (Europe/Madrid) y persona = usuario logado (si
+    figura entre las opciones comerciales). Solo se aplican sobre campos vacíos
+    de registros nuevos; nunca sobre filas existentes.
     """
-    today = date.today().strftime("%d/%m/%Y")
+    today = madrid_dd_mm_yyyy()
     if kind == "seguimiento_comercial":
         actor = _actor_name().strip()
         names = commercial_user_names(load_users_cached(st.session_state.get("users_cache_version", 0)))
         persona = actor if actor in names else ""
         return {
             "fecha_contacto": today,
-            "hora_contacto": datetime.now().strftime("%H:%M"),
+            "hora_contacto": madrid_hh_mm(),
             "persona_contacto": persona,
             "proxima_accion_persona": persona,
         }
@@ -384,7 +383,7 @@ def _history_smart_defaults(kind: str) -> dict[str, str]:
     return {}
 
 def _apply_smart_defaults(kind: str, initial: dict[str, str], *, is_new: bool) -> dict[str, str]:
-    today = date.today().strftime("%d/%m/%Y")
+    today = madrid_dd_mm_yyyy()
     if kind in {"notas", "tareas"} and not is_new:
         updated = dict(initial)
         updated["fecha_update"] = today
