@@ -376,7 +376,7 @@ def _history_smart_defaults(kind: str) -> dict[str, str]:
     if kind == "sensores":
         return {"fecha_inicio": today}
     if kind == "campanas":
-        return {"fecha_campana_inicio": today}
+        return {}
     if kind == "suscripciones":
         return {"fecha_pago": today}
     if kind == "incidencias":
