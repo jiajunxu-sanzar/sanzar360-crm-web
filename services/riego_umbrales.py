@@ -45,7 +45,7 @@ class ParametrosDeteccion:
     # Deteccion de estabilizacion (drenaje completado)
     ventana_suavizado: int = 3            # nº de lecturas para la media movil de suavizado
     umbral_estable_vwc_h: float = 0.05    # %VWC/h -> por debajo, se considera "estable"
-    horas_min_estable: float = 4.0        # duracion minima sostenida por debajo del umbral
+    horas_min_estable: float = 4.0        # duracion minima sostenida por debajo del umbral (configurable: 3h, 4h, 6h...)
 
     # Validez del evento
     horas_min_ventana_drenaje: float = 24.0  # ventana minima disponible tras el pico para aceptar el evento
@@ -53,6 +53,22 @@ class ParametrosDeteccion:
 
     # Robustez del agregado final
     n_min_eventos: int = 5                # nº minimo de eventos validos para considerar el resultado robusto
+
+    # --- Deteccion "robusta" de CC (filtra ruido/lluvia leve y riegos que no
+    # llegan a saturar el perfil por encima de la CC real) ---
+    usar_deteccion_robusta: bool = True   # False = comportamiento clasico (compatibilidad hacia atras)
+
+    subida_minima_vwc: float = 2.0        # puntos %VWC minimos entre "valor justo antes del riego" y el pico,
+                                           # para no confundir ruido/rocio/lluvia leve con un riego real
+
+    umbral_bajada_rapida_vwc_h: float = -0.15  # %VWC/h -> velocidad minima de drenaje real tras el pico
+    horas_min_bajada_rapida: float = 1.5       # duracion minima sostenida de esa bajada rapida
+
+    horas_ventana_cc_evento: float = 8.0   # ventana CORTA fija tras estabilizar, usada para la mediana de
+                                            # CC_evento (en vez de la mediana hasta el siguiente riego, que se
+                                            # contamina con el secado por evapotranspiracion de dias posteriores)
+
+    top_k_eventos: int = 3                 # nº de eventos "robustos" (mayor subida) usados para la CC final
 
 
 @dataclass
@@ -64,6 +80,20 @@ class ResultadoEvento:
     cc_evento: Optional[float]
     valido: bool
     motivo_descarte: Optional[str] = None
+
+    # --- Campos nuevos del detector robusto (informativos; no rompen el
+    # uso existente de los campos de arriba) ---
+    valor_antes_inicio: Optional[float] = None
+    magnitud_subida: Optional[float] = None       # pico_valor - valor_antes_inicio
+    fin_bajada_rapida: Optional[pd.Timestamp] = None
+    robusto: bool = False                          # True = subida suficiente + drenaje rapido confirmado + meseta
+    clasificacion: str = "sin_evaluar"
+    # clasificacion en:
+    #   "robusto"                  -> se usa para calcular CCoptima
+    #   "dudoso_sin_drenaje"       -> valido (tiene cc_evento) pero sin fase de drenaje rapido confirmada;
+    #                                 se muestra en el informe pero NO entra en el calculo salvo fallback
+    #   "descartado_ruido"         -> subida por debajo de subida_minima_vwc (posible rocio/lluvia leve/ruido)
+    #   "no_valido"                -> descartado por otros motivos (ver motivo_descarte)
 
 
 @dataclass
@@ -77,6 +107,9 @@ class ResultadoUmbrales:
     n_eventos_validos: int
     robusto: bool
     eventos: list = field(default_factory=list)
+    n_eventos_robustos: int = 0
+    confianza_cc: str = "sin_datos"        # "alta" | "media" | "baja" | "sin_datos"
+    metodo_cc: Optional[str] = None        # descripcion de como se agrego la CCoptima final
 
 
 # ----------------------------------------------------------------------
@@ -143,6 +176,30 @@ def derivada_horaria(df: pd.DataFrame, ventana_suavizado: int) -> pd.Series:
     return deriv
 
 
+def derivada_horaria_no_centrada(df: pd.DataFrame, ventana_suavizado: int) -> pd.Series:
+    """
+    Igual que `derivada_horaria`, pero con suavizado hacia atras (center=False):
+    en cada punto solo se usan lecturas pasadas, nunca futuras.
+
+    Se usa especificamente en el test de estabilizacion: la version centrada
+    "ve venir" un descenso posterior (porque promedia con valores futuros) y
+    puede cortar una meseta real antes de tiempo. La version no centrada no
+    tiene ese sesgo de mirar al futuro.
+    """
+    valor_suave = df["valor"].rolling(ventana_suavizado, min_periods=1, center=False).mean()
+    horas = df["timestamp"].diff().dt.total_seconds() / 3600.0
+    deriv = valor_suave.diff() / horas
+    return deriv
+
+
+def _valor_antes_de(df: pd.DataFrame, timestamp: pd.Timestamp) -> Optional[float]:
+    """Ultimo valor registrado estrictamente antes de `timestamp` (o None si no hay ninguno)."""
+    previos = df[df["timestamp"] < timestamp]
+    if previos.empty:
+        return None
+    return float(previos["valor"].iloc[-1])
+
+
 def detectar_inicios_riego_automatico(df: pd.DataFrame, params: ParametrosDeteccion) -> list[pd.Timestamp]:
     """
     Detecta automaticamente los inicios de subida (riego o lluvia) cuando
@@ -178,20 +235,30 @@ def _localizar_pico(df: pd.DataFrame, inicio: pd.Timestamp, params: ParametrosDe
     return df["timestamp"].loc[idx_max], df["valor"].loc[idx_max]
 
 
-def _localizar_estabilizacion(df: pd.DataFrame, pico_tiempo: pd.Timestamp,
+def _localizar_estabilizacion(df: pd.DataFrame, inicio_busqueda: pd.Timestamp,
                                fin_ventana: pd.Timestamp, params: ParametrosDeteccion):
     """
-    Busca, a partir del pico, el primer instante en que la derivada se
-    mantiene por debajo de `umbral_estable_vwc_h` durante al menos
-    `horas_min_estable` seguidas. Devuelve el timestamp de estabilizacion
-    o None si no se alcanza dentro de la ventana disponible.
+    Busca, a partir de `inicio_busqueda`, el primer instante en que la
+    derivada se mantiene por debajo de `umbral_estable_vwc_h` durante al
+    menos `horas_min_estable` horas seguidas (el parametro que decide "3h,
+    4h, 6h..." lo sigue controlando quien llama). Devuelve el timestamp de
+    estabilizacion o None si no se alcanza dentro de la ventana disponible.
+
+    Cuando `params.usar_deteccion_robusta` esta activo, `inicio_busqueda`
+    normalmente ya no es el pico en si, sino el final de una fase de
+    drenaje rapido confirmada (ver `_buscar_fin_bajada_rapida`), y la
+    derivada usada aqui es la NO centrada (solo hacia atras) para no "ver
+    venir" un descenso futuro y cortar una meseta real antes de tiempo.
     """
-    tope = min(fin_ventana, pico_tiempo + pd.Timedelta(hours=params.horas_max_busqueda_estabilizacion))
-    tramo = df[(df["timestamp"] >= pico_tiempo) & (df["timestamp"] <= tope)].reset_index(drop=True)
+    tope = min(fin_ventana, inicio_busqueda + pd.Timedelta(hours=params.horas_max_busqueda_estabilizacion))
+    tramo = df[(df["timestamp"] >= inicio_busqueda) & (df["timestamp"] <= tope)].reset_index(drop=True)
     if len(tramo) < 3:
         return None
 
-    deriv = derivada_horaria(tramo, params.ventana_suavizado).abs()
+    if params.usar_deteccion_robusta:
+        deriv = derivada_horaria_no_centrada(tramo, params.ventana_suavizado).abs()
+    else:
+        deriv = derivada_horaria(tramo, params.ventana_suavizado).abs()
 
     for i in range(len(tramo)):
         t0 = tramo["timestamp"].iloc[i]
@@ -200,6 +267,47 @@ def _localizar_estabilizacion(df: pd.DataFrame, pico_tiempo: pd.Timestamp,
         sub_deriv = deriv.loc[sub.index]
         if len(sub) >= 2 and sub_deriv.max() <= params.umbral_estable_vwc_h:
             return t0
+    return None
+
+
+def _buscar_fin_bajada_rapida(df: pd.DataFrame, pico_tiempo: pd.Timestamp,
+                               fin_ventana: pd.Timestamp, params: ParametrosDeteccion) -> Optional[pd.Timestamp]:
+    """
+    Comprueba que, tras el pico, hubo una fase de drenaje realmente RAPIDA
+    (no solo una subida seguida de una meseta plana sin apenas descenso).
+
+    Acumula horas consecutivas en las que la derivada (centrada) se
+    mantiene en `umbral_bajada_rapida_vwc_h` o por debajo (bajando rapido),
+    usando la duracion REAL entre lecturas (no un conteo de muestras): esto
+    es importante porque muchos sensores muestrean cada 2-12h, y exigir "N
+    lecturas dentro de una ventana corta" fallaria siempre con muestreo
+    disperso aunque el drenaje real fuese rapido y claro.
+
+    En cuanto la racha acumulada alcanza `horas_min_bajada_rapida`, se
+    devuelve el instante en que se confirma (a partir de ahi se busca la
+    meseta estable). Si nunca se acumula lo suficiente, devuelve None: no
+    hay prueba de que el suelo haya llegado a drenar agua sobrante, asi que
+    aunque mas tarde aparezca una meseta, el evento no puede considerarse
+    "robusto" (es el caso de un riego que solo empapa hasta un nivel por
+    debajo de la CC real: sube y se mantiene, pero nunca purga agua de verdad).
+    """
+    tope = min(fin_ventana, pico_tiempo + pd.Timedelta(hours=params.horas_max_busqueda_estabilizacion))
+    tramo = df[(df["timestamp"] >= pico_tiempo) & (df["timestamp"] <= tope)].reset_index(drop=True)
+    if len(tramo) < 2:
+        return None
+
+    deriv = derivada_horaria(tramo, params.ventana_suavizado)
+
+    horas_acumuladas = 0.0
+    for i in range(1, len(tramo)):
+        dt_h = (tramo["timestamp"].iloc[i] - tramo["timestamp"].iloc[i - 1]).total_seconds() / 3600.0
+        d = deriv.iloc[i]
+        if pd.notna(d) and d <= params.umbral_bajada_rapida_vwc_h:
+            horas_acumuladas += dt_h
+            if horas_acumuladas >= params.horas_min_bajada_rapida:
+                return tramo["timestamp"].iloc[i]
+        else:
+            horas_acumuladas = 0.0
     return None
 
 
@@ -213,27 +321,128 @@ def analizar_eventos(df: pd.DataFrame, inicios_riego: list[pd.Timestamp],
 
         pico_tiempo, pico_valor = _localizar_pico(df, inicio, params)
         if pico_tiempo is None:
-            resultados.append(ResultadoEvento(inicio, inicio, np.nan, None, None, False, "sin_datos_tras_inicio"))
+            resultados.append(ResultadoEvento(inicio, inicio, np.nan, None, None, False, "sin_datos_tras_inicio",
+                                               clasificacion="no_valido"))
+            continue
+
+        valor_antes = _valor_antes_de(df, inicio)
+        magnitud_subida = (pico_valor - valor_antes) if valor_antes is not None else None
+
+        if not params.usar_deteccion_robusta:
+            # --- comportamiento clasico (compatibilidad hacia atras) ---
+            ventana_disponible_h = (siguiente_inicio - pico_tiempo).total_seconds() / 3600.0
+            if ventana_disponible_h < params.horas_min_ventana_drenaje:
+                resultados.append(ResultadoEvento(inicio, pico_tiempo, pico_valor, None, None, False,
+                                                   "ventana_drenaje_insuficiente",
+                                                   valor_antes_inicio=valor_antes, magnitud_subida=magnitud_subida,
+                                                   clasificacion="no_valido"))
+                continue
+            t_estable = _localizar_estabilizacion(df, pico_tiempo, siguiente_inicio, params)
+            if t_estable is None:
+                resultados.append(ResultadoEvento(inicio, pico_tiempo, pico_valor, None, None, False,
+                                                   "no_estabiliza_en_ventana",
+                                                   valor_antes_inicio=valor_antes, magnitud_subida=magnitud_subida,
+                                                   clasificacion="no_valido"))
+                continue
+            meseta = df[(df["timestamp"] >= t_estable) & (df["timestamp"] <= siguiente_inicio)]
+            cc_evento = meseta["valor"].median()
+            resultados.append(ResultadoEvento(inicio, pico_tiempo, pico_valor, t_estable, cc_evento, True,
+                                               valor_antes_inicio=valor_antes, magnitud_subida=magnitud_subida,
+                                               robusto=True, clasificacion="robusto"))
+            continue
+
+        # --- deteccion robusta (filtra ruido y riegos que no llegan a saturar el perfil) ---
+
+        # Filtro 1: magnitud minima de subida (descarta rocio/ruido/lluvia leve)
+        if magnitud_subida is None or magnitud_subida < params.subida_minima_vwc:
+            resultados.append(ResultadoEvento(inicio, pico_tiempo, pico_valor, None, None, False,
+                                               "subida_insuficiente",
+                                               valor_antes_inicio=valor_antes, magnitud_subida=magnitud_subida,
+                                               clasificacion="descartado_ruido"))
             continue
 
         ventana_disponible_h = (siguiente_inicio - pico_tiempo).total_seconds() / 3600.0
         if ventana_disponible_h < params.horas_min_ventana_drenaje:
             resultados.append(ResultadoEvento(inicio, pico_tiempo, pico_valor, None, None, False,
-                                               "ventana_drenaje_insuficiente"))
+                                               "ventana_drenaje_insuficiente",
+                                               valor_antes_inicio=valor_antes, magnitud_subida=magnitud_subida,
+                                               clasificacion="no_valido"))
             continue
 
-        t_estable = _localizar_estabilizacion(df, pico_tiempo, siguiente_inicio, params)
+        # Filtro 2: ¿hubo una fase de drenaje rapido real tras el pico?
+        # (si no la hay, puede ser un riego que solo empapo hasta un nivel
+        # por debajo de la CC real: sube y se mantiene, pero no purga agua)
+        fin_bajada_rapida = _buscar_fin_bajada_rapida(df, pico_tiempo, siguiente_inicio, params)
+        punto_partida_estabilizacion = fin_bajada_rapida if fin_bajada_rapida is not None else pico_tiempo
+
+        # Filtro 3: estabilizacion con derivada NO centrada (solo hacia atras)
+        t_estable = _localizar_estabilizacion(df, punto_partida_estabilizacion, siguiente_inicio, params)
         if t_estable is None:
             resultados.append(ResultadoEvento(inicio, pico_tiempo, pico_valor, None, None, False,
-                                               "no_estabiliza_en_ventana"))
+                                               "no_estabiliza_en_ventana",
+                                               valor_antes_inicio=valor_antes, magnitud_subida=magnitud_subida,
+                                               fin_bajada_rapida=fin_bajada_rapida,
+                                               clasificacion="no_valido"))
             continue
 
-        meseta = df[(df["timestamp"] >= t_estable) & (df["timestamp"] <= siguiente_inicio)]
-        cc_evento = meseta["valor"].median()
+        # CC_evento = mediana de una ventana CORTA fija tras estabilizar
+        # (no hasta el siguiente riego: eso mezclaria el drenaje con el
+        # secado por evapotranspiracion de los dias posteriores)
+        fin_ventana_cc = min(t_estable + pd.Timedelta(hours=params.horas_ventana_cc_evento), siguiente_inicio)
+        ventana_cc = df[(df["timestamp"] >= t_estable) & (df["timestamp"] <= fin_ventana_cc)]
+        cc_evento = ventana_cc["valor"].median()
 
-        resultados.append(ResultadoEvento(inicio, pico_tiempo, pico_valor, t_estable, cc_evento, True))
+        es_robusto = fin_bajada_rapida is not None
+        clasificacion = "robusto" if es_robusto else "dudoso_sin_drenaje"
+
+        resultados.append(ResultadoEvento(
+            inicio, pico_tiempo, pico_valor, t_estable, cc_evento, True, None,
+            valor_antes_inicio=valor_antes, magnitud_subida=magnitud_subida,
+            fin_bajada_rapida=fin_bajada_rapida, robusto=es_robusto, clasificacion=clasificacion,
+        ))
 
     return resultados
+
+
+def _agregar_cc_optima(eventos: list[ResultadoEvento], params: ParametrosDeteccion):
+    """
+    Agrega la CCoptima final a partir de los eventos ya analizados.
+
+    Si hay eventos "robustos" (subida suficiente + drenaje rapido
+    confirmado + meseta estable), usa la MEDIANA de los `top_k_eventos` con
+    mayor magnitud de subida entre ellos, en vez de la mediana de todos los
+    eventos validos: un riego insuficiente solo puede sesgar su propia
+    estimacion de CC hacia ABAJO (nunca fabricar un valor mas alto que la
+    CC real), asi que apoyarse en los eventos de mayor subida se acerca mas
+    a la CC real que promediar con riegos moderados o insuficientes.
+
+    Si no hay ningun evento robusto, cae a un metodo de respaldo (el maximo
+    entre los eventos validos disponibles, aunque sean "dudosos"), marcado
+    explicitamente con confianza baja para que no se use como si fuera un
+    resultado fiable.
+    """
+    eventos_validos = [e for e in eventos if e.valido]
+    eventos_robustos = sorted(
+        [e for e in eventos_validos if e.robusto],
+        key=lambda e: e.magnitud_subida if e.magnitud_subida is not None else 0.0,
+        reverse=True,
+    )
+
+    if eventos_robustos:
+        top = eventos_robustos[: params.top_k_eventos]
+        cc_optima = float(np.median([e.cc_evento for e in top]))
+        metodo_cc = f"mediana de los {len(top)} evento(s) robusto(s) de mayor subida"
+        confianza_cc = "alta" if len(top) >= 2 else "media"
+    elif eventos_validos:
+        cc_optima = float(max(e.cc_evento for e in eventos_validos))
+        metodo_cc = "maximo entre eventos disponibles (ninguno con forma robusta confirmada) — confianza baja"
+        confianza_cc = "baja"
+    else:
+        cc_optima = None
+        metodo_cc = None
+        confianza_cc = "sin_datos"
+
+    return cc_optima, eventos_validos, eventos_robustos, metodo_cc, confianza_cc
 
 
 # ----------------------------------------------------------------------
@@ -280,14 +489,12 @@ def calcular_umbrales(csv_path: str, p: float, textura: Optional[str] = None,
         inicios = detectar_inicios_riego_automatico(df, params)
 
     eventos = analizar_eventos(df, inicios, params)
-    eventos_validos = [e for e in eventos if e.valido]
+    cc_optima, eventos_validos, eventos_robustos, metodo_cc, confianza_cc = _agregar_cc_optima(eventos, params)
 
-    if eventos_validos:
-        cc_optima = float(np.median([e.cc_evento for e in eventos_validos]))
+    if cc_optima is not None:
         ad = cc_optima - pmp_teorico
         raw = cc_optima - (p * ad)
     else:
-        cc_optima = None
         ad = None
         raw = None
 
@@ -301,6 +508,9 @@ def calcular_umbrales(csv_path: str, p: float, textura: Optional[str] = None,
         n_eventos_validos=len(eventos_validos),
         robusto=len(eventos_validos) >= params.n_min_eventos,
         eventos=eventos,
+        n_eventos_robustos=len(eventos_robustos),
+        confianza_cc=confianza_cc,
+        metodo_cc=metodo_cc,
     )
 
 
@@ -310,10 +520,13 @@ def imprimir_informe(resultado: ResultadoUmbrales) -> None:
     print("=" * 60)
     print(f"Eventos de riego detectados : {resultado.n_eventos_detectados}")
     print(f"Eventos validos (usados)    : {resultado.n_eventos_validos}")
+    print(f"Eventos robustos (forma OK) : {resultado.n_eventos_robustos}")
     print(f"Resultado robusto (n >= min): {'SI' if resultado.robusto else 'NO -> ampliar periodo de datos'}")
     print("-" * 60)
     if resultado.umbral_superior_cc_optima is not None:
         print(f"UMBRAL SUPERIOR (CC optima) : {resultado.umbral_superior_cc_optima:.2f} %VWC")
+        print(f"  Metodo   : {resultado.metodo_cc}")
+        print(f"  Confianza: {resultado.confianza_cc}")
         print(f"PMP teorico                 : {resultado.pmp_teorico:.2f} %VWC")
         print(f"AD (agua disponible)        : {resultado.ad:.2f} %VWC")
         print(f"p (fraccion agotamiento)    : {resultado.p:.2f}")
@@ -324,10 +537,12 @@ def imprimir_informe(resultado: ResultadoUmbrales) -> None:
     print("Detalle por evento:")
     for e in resultado.eventos:
         if e.valido:
-            print(f"  [OK] riego {e.inicio_riego} | pico {e.pico_valor:.2f} en {e.pico_tiempo} "
+            subida = f"{e.magnitud_subida:.2f}" if e.magnitud_subida is not None else "n/d"
+            print(f"  [{e.clasificacion.upper()}] riego {e.inicio_riego} | subida={subida} | "
+                  f"pico {e.pico_valor:.2f} en {e.pico_tiempo} "
                   f"| estable desde {e.estabilizacion_tiempo} | CC_evento={e.cc_evento:.2f}")
         else:
-            print(f"  [--] riego {e.inicio_riego} | descartado: {e.motivo_descarte}")
+            print(f"  [{e.clasificacion.upper()}] riego {e.inicio_riego} | descartado: {e.motivo_descarte}")
 
 
 # ----------------------------------------------------------------------
@@ -1137,6 +1352,10 @@ class InformeCompleto:
     meteo_fecha_fin: Optional[pd.Timestamp] = None
     fuente_meteo: str = "open_meteo_api"  # "csv" | "open_meteo_api"
 
+    n_eventos_robustos: int = 0
+    confianza_cc: str = "sin_datos"        # "alta" | "media" | "baja" | "sin_datos"
+    metodo_cc: Optional[str] = None        # descripcion de como se agrego la CCoptima final
+
 
 # ----------------------------------------------------------------------
 # Utilidades internas
@@ -1226,8 +1445,7 @@ def ejecutar_analisis_completo(
         inicios = detectar_inicios_riego_automatico(df, params_cc)
 
     eventos = analizar_eventos(df, inicios, params_cc)
-    eventos_validos = [e for e in eventos if e.valido]
-    cc_optima = float(np.median([e.cc_evento for e in eventos_validos])) if eventos_validos else None
+    cc_optima, eventos_validos, eventos_robustos, metodo_cc, confianza_cc = _agregar_cc_optima(eventos, params_cc)
     robusto_cc = len(eventos_validos) >= params_cc.n_min_eventos
 
     # 3. ET0 y precipitacion (CSV local o Open-Meteo API)
@@ -1268,13 +1486,8 @@ def ejecutar_analisis_completo(
     if excluir_posible_lluvia and not diagnostico_lluvia.empty:
         inicios_lluvia = set(diagnostico_lluvia.loc[diagnostico_lluvia["posible_lluvia"], "inicio_riego"])
         eventos = [e for e in eventos if e.inicio_riego not in inicios_lluvia]
-        eventos_validos = [e for e in eventos if e.valido]
-        if eventos_validos:
-            cc_optima = float(np.median([e.cc_evento for e in eventos_validos]))
-            robusto_cc = len(eventos_validos) >= params_cc.n_min_eventos
-        else:
-            cc_optima = None
-            robusto_cc = False
+        cc_optima, eventos_validos, eventos_robustos, metodo_cc, confianza_cc = _agregar_cc_optima(eventos, params_cc)
+        robusto_cc = len(eventos_validos) >= params_cc.n_min_eventos
 
     # 5. PMP operativo (dos criterios)
     resultado_pmp_vwc = analizar_pmp_operativo(df, eventos, params_pmp)
@@ -1377,6 +1590,9 @@ def ejecutar_analisis_completo(
         meteo_fecha_inicio=meteo_fecha_inicio,
         meteo_fecha_fin=meteo_fecha_fin,
         fuente_meteo=fuente_meteo,
+        n_eventos_robustos=len(eventos_robustos),
+        confianza_cc=confianza_cc,
+        metodo_cc=metodo_cc,
     )
 
 
@@ -1415,9 +1631,12 @@ def imprimir_informe_completo(inf: InformeCompleto) -> None:
             print(f"  - {aviso}")
 
     print(f"\n[CC OPTIMA / UMBRAL SUPERIOR]")
-    print(f"  Eventos detectados/validos : {inf.n_eventos_detectados} / {inf.n_eventos_validos}"
+    print(f"  Eventos detectados/validos/robustos : {inf.n_eventos_detectados} / {inf.n_eventos_validos} / {inf.n_eventos_robustos}"
           f" ({'robusto' if inf.robusto_cc else 'NO robusto, ampliar periodo'})")
     print(f"  CC optima                  : {inf.cc_optima:.2f} %VWC" if inf.cc_optima is not None else "  CC optima: sin datos")
+    if inf.metodo_cc:
+        print(f"  Metodo                     : {inf.metodo_cc}")
+        print(f"  Confianza                  : {inf.confianza_cc}")
 
     print(f"\n[RIEGO vs LLUVIA]")
     if not inf.diagnostico_lluvia.empty:
@@ -1500,9 +1719,12 @@ def guardar_excel_completo(inf: InformeCompleto, ruta_excel: str) -> Path:
 
     resumen = pd.DataFrame([
         {"campo": "CC optima %VWC", "valor": inf.cc_optima},
+        {"campo": "Metodo CC optima", "valor": inf.metodo_cc},
+        {"campo": "Confianza CC optima", "valor": inf.confianza_cc},
         {"campo": "Coeficiente de seguridad %VWC", "valor": inf.coef_seguridad_vwc},
         {"campo": "Umbral superior final %VWC", "valor": inf.umbral_superior_final},
-        {"campo": "Eventos detectados/validos", "valor": f"{inf.n_eventos_detectados}/{inf.n_eventos_validos}"},
+        {"campo": "Eventos detectados/validos/robustos",
+         "valor": f"{inf.n_eventos_detectados}/{inf.n_eventos_validos}/{inf.n_eventos_robustos}"},
         {"campo": "Robusto (CC)", "valor": inf.robusto_cc},
         {"campo": "PMP teorico %VWC", "valor": inf.pmp_teorico},
         {"campo": "PMP operativo (proxy) %VWC", "valor": inf.pmp_operativo},
@@ -1520,8 +1742,11 @@ def guardar_excel_completo(inf: InformeCompleto, ruta_excel: str) -> Path:
 
     eventos_cc_df = pd.DataFrame([{
         "inicio_riego": e.inicio_riego, "pico_valor": e.pico_valor, "pico_tiempo": e.pico_tiempo,
+        "valor_antes_inicio": e.valor_antes_inicio, "magnitud_subida": e.magnitud_subida,
+        "fin_bajada_rapida": e.fin_bajada_rapida,
         "estabilizacion_tiempo": e.estabilizacion_tiempo, "cc_evento": e.cc_evento,
-        "valido": e.valido, "motivo_descarte": e.motivo_descarte,
+        "valido": e.valido, "robusto": e.robusto, "clasificacion": e.clasificacion,
+        "motivo_descarte": e.motivo_descarte,
     } for e in inf.eventos_cc])
 
     pmp_et_df = pd.DataFrame(inf.eventos_pmp_et) if inf.eventos_pmp_et else pd.DataFrame()
