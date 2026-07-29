@@ -418,20 +418,45 @@ def render_history_section(
 def _render_row_detail(kind: str, row: dict[str, str], contact_id: str, spec) -> None:
     row_id = str(row.get(spec.id_column, "") or "").strip()
     with st.container(border=True):
-        top = st.columns([0.78, 0.22], gap="small", vertical_alignment="center")
-        if kind in {"notas", "tareas"}:
-            top[0].markdown("**Detalle del registro**")
-        else:
+        if kind == "campanas":
+            top = st.columns([0.72, 0.14, 0.14], gap="small", vertical_alignment="center")
             top[0].markdown(f"**Detalle del registro** · `{_esc(row_id) or '—'}`")
-        if top[1].button(
-            "Editar",
-            key=f"hist_tbl_edit_{kind}_{contact_id}",
-            width="stretch",
-            icon=":material/edit:",
-        ):
-            if row_id:
-                modal_state.open_edit_history_modal(kind, contact_id, row_id)
-                st.rerun()
+            if top[1].button(
+                "",
+                key=f"hist_tbl_edit_{kind}_{contact_id}",
+                width="stretch",
+                icon=":material/edit:",
+                help="Editar campaña",
+            ):
+                if row_id:
+                    modal_state.open_edit_history_modal(kind, contact_id, row_id)
+                    st.rerun()
+            if top[2].button(
+                "",
+                key=f"hist_tbl_riego_{kind}_{contact_id}",
+                width="stretch",
+                icon=":material/water_drop:",
+                help="Histórico de riegos",
+            ):
+                if row_id:
+                    modal_state.open_riego_campanas_modal(contact_id, row_id)
+                    st.rerun()
+        else:
+            top = st.columns([0.78, 0.22], gap="small", vertical_alignment="center")
+            if kind in {"notas", "tareas"}:
+                top[0].markdown("**Detalle del registro**")
+            else:
+                top[0].markdown(f"**Detalle del registro** · `{_esc(row_id) or '—'}`")
+            if top[1].button(
+                "",
+                key=f"hist_tbl_edit_{kind}_{contact_id}",
+                width="stretch",
+                icon=":material/edit:",
+                help="Editar",
+            ):
+                if row_id:
+                    modal_state.open_edit_history_modal(kind, contact_id, row_id)
+                    st.rerun()
 
         short_items: list[tuple[str, str]] = []
         long_items: list[tuple[str, str]] = []

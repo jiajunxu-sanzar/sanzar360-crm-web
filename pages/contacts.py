@@ -158,6 +158,7 @@ from pages.contacts_history_forms import (  # noqa: F401
     _maybe_render_sensor_close_location_modal,
     _maybe_render_add_history_modal,
     _maybe_render_edit_history_modal,
+    _maybe_render_riego_campanas_modal,
     _incidencia_association_init_key,
     _clear_incidencia_association_state,
     _incidencia_label_maps,
@@ -740,6 +741,7 @@ def _render_contact_detail(df: pd.DataFrame, contact_id: str) -> pd.DataFrame:
         render_contact_timeline_block(contact_id)
     _maybe_render_add_history_modal(contact)
     _maybe_render_edit_history_modal(contact)
+    _maybe_render_riego_campanas_modal(contact)
     return updated if updated is not None else df
 
 

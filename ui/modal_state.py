@@ -11,6 +11,7 @@ describing what is open:
     {"type": "edit_history", "kind": str, "contact_id": str, "row_id": str}
     {"type": "add_history",  "kind": str, "contact_id": str}
     {"type": "sensor_close_location", "kind": str, "contact_id": str, "row_id": str}
+    {"type": "riego_campanas", "contact_id": str, "historial_campana_id": str}
 """
 from __future__ import annotations
 
@@ -47,6 +48,14 @@ def open_sensor_close_location_modal(kind: str, contact_id: str, row_id: str) ->
         "kind": kind,
         "contact_id": contact_id,
         "row_id": row_id,
+    }
+
+
+def open_riego_campanas_modal(contact_id: str, historial_campana_id: str) -> None:
+    st.session_state[_MODAL_KEY] = {
+        "type": "riego_campanas",
+        "contact_id": contact_id,
+        "historial_campana_id": historial_campana_id,
     }
 
 
@@ -89,3 +98,11 @@ def is_add_history_open(kind: str, contact_id: str) -> bool:
         and m.get("contact_id") == contact_id
         and m.get("kind") == kind
     )
+
+
+def is_riego_campanas_open(contact_id: str) -> tuple[bool, str]:
+    """Return (True, historial_campana_id) if the riego modal is open for this contact."""
+    m = get_active_modal()
+    if m and m.get("type") == "riego_campanas" and m.get("contact_id") == contact_id:
+        return True, str(m.get("historial_campana_id", "") or "")
+    return False, ""

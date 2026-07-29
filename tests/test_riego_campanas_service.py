@@ -7,7 +7,10 @@ from services.riego_campanas import (
     build_riego_timeline_figure,
     normalize_riego_row_values,
     parse_es_nota,
+    parse_nota_util,
     serialize_es_nota,
+    serialize_nota_util,
+    split_riego_and_nota_rows,
     validate_riego_campana_values,
 )
 
@@ -24,6 +27,7 @@ def test_riego_campanas_spec_registered() -> None:
         "litros",
         "es_nota",
         "nota",
+        "nota_util",
     ):
         assert col in spec.headers
 
@@ -41,14 +45,24 @@ def test_parse_es_nota_variants() -> None:
     assert serialize_es_nota(False) == "false"
 
 
-def test_validate_riego_nota_requires_nota() -> None:
+def test_parse_nota_util_variants() -> None:
+    assert parse_nota_util("") is True
+    assert parse_nota_util("true") is True
+    assert parse_nota_util("false") is False
+    assert parse_nota_util("no") is False
+    assert serialize_nota_util(True) == "true"
+    assert serialize_nota_util(False) == "false"
+
+
+def test_validate_nota_without_day_or_time() -> None:
     values = {
         "es_nota": "true",
-        "dia_riego": "10/06/2026",
-        "hora_inicio_riego": "08:30",
+        "dia_riego": "",
+        "hora_inicio_riego": "",
         "nota": "",
         "horas_riego": "",
         "litros": "",
+        "nota_util": "true",
     }
     assert validate_riego_campana_values(values) is not None
     values["nota"] = "Revisar caudal"
@@ -69,20 +83,40 @@ def test_validate_riego_requires_numeric_fields() -> None:
     assert validate_riego_campana_values(values) is None
 
 
-def test_normalize_riego_row_values() -> None:
+def test_normalize_nota_clears_riego_fields() -> None:
     out = normalize_riego_row_values(
         {
             "es_nota": "sí",
             "dia_riego": "2026-06-10",
             "hora_inicio_riego": "9:05",
-            "horas_riego": "",
-            "litros": "",
+            "horas_riego": "2",
+            "litros": "10",
             "nota": "hola",
+            "nota_util": "false",
         }
     )
     assert out["es_nota"] == "true"
-    assert out["dia_riego"] == "10/06/2026"
-    assert out["hora_inicio_riego"] == "9:05"
+    assert out["dia_riego"] == ""
+    assert out["hora_inicio_riego"] == ""
+    assert out["horas_riego"] == ""
+    assert out["litros"] == ""
+    assert out["nota"] == "hola"
+    assert out["nota_util"] == "false"
+
+
+def test_normalize_riego_sets_nota_util_false() -> None:
+    out = normalize_riego_row_values(
+        {
+            "es_nota": "false",
+            "dia_riego": "10/06/2026",
+            "hora_inicio_riego": "08:00",
+            "horas_riego": "1",
+            "litros": "50",
+            "nota": "",
+            "nota_util": "true",
+        }
+    )
+    assert out["nota_util"] == "false"
 
 
 class _FakeSheets:
@@ -152,6 +186,7 @@ def test_rows_for_campaign_filters_and_orders() -> None:
                 "litros": "10",
                 "es_nota": "false",
                 "nota": "",
+                "nota_util": "false",
                 "created_at": "",
                 "updated_at": "",
             },
@@ -165,6 +200,7 @@ def test_rows_for_campaign_filters_and_orders() -> None:
                 "litros": "20",
                 "es_nota": "false",
                 "nota": "",
+                "nota_util": "false",
                 "created_at": "",
                 "updated_at": "",
             },
@@ -178,6 +214,7 @@ def test_rows_for_campaign_filters_and_orders() -> None:
                 "litros": "5",
                 "es_nota": "false",
                 "nota": "",
+                "nota_util": "false",
                 "created_at": "",
                 "updated_at": "",
             },
@@ -191,6 +228,7 @@ def test_rows_for_campaign_filters_and_orders() -> None:
                 "litros": "5",
                 "es_nota": "false",
                 "nota": "",
+                "nota_util": "false",
                 "created_at": "",
                 "updated_at": "",
             },
@@ -204,7 +242,7 @@ def test_rows_for_campaign_filters_and_orders() -> None:
     assert svc.rows_for_campaign("riego_campanas", "missing") == []
 
 
-def test_riego_campanas_add_update_delete() -> None:
+def test_riego_campanas_add_update_delete_with_nota_util() -> None:
     sheets = _FakeSheets()
     svc = HistoryService(sheets)  # type: ignore[arg-type]
     created = svc.add_row(
@@ -212,19 +250,20 @@ def test_riego_campanas_add_update_delete() -> None:
         {
             "historial_campana_id": "camp-1",
             "contact_id": "c-1",
-            "dia_riego": "12/06/2026",
-            "hora_inicio_riego": "10:00",
-            "horas_riego": "3",
-            "litros": "150",
-            "es_nota": "false",
-            "nota": "",
+            "dia_riego": "",
+            "hora_inicio_riego": "",
+            "horas_riego": "",
+            "litros": "",
+            "es_nota": "true",
+            "nota": "Observación",
+            "nota_util": "true",
         },
     )
     riego_id = created["historial_riego_id"]
-    assert riego_id
     rows = svc.rows_for_campaign("riego_campanas", "camp-1")
     assert len(rows) == 1
-    assert rows[0]["litros"] == "150"
+    assert rows[0]["nota"] == "Observación"
+    assert rows[0]["nota_util"] == "true"
 
     svc.update_row(
         "riego_campanas",
@@ -232,23 +271,20 @@ def test_riego_campanas_add_update_delete() -> None:
         {
             "historial_campana_id": "camp-1",
             "contact_id": "c-1",
-            "dia_riego": "12/06/2026",
-            "hora_inicio_riego": "11:00",
-            "horas_riego": "4",
-            "litros": "200",
-            "es_nota": "false",
-            "nota": "ajustado",
+            "es_nota": "true",
+            "nota": "Obsoleta",
+            "nota_util": "false",
         },
     )
     rows = svc.rows_for_campaign("riego_campanas", "camp-1")
-    assert rows[0]["hora_inicio_riego"] == "11:00"
-    assert rows[0]["litros"] == "200"
+    assert rows[0]["nota_util"] == "false"
+    assert rows[0]["nota"] == "Obsoleta"
 
     svc.delete_row("riego_campanas", riego_id)
     assert svc.rows_for_campaign("riego_campanas", "camp-1") == []
 
 
-def test_build_riego_timeline_figure_handles_riego_and_nota() -> None:
+def test_build_riego_timeline_excludes_notas() -> None:
     fig = build_riego_timeline_figure(
         [
             {
@@ -260,16 +296,40 @@ def test_build_riego_timeline_figure_handles_riego_and_nota() -> None:
                 "nota": "",
             },
             {
-                "dia_riego": "12/06/2026",
-                "hora_inicio_riego": "12:00",
+                "dia_riego": "",
+                "hora_inicio_riego": "",
                 "horas_riego": "",
                 "litros": "",
                 "es_nota": "true",
                 "nota": "Parada por viento",
+                "nota_util": "true",
             },
         ]
     )
     assert fig is not None
-    import matplotlib.pyplot as plt
+    assert len(fig.data) == 1
 
-    plt.close(fig)
+
+def test_build_riego_timeline_empty_when_only_notas() -> None:
+    fig = build_riego_timeline_figure(
+        [
+            {
+                "es_nota": "true",
+                "nota": "Solo nota",
+                "nota_util": "false",
+            }
+        ]
+    )
+    assert fig is None
+
+
+def test_split_riego_and_nota_rows() -> None:
+    riegos, notas = split_riego_and_nota_rows(
+        [
+            {"historial_riego_id": "1", "es_nota": "false"},
+            {"historial_riego_id": "2", "es_nota": "true"},
+            {"historial_riego_id": "3", "es_nota": "sí"},
+        ]
+    )
+    assert [r["historial_riego_id"] for r in riegos] == ["1"]
+    assert [r["historial_riego_id"] for r in notas] == ["2", "3"]

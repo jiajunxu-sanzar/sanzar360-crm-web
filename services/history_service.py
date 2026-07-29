@@ -163,6 +163,7 @@ HISTORY_SPECS: dict[HistoryKind, HistorySpec] = {
             "litros",
             "es_nota",
             "nota",
+            "nota_util",
             "created_at",
             "updated_at",
         ),
