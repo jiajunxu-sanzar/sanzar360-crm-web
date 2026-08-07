@@ -49,6 +49,25 @@ def test_card_resolves_gateway_and_contact_names() -> None:
     assert "recibido" in html                         # pill de estado logístico
 
 
+def test_ws6210sc_card_shows_placa_solar_and_sim() -> None:
+    html = build_inventory_card_html(
+        {
+            "inventory_id": "gw-1",
+            "model": "ws6210sc",
+            "serial_number": '"ECO-GW-1"',
+            "placa_solar": "SI",
+            "associated_sim_inventory_id": "sim-1",
+            "logistics_status": "recibido",
+            "location_type": "oficina",
+        },
+        serial_by_id={"sim-1": "SIM-ECO"},
+    )
+    assert "ECO-GW-1" in html
+    assert "SI" in html
+    assert "SIM-ECO" in html
+    assert "WS6210SC" in html
+
+
 def test_card_unresolved_association_shows_shortened_id() -> None:
     html = build_inventory_card_html(_em500_row())
     assert "c90bd3ab…" in html

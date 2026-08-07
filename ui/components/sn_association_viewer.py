@@ -65,6 +65,8 @@ _PROBE_MODELS = {"teros10", "teros12"}
 _UC501_MODELS = {"uc501"}
 _UG67_MODELS = {"ug67"}
 _SENSOR_MODELS = {"em500", "uc512", "em300"}
+_WS6210_MODELS = {"ws6210sc"}
+_ECOWITT_CHILD_MODELS = {"wh51l", "ws69"}
 
 
 def build_inventory_association_map(
@@ -157,6 +159,45 @@ def build_inventory_association_map(
                 ))
         groups.append(AssociationGroup(
             role="ug67",
+            inventory_id=iid,
+            model=row.get("model", ""),
+            serial_number=row.get("serial_number", ""),
+            children=children,
+            location_type=row.get("location_type", "").strip().lower(),
+            location_detail=row.get("location_detail", "").strip(),
+        ))
+
+    # --- WS6210S_C (Ecowitt gateway) groups ---
+    for row in df.to_dict("records"):
+        model_norm = normalize_model_name(row.get("model", ""))
+        if model_norm not in _WS6210_MODELS:
+            continue
+        iid = row.get("inventory_id", "").strip()
+        sim_id = row.get("associated_sim_inventory_id", "").strip()
+        children = []
+        if sim_id:
+            sim_row = by_id.get(sim_id)
+            eid = str(sim_row.get("sim_eid_number", "") or "").strip() if sim_row else ""
+            children.append(AssociationChild(
+                role="sim",
+                inventory_id=sim_id,
+                model=sim_row.get("model", "") if sim_row else "???",
+                serial_number=sim_row.get("serial_number", sim_id[:8]) if sim_row else sim_id[:8],
+                sim_eid_number=eid,
+            ))
+        for child_row in df.to_dict("records"):
+            if child_row.get("inventory_id", "").strip() == iid:
+                continue
+            child_gw = child_row.get("associated_gateway_inventory_id", "").strip()
+            if child_gw == iid:
+                children.append(AssociationChild(
+                    role="sensor",
+                    inventory_id=child_row.get("inventory_id", "").strip(),
+                    model=child_row.get("model", ""),
+                    serial_number=child_row.get("serial_number", ""),
+                ))
+        groups.append(AssociationGroup(
+            role="ws6210sc",
             inventory_id=iid,
             model=row.get("model", ""),
             serial_number=row.get("serial_number", ""),
@@ -323,6 +364,7 @@ def _group_matches_query(group: AssociationGroup, query: str) -> bool:
 _ROLE_ICON = {
     "uc501": "📡",
     "ug67": "🌐",
+    "ws6210sc": "🌐",
     "sim": "📶",
     "probe": "🌱",
     "sensor": "📊",
@@ -330,6 +372,7 @@ _ROLE_ICON = {
 _ROLE_LABEL = {
     "uc501": "UC501",
     "ug67": "UG67",
+    "ws6210sc": "WS6210S_C",
     "sim": "SIM",
     "probe": "Sonda",
     "sensor": "Sensor",
@@ -355,7 +398,20 @@ def _render_sn_viewer_content(
     )
     asset_type = col_t.selectbox(
         "Tipo",
-        ["", "uc501", "ug67", "sim", "teros10", "teros12", "em500", "uc512", "em300"],
+        [
+            "",
+            "uc501",
+            "ug67",
+            "ws6210sc",
+            "wh51l",
+            "ws69",
+            "sim",
+            "teros10",
+            "teros12",
+            "em500",
+            "uc512",
+            "em300",
+        ],
         key="sn_viewer_type",
         label_visibility="collapsed",
     )

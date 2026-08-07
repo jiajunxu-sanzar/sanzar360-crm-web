@@ -265,6 +265,102 @@ def test_check_association_gateway_must_be_ug67() -> None:
     assert "debe ser un UG67" in conflicts[0]
 
 
+def test_check_association_gateway_must_be_ws6210sc_for_wh51l() -> None:
+    sheets = FakeSheets()
+    svc = InventoryService(sheets)
+    sheets.frames[INVENTORY_WORKSHEET_NAME] = pd.DataFrame(
+        [
+            _row_with_headers(inventory_id="ug-1", model="ug67", serial_number="UG-A"),
+            _row_with_headers(inventory_id="gw-1", model="ws6210sc", serial_number='"GW-ECO"'),
+        ]
+    )
+    bad = svc.check_association_conflicts(
+        _row_with_headers(
+            inventory_id="wh-1",
+            model="wh51l",
+            serial_number="WH-A",
+            associated_gateway_inventory_id="ug-1",
+        )
+    )
+    assert len(bad) == 1
+    assert "WS6210S_C" in bad[0]
+
+    ok = svc.check_association_conflicts(
+        _row_with_headers(
+            inventory_id="wh-1",
+            model="wh51l",
+            serial_number="WH-A",
+            associated_gateway_inventory_id="gw-1",
+        )
+    )
+    assert ok == []
+
+
+def test_ensure_model_fields_for_models_appends_only_missing() -> None:
+    sheets = FakeSheets()
+    svc = InventoryService(sheets)
+    sheets.frames[INVENTORY_MODEL_FIELDS_WORKSHEET_NAME] = pd.DataFrame(
+        [
+            {
+                "model": "uc501",
+                "field_key": "serial_number",
+                "field_label": "Serial",
+                "field_type": "text",
+                "required": "TRUE",
+                "options_csv": "",
+                "help_text": "",
+                "order_index": "0",
+                "active": "TRUE",
+                "created_at": "01/01/2026",
+                "updated_at": "01/01/2026",
+            }
+        ],
+        columns=list(INVENTORY_MODEL_FIELD_HEADERS),
+    )
+    rows = [
+        {
+            "model": "wh51l",
+            "field_key": "serial_number",
+            "field_label": "Serial number",
+            "field_type": "text",
+            "required": "TRUE",
+            "options_csv": "",
+            "help_text": "",
+            "order_index": "0",
+            "active": "TRUE",
+        },
+        {
+            "model": "wh51l",
+            "field_key": "associated_gateway_inventory_id",
+            "field_label": "Gateway",
+            "field_type": "text",
+            "required": "TRUE",
+            "options_csv": "",
+            "help_text": "",
+            "order_index": "1",
+            "active": "TRUE",
+        },
+        {
+            "model": "uc501",
+            "field_key": "brand",
+            "field_label": "Brand",
+            "field_type": "text",
+            "required": "FALSE",
+            "options_csv": "",
+            "help_text": "",
+            "order_index": "1",
+            "active": "TRUE",
+        },
+    ]
+    assert svc.ensure_model_fields_for_models(rows) is True
+    catalog = sheets.frames[INVENTORY_MODEL_FIELDS_WORKSHEET_NAME]
+    models = set(catalog["model"].tolist())
+    assert "wh51l" in models
+    assert "uc501" in models
+    assert len(catalog[catalog["model"] == "uc501"]) == 1
+    assert svc.ensure_model_fields_for_models(rows) is False
+
+
 def test_set_location_for_serials_matches_quoted_inventory_serial() -> None:
     sheets = FakeSheets()
     svc = InventoryService(sheets)

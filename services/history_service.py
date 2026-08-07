@@ -650,6 +650,21 @@ def parse_sensor_assets(sensor_serial_number: str) -> list[tuple[SensorAsset, st
                 gateway_token = f"ug67-{parts[1]}"
                 current_gateway = gateway_token
                 assets.append((SensorAsset("ug67", parts[1]), gateway_token))
+        elif lower.startswith("ws6210sc-"):
+            parts = item.split("-")
+            if len(parts) == 3:
+                gateway_token = f"ws6210sc-{parts[1]}"
+                current_gateway = gateway_token
+                assets.extend(
+                    [
+                        (SensorAsset("ws6210sc", parts[1]), gateway_token),
+                        (SensorAsset("sim", parts[2]), gateway_token),
+                    ]
+                )
+            elif len(parts) == 2:
+                gateway_token = f"ws6210sc-{parts[1]}"
+                current_gateway = gateway_token
+                assets.append((SensorAsset("ws6210sc", parts[1]), gateway_token))
         elif lower.startswith("solenoide-"):
             serial = item.split("-", 1)[1].strip()
             assets.append((SensorAsset("solenoide", serial), item))
@@ -1148,3 +1163,54 @@ class HistoryService:
             if is_incidencia_abierta(row):
                 return True
         return False
+
+    def open_histories_blocking_sensor_close(
+        self,
+        contact_id: str,
+        historial_sensor_id: str,
+        *,
+        sensor_serial_number: str = "",
+    ) -> list[str]:
+        """Human-readable blockers: open campanas/incidencias linked to this sensor history."""
+        from services.contact_sensor_overview import is_incidencia_abierta
+        from services.incidencia_association_options import is_open_campana_history
+
+        sensor_id = str(historial_sensor_id or "").strip()
+        sensor_sn = normalize_sensor_serial_number(str(sensor_serial_number or "").strip())
+        if not sensor_id and not sensor_sn:
+            return []
+
+        messages: list[str] = []
+        for row in self.rows_for_contact("campanas", contact_id):
+            if not is_open_campana_history(row):
+                continue
+            linked = str(row.get("historial_sensor_id", "") or "").strip()
+            if sensor_id and linked == sensor_id:
+                nombre = str(row.get("nombre_campana", "") or "").strip() or linked or "?"
+                camp_id = str(row.get("historial_campana_id", "") or "").strip()
+                messages.append(
+                    f"Campaña abierta «{nombre}»"
+                    + (f" ({camp_id[:8]})" if camp_id else "")
+                    + " — ciérrala antes de cerrar el histórico de sensor."
+                )
+
+        for row in self.rows_for_contact("incidencias", contact_id):
+            if not is_incidencia_abierta(row):
+                continue
+            linked_id = str(row.get("historial_sensor_id", "") or "").strip()
+            linked_sn = normalize_sensor_serial_number(str(row.get("sensor_serial_number", "") or "").strip())
+            linked = (sensor_id and linked_id == sensor_id) or (
+                not linked_id and sensor_sn and linked_sn and linked_sn == sensor_sn
+            )
+            if not linked:
+                continue
+            tipo = str(row.get("tipo_incidencia", "") or "").strip() or "incidencia"
+            inc_id = str(row.get("historial_incidencia_id", "") or "").strip()
+            fecha = str(row.get("fecha_apertura", "") or "").strip()
+            detail = f" ({fecha})" if fecha else ""
+            messages.append(
+                f"Incidencia abierta «{tipo}»{detail}"
+                + (f" [{inc_id[:8]}]" if inc_id else "")
+                + " — ciérrala antes de cerrar el histórico de sensor."
+            )
+        return messages

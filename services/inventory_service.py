@@ -189,6 +189,59 @@ class InventoryService:
         )
         return True
 
+    def ensure_model_fields_for_models(self, rows: list[dict[str, str]]) -> bool:
+        """Append catalog rows for models not yet present. Returns True if wrote."""
+        self.ensure_inventory_structure()
+        if not rows:
+            return False
+        existing = self._sheets.read_worksheet_df(
+            INVENTORY_MODEL_FIELDS_WORKSHEET_NAME,
+            list(INVENTORY_MODEL_FIELD_HEADERS),
+        )
+        present: set[str] = set()
+        if not existing.empty and "model" in existing.columns:
+            present = {
+                normalize_model_name(str(m))
+                for m in existing["model"].fillna("").astype(str).tolist()
+                if str(m).strip()
+            }
+        models_to_seed = {
+            normalize_model_name(str(raw.get("model", "") or ""))
+            for raw in rows
+            if normalize_model_name(str(raw.get("model", "") or ""))
+            and normalize_model_name(str(raw.get("model", "") or "")) not in present
+        }
+        if not models_to_seed:
+            return False
+        today = _today()
+        normalized: list[dict[str, str]] = []
+        for raw in rows:
+            model = normalize_model_name(str(raw.get("model", "") or ""))
+            if model not in models_to_seed:
+                continue
+            row = {h: str(raw.get(h, "") or "") for h in INVENTORY_MODEL_FIELD_HEADERS}
+            row["model"] = model
+            row["field_key"] = normalize_field_key(row.get("field_key", ""))
+            row["created_at"] = row.get("created_at") or today
+            row["updated_at"] = row.get("updated_at") or today
+            normalized.append(row)
+        if not normalized:
+            return False
+        add_df = pd.DataFrame(normalized, columns=list(INVENTORY_MODEL_FIELD_HEADERS)).fillna("").astype(str)
+        if existing.empty:
+            out = add_df
+        else:
+            out = pd.concat(
+                [existing.fillna("").astype(str), add_df],
+                ignore_index=True,
+            )
+        self._sheets.write_worksheet_df(
+            INVENTORY_MODEL_FIELDS_WORKSHEET_NAME,
+            out[list(INVENTORY_MODEL_FIELD_HEADERS)],
+            list(INVENTORY_MODEL_FIELD_HEADERS),
+        )
+        return True
+
     def asset_options_by_models(self, models: tuple[str, ...], inv_df: pd.DataFrame | None = None) -> list[InventoryAssetOption]:
         df = inv_df if inv_df is not None else self.inventory_df()
         if df.empty:
@@ -499,9 +552,20 @@ class InventoryService:
 
         if gw_id and gw_id in inventory_ids:
             gateway_row = filled[filled.get("inventory_id", pd.Series(dtype=str)).str.strip() == gw_id].iloc[0]
-            if normalize_model_name(str(gateway_row.get("model", "") or "")) != "ug67":
+            gateway_model = normalize_model_name(str(gateway_row.get("model", "") or ""))
+            child_model = normalize_model_name(str(values.get("model", "") or ""))
+            expected_by_child = {
+                "em500": "ug67",
+                "em300": "ug67",
+                "uc512": "ug67",
+                "wh51l": "ws6210sc",
+                "ws69": "ws6210sc",
+            }
+            expected = expected_by_child.get(child_model, "ug67")
+            if gateway_model != expected:
+                expected_label = "WS6210S_C" if expected == "ws6210sc" else "UG67"
                 messages.append(
-                    f"El gateway asociado '{self._serial_for_id(gw_id, filled)}' debe ser un UG67."
+                    f"El gateway asociado '{self._serial_for_id(gw_id, filled)}' debe ser un {expected_label}."
                 )
 
         return messages

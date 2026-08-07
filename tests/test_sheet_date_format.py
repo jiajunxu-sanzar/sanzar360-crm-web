@@ -53,3 +53,13 @@ def test_sensor_serial_ug67_serial_with_or_without_quotes() -> None:
     assert is_valid_sensor_serial_number('ug67-"6222E3615254"-SIM900')
     assert is_valid_sensor_serial_number("ug67-6222E3615254-SIM900")
     assert normalize_sensor_serial_number('ug67-"6222E3615254"-SIM900') == "ug67-6222E3615254-SIM900"
+
+
+def test_sensor_serial_ecowitt_formats() -> None:
+    assert is_valid_sensor_serial_number("ws6210sc-GW001")
+    assert is_valid_sensor_serial_number("ws6210sc-GW001-SIM900")
+    assert is_valid_sensor_serial_number("ws6210sc-GW001-SIM900,wh51l-WH001,ws69-WS001")
+    assert is_valid_sensor_serial_number("wh51l-WH001")
+    assert is_valid_sensor_serial_number("ws69-WS001")
+    assert is_valid_sensor_serial_number('ws6210sc-"GW001"-SIM900,wh51l-"WH001"')
+    assert normalize_sensor_serial_number('ws6210sc-"GW001"') == "ws6210sc-GW001"

@@ -622,6 +622,8 @@ def apply_theme() -> None:
         .sanzar-inv-chip--sim       { background: #fffbeb; color: #92400e; border-color: #fdeec2; }
         .sanzar-inv-chip--solenoide { background: #ecfeff; color: #155e75; border-color: #cbf3fa; }
         .sanzar-inv-chip--probe     { background: #f0fdfa; color: #115e59; border-color: #ccf1e9; }
+        .sanzar-inv-chip--ecowitt   { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+        .sanzar-inv-chip--ecowitt-gw { background: #ffedd5; color: #9a3412; border-color: #fed7aa; }
         .sanzar-inv-chip--default   { background: #f4f4f5; color: #52525b; border-color: #e4e4e7; }
         .sanzar-inv-card-pills {
           display: flex;

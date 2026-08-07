@@ -15,6 +15,16 @@ from services.inventory_service import format_inventory_serial_with_quotes, norm
 from ui.components.inventory_cards import build_inventory_card_html
 from ui.components.sn_association_viewer import render_sn_viewer_panel
 
+_ECOWITT_COMMON_FIELDS = [
+    "serial_number",
+    "brand",
+    "supplier",
+    "logistics_status",
+    "location_type",
+    "proforma_invoice_url",
+    "payment_receipt_url",
+]
+
 DEFAULT_MODEL_FIELDS: dict[str, list[str]] = {
     "uc501": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "configured", "associated_sim_inventory_id", "associated_probe_inventory_id", "proforma_invoice_url", "payment_receipt_url"],
     "sim": ["serial_number", "sim_eid_number", "brand", "supplier", "logistics_status", "location_type", "proforma_invoice_url", "payment_receipt_url"],
@@ -25,21 +35,44 @@ DEFAULT_MODEL_FIELDS: dict[str, list[str]] = {
     "em500": ["serial_number", "eui", "brand", "supplier", "logistics_status", "location_type", "associated_gateway_inventory_id", "proforma_invoice_url", "payment_receipt_url"],
     "ug67": ["serial_number", "eui", "brand", "supplier", "logistics_status", "location_type", "configured", "ui_password", "proforma_invoice_url", "payment_receipt_url"],
     "solenoide": ["serial_number", "brand", "supplier", "logistics_status", "location_type", "proforma_invoice_url", "payment_receipt_url"],
+    "ws6210sc": [
+        *_ECOWITT_COMMON_FIELDS[:5],
+        "configured",
+        "placa_solar",
+        "associated_sim_inventory_id",
+        *_ECOWITT_COMMON_FIELDS[5:],
+    ],
+    "wh51l": [*_ECOWITT_COMMON_FIELDS[:5], "associated_gateway_inventory_id", *_ECOWITT_COMMON_FIELDS[5:]],
+    "ws69": [*_ECOWITT_COMMON_FIELDS[:5], "associated_gateway_inventory_id", *_ECOWITT_COMMON_FIELDS[5:]],
 }
 HIDDEN_MODEL_FIELDS: dict[str, set[str]] = {
     "em500": {"gateway_config_name", "ui_password"},
 }
 REQUIRED_MODEL_FIELDS: dict[str, list[str]] = {
     "em500": ["associated_gateway_inventory_id"],
+    "wh51l": ["associated_gateway_inventory_id"],
+    "ws69": ["associated_gateway_inventory_id"],
 }
 READONLY_EDIT_FIELDS = {"location_type", "location_contact_id"}
 
+# Child models whose associated_gateway must resolve to this gateway model.
+EXPECTED_GATEWAY_MODEL_BY_CHILD: dict[str, str] = {
+    "em500": "ug67",
+    "em300": "ug67",
+    "uc512": "ug67",
+    "wh51l": "ws6210sc",
+    "ws69": "ws6210sc",
+}
+ECOWITT_MODELS_TO_SEED = ("wh51l", "ws6210sc", "ws69")
+
 FIELD_LABELS = {key: key.replace("_", " ").capitalize() for key in INVENTORY_HEADERS}
 FIELD_LABELS["sim_eid_number"] = "SIM EID number"
+FIELD_LABELS["placa_solar"] = "Placa solar"
 FIELD_TYPE_DEFAULTS = {
     "acquisition_date": "date",
     "loan_end_date": "date",
     "configured": "bool",
+    "placa_solar": "select",
     "proforma_invoice_url": "url",
     "payment_receipt_url": "url",
     "location_type": "select",
@@ -51,6 +84,7 @@ FIELD_OPTIONS = {
     "logistics_status": ["en_transito", "recibido"],
     "location_type": ["oficina", "cliente", "por_definir"],
     "configured": ["FALSE", "TRUE"],
+    "placa_solar": ["SI", "NO"],
 }
 
 INVENTORY_NEW_DIALOG_OPEN_KEY = "inventory_new_dialog_open"
@@ -110,13 +144,14 @@ def _seed_model_catalog_if_empty() -> None:
     rows_to_seed: list[dict[str, str]] = []
     for model, field_keys in DEFAULT_MODEL_FIELDS.items():
         for i, field_key in enumerate(field_keys):
+            required_keys = {"serial_number", *REQUIRED_MODEL_FIELDS.get(model, [])}
             rows_to_seed.append(
                 {
                     "model": model,
                     "field_key": field_key,
                     "field_label": FIELD_LABELS.get(field_key, field_key),
                     "field_type": FIELD_TYPE_DEFAULTS.get(field_key, "text"),
-                    "required": "TRUE" if field_key in {"serial_number"} else "FALSE",
+                    "required": "TRUE" if field_key in required_keys else "FALSE",
                     "options_csv": ",".join(FIELD_OPTIONS.get(field_key, [])),
                     "help_text": "",
                     "order_index": str(i),
@@ -127,6 +162,39 @@ def _seed_model_catalog_if_empty() -> None:
     if seeded:
         bump_inventory_cache()
     st.session_state["inventory_model_catalog_seeded_once"] = True
+
+
+def _catalog_rows_for_models(models: tuple[str, ...]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for model in models:
+        field_keys = DEFAULT_MODEL_FIELDS.get(model, [])
+        required_keys = {"serial_number", *REQUIRED_MODEL_FIELDS.get(model, [])}
+        for i, field_key in enumerate(field_keys):
+            rows.append(
+                {
+                    "model": model,
+                    "field_key": field_key,
+                    "field_label": FIELD_LABELS.get(field_key, field_key),
+                    "field_type": FIELD_TYPE_DEFAULTS.get(field_key, "text"),
+                    "required": "TRUE" if field_key in required_keys else "FALSE",
+                    "options_csv": ",".join(FIELD_OPTIONS.get(field_key, [])),
+                    "help_text": "",
+                    "order_index": str(i),
+                    "active": "TRUE",
+                }
+            )
+    return rows
+
+
+def _seed_missing_ecowitt_models() -> None:
+    """Idempotent: add Ecowitt model catalogs if they are absent from Sheets."""
+    if st.session_state.get("inventory_ecowitt_catalog_seeded_once", False):
+        return
+    svc = inventory_service()
+    seeded = svc.ensure_model_fields_for_models(_catalog_rows_for_models(ECOWITT_MODELS_TO_SEED))
+    if seeded:
+        bump_inventory_cache()
+    st.session_state["inventory_ecowitt_catalog_seeded_once"] = True
 
 
 def _inventory_options_by_model(inv_df: pd.DataFrame, model: str) -> list[tuple[str, str]]:
@@ -150,7 +218,21 @@ def _inventory_options_by_model(inv_df: pd.DataFrame, model: str) -> list[tuple[
 
 UG67_SERIAL_NUMBER_QUOTES_HELP = "Poner el serial_number entre comillas."
 SERIAL_NUMBER_QUOTES_HELP = UG67_SERIAL_NUMBER_QUOTES_HELP
-_SERIAL_QUOTE_MODELS = frozenset({"ug67", "em500"})
+_SERIAL_QUOTE_MODELS = frozenset({"ug67", "em500", "wh51l", "ws6210sc", "ws69"})
+_ECOWITT_SERIAL_QUOTE_ON_EDIT = frozenset({"wh51l", "ws6210sc", "ws69"})
+
+
+def _should_auto_quote_serial(model: str, *, mode: str) -> bool:
+    normalized = _normalize_model_name(model)
+    if normalized not in _SERIAL_QUOTE_MODELS:
+        return False
+    if mode == "create":
+        return True
+    return normalized in _ECOWITT_SERIAL_QUOTE_ON_EDIT
+
+
+def _expected_gateway_model_for_child(child_model: str) -> str:
+    return EXPECTED_GATEWAY_MODEL_BY_CHILD.get(_normalize_model_name(child_model), "ug67")
 
 
 def _field_label(field_key: str, *, model: str = "", mode: str = "create") -> str:
@@ -274,6 +356,7 @@ def _render_association_fields(
     inv_df: pd.DataFrame,
     *,
     key_prefix: str,
+    model: str = "",
     disabled: bool = False,
 ) -> None:
     if "associated_sim_inventory_id" in field_keys:
@@ -336,20 +419,22 @@ def _render_association_fields(
 
     if "associated_gateway_inventory_id" in field_keys:
         current_item_id = str(values.get("inventory_id", "") or "").strip()
+        gateway_model = _expected_gateway_model_for_child(model or str(values.get("model", "") or ""))
+        gateway_label = "WS6210S_C" if gateway_model == "ws6210sc" else "UG67"
         gateway_options = [
             (inv_id, option_label)
-            for inv_id, option_label in _inventory_options_by_model(inv_df, "ug67")
+            for inv_id, option_label in _inventory_options_by_model(inv_df, gateway_model)
             if inv_id != current_item_id
         ]
         option_values = [""] + [inv_id for inv_id, _ in gateway_options]
         label_map = {"": "Sin asociar", **{inv_id: option_label for inv_id, option_label in gateway_options}}
         current = str(st.session_state.get(f"{key_prefix}_associated_gateway_inventory_id", values.get("associated_gateway_inventory_id", "")) or "")
         if current and current not in option_values:
-            st.warning("El gateway asociado previamente ya no está disponible como UG67.")
+            st.warning(f"El gateway asociado previamente ya no está disponible como {gateway_label}.")
             current = ""
         idx = option_values.index(current) if current in option_values else 0
         values["associated_gateway_inventory_id"] = st.selectbox(
-            "Gateway UG67 asociado",
+            f"Gateway {gateway_label} asociado",
             option_values,
             index=idx,
             key=f"{key_prefix}_associated_gateway_inventory_id",
@@ -357,7 +442,7 @@ def _render_association_fields(
             disabled=disabled,
         )
         if not gateway_options:
-            st.info("Aún no hay ningún UG67 en inventario.")
+            st.info(f"Aún no hay ningún {gateway_label} en inventario.")
 
 
 def _render_inventory_form_dialog(
@@ -381,6 +466,10 @@ def _render_inventory_form_dialog(
         values["inventory_id"] = draft_id
         values["created_at"] = values.get("created_at") or today
         values["updated_at"] = today
+        if _normalize_model_name(model) == "ws6210sc" and not str(values.get("placa_solar", "") or "").strip():
+            values["placa_solar"] = "NO"
+        if _normalize_model_name(model) in ECOWITT_MODELS_TO_SEED and not str(values.get("brand", "") or "").strip():
+            values["brand"] = "ecowitt"
     else:
         values["model"] = values.get("model") or model
         values["inventory_id"] = values.get("inventory_id", "")
@@ -390,7 +479,7 @@ def _render_inventory_form_dialog(
     prefix = f"invdlg_{mode}_{safe_prefix}_{values.get('inventory_id', '')[:8]}"
     editable_keys = _editable_field_keys(field_keys)
     form_keys = _form_field_keys(editable_keys, mode=mode)
-    _render_association_fields(values, form_keys, inv_df, key_prefix=prefix)
+    _render_association_fields(values, form_keys, inv_df, key_prefix=prefix, model=model)
 
     with st.form(f"inventory_dialog_form_{prefix}"):
         if mode == "edit":
@@ -417,11 +506,17 @@ def _render_inventory_form_dialog(
         if not values.get("serial_number", "").strip():
             st.error("El Número de serie (SN) es obligatorio.")
             return
-        if mode == "create" and _normalize_model_name(model) in _SERIAL_QUOTE_MODELS:
+        if _should_auto_quote_serial(model, mode=mode):
             values["serial_number"] = format_inventory_serial_with_quotes(values["serial_number"])
+        if mode in {"create", "edit"} and _normalize_model_name(model) in {"wh51l", "ws69"}:
+            if not str(values.get("associated_gateway_inventory_id", "") or "").strip():
+                st.error("Debes asociar un gateway WS6210S_C.")
+                return
         if (values.get("acquisition_type", "") == "prestamo") and not values.get("loan_end_date", "").strip():
             st.error("Si acquisition_type es préstamo, indica loan_end_date.")
             return
+        if _normalize_model_name(model) == "ws6210sc" and not str(values.get("placa_solar", "") or "").strip():
+            values["placa_solar"] = "NO"
         try:
             inventory_service().upsert_inventory(values)
         except ValueError as exc:
@@ -732,6 +827,7 @@ def render(contacts_df: pd.DataFrame) -> None:
         st.session_state[INVENTORY_VIEW_MODE_KEY] = "list"
     try:
         _seed_model_catalog_if_empty()
+        _seed_missing_ecowitt_models()
         inv_df = load_inventory_cached(st.session_state.get("inventory_cache_version", 0))
     except Exception as exc:
         if _is_quota_error(exc):

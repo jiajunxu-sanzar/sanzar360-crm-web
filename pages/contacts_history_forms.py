@@ -32,7 +32,7 @@ from services.incidencia_association_options import (
     build_sensor_history_options,
     option_by_id,
 )
-from services.inventory_service import normalize_inventory_serial_for_match
+from services.inventory_service import normalize_inventory_serial_for_match, normalize_model_name
 from ui.components.cultivo_kc_form import render_new_cultivo_kc_dialog_body
 from services.riego_campanas import (
     build_riego_timeline_figure,
@@ -76,9 +76,12 @@ from pages.contacts_common import (
 from pages.contacts_inventory_sync import (
     _extract_uc501_bundle,
     _extract_ug67_bundle,
+    _extract_ws6210_bundle,
     _extract_solenoide_sn,
     _extract_sim_sn,
     _extract_em500_sn,
+    _extract_wh51l_sn,
+    _extract_ws69_sn,
     _serial_in_labels,
     _normalized_serial_set,
     _resolve_inventory_option,
@@ -567,6 +570,17 @@ def _edit_history_dialog(kind: str, contact: dict[str, str], row: dict[str, str]
         was_open = _is_sensor_history_open(row)
         now_closed = str(st.session_state.get(f"{kind}_{row.get(spec.id_column, '')}_estado_cierre_sensor", "")).strip().lower() == "cerrado"
         if kind == "sensores" and was_open and now_closed:
+            blockers = history_service().open_histories_blocking_sensor_close(
+                contact_id,
+                row_id,
+                sensor_serial_number=str(
+                    st.session_state.get(f"{kind}_{row_id}_sensor_serial_number", row.get("sensor_serial_number", ""))
+                    or ""
+                ),
+            )
+            if blockers:
+                st.error("No se puede cerrar este histórico de sensor todavía:\n- " + "\n- ".join(blockers))
+                return
             prefix = f"{kind}_{row_id}"
             pending_values: dict[str, str] = {}
             for header in spec.headers:
@@ -1474,15 +1488,18 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
         key=is_uc501_key,
     )
 
-    # Step 2: if not UC501, choose between UG67, EM500, solenoide or SIM individual
+    # Step 2: if not UC501, choose between UG67, Ecowitt, EM500, solenoide or SIM
     if is_uc501:
         root_type = "uc501"
     else:
         root_type = st.radio(
             "Tipo de activo",
-            options=["ug67", "em500", "solenoide", "sim"],
+            options=["ug67", "ws6210sc", "wh51l", "ws69", "em500", "solenoide", "sim"],
             format_func=lambda x: {
                 "ug67": "UG67 (gateway)",
+                "ws6210sc": "WS6210S_C (Ecowitt)",
+                "wh51l": "WH51L (suelto)",
+                "ws69": "WS69 (suelto)",
                 "em500": "EM500 (nodo suelto)",
                 "solenoide": "Electroválvula solenoide",
                 "sim": "SIM individual",
@@ -1614,6 +1631,105 @@ def _render_sensor_serial_field(value: str, prefix: str, key: str, *, exclude_hi
                         for c in assoc.sensors
                     ]
                     compound = ",".join([gateway_part] + sensor_parts)
+
+    # ── WS6210S_C (Ecowitt gateway) branch ───────────────────────────────────
+    elif root_type == "ws6210sc":
+        existing_gw, _ = _extract_ws6210_bundle(value)
+        gw_sn_key = f"{prefix}_sensor_ws6210sc_sn"
+
+        options_gw = inv_svc.available_root_assets_for_history(("ws6210sc",), open_serials=open_serials, inv_df=inv_df)
+        selected_sn = str(st.session_state.get(gw_sn_key, existing_gw) or "")
+        gw_labels = [""]
+        gw_serials_set = _normalized_serial_set(options_gw)
+        for o in options_gw:
+            gw_labels.append(o.serial_number)
+        if selected_sn and normalize_inventory_serial_for_match(selected_sn) not in gw_serials_set:
+            gw_labels.append(selected_sn)
+
+        if not options_gw and not selected_sn:
+            st.info("Aún no hay ningún WS6210S_C disponible en inventario.")
+        else:
+            if gw_sn_key not in st.session_state:
+                st.session_state[gw_sn_key] = selected_sn if _serial_in_labels(selected_sn, gw_labels) else (gw_labels[0] if gw_labels else "")
+            gw_sn = st.selectbox("WS6210S_C disponibles (SN)", options=gw_labels, key=gw_sn_key)
+            if gw_sn:
+                opt = _resolve_inventory_option(
+                    inv_svc, ("ws6210sc",), gw_sn, options_gw, inv_df
+                )
+                if opt:
+                    assoc = inv_svc.associations_for_root_asset(opt.inventory_id, inv_df=inv_df)
+                    with st.container(border=True):
+                        st.caption("**Asociaciones desde Inventario (solo lectura)**")
+                        if assoc.sim:
+                            eid = _sim_eid_from_inv_df(inv_df, assoc.sim.inventory_id)
+                            if eid:
+                                st.caption(f"📶 SIM: **{assoc.sim.serial_number}** · EID: **{eid}**")
+                            else:
+                                st.caption(f"📶 SIM: **{assoc.sim.serial_number}**")
+                        else:
+                            st.warning("Sin SIM asociada en inventario. Ve a Inventario para vincularla.")
+                        if assoc.sensors:
+                            for child in assoc.sensors:
+                                st.caption(f"📊 {child.model.upper()}: **{child.serial_number}**")
+                        else:
+                            st.caption("Sin sensores hijos (WH51L / WS69) asociados.")
+                    sim_sn = assoc.sim.serial_number if assoc.sim else ""
+                    if sim_sn:
+                        gateway_part = f"ws6210sc-{gw_sn}-{sim_sn}"
+                    else:
+                        gateway_part = f"ws6210sc-{gw_sn}"
+                        st.warning(
+                            f"El WS6210S_C **{gw_sn}** no tiene SIM en Inventario — se guardará sin SIM. "
+                            "Puedes vincularla más tarde editando ese activo en Inventario."
+                        )
+                    sensor_parts = [
+                        f"{normalize_model_name(c.model)}-{c.serial_number}"
+                        for c in assoc.sensors
+                        if normalize_model_name(c.model) in {"wh51l", "ws69"}
+                    ]
+                    compound = ",".join([gateway_part] + sensor_parts)
+
+    # ── WH51L standalone ─────────────────────────────────────────────────────
+    elif root_type == "wh51l":
+        existing_wh = _extract_wh51l_sn(value)
+        wh_sn_key = f"{prefix}_sensor_wh51l_sn"
+        options_wh = inv_svc.available_root_assets_for_history(("wh51l",), open_serials=open_serials, inv_df=inv_df)
+        selected_sn = str(st.session_state.get(wh_sn_key, existing_wh) or "")
+        wh_labels = [""]
+        wh_serials_set = _normalized_serial_set(options_wh)
+        for o in options_wh:
+            wh_labels.append(o.serial_number)
+        if selected_sn and normalize_inventory_serial_for_match(selected_sn) not in wh_serials_set:
+            wh_labels.append(selected_sn)
+        if not options_wh and not selected_sn:
+            st.info("Aún no hay ningún WH51L disponible en inventario.")
+        else:
+            if wh_sn_key not in st.session_state:
+                st.session_state[wh_sn_key] = selected_sn if _serial_in_labels(selected_sn, wh_labels) else (wh_labels[0] if wh_labels else "")
+            wh_sn = st.selectbox("WH51L disponibles (SN)", options=wh_labels, key=wh_sn_key)
+            if wh_sn:
+                compound = f"wh51l-{wh_sn}"
+
+    # ── WS69 standalone ──────────────────────────────────────────────────────
+    elif root_type == "ws69":
+        existing_ws = _extract_ws69_sn(value)
+        ws_sn_key = f"{prefix}_sensor_ws69_sn"
+        options_ws = inv_svc.available_root_assets_for_history(("ws69",), open_serials=open_serials, inv_df=inv_df)
+        selected_sn = str(st.session_state.get(ws_sn_key, existing_ws) or "")
+        ws_labels = [""]
+        ws_serials_set = _normalized_serial_set(options_ws)
+        for o in options_ws:
+            ws_labels.append(o.serial_number)
+        if selected_sn and normalize_inventory_serial_for_match(selected_sn) not in ws_serials_set:
+            ws_labels.append(selected_sn)
+        if not options_ws and not selected_sn:
+            st.info("Aún no hay ningún WS69 disponible en inventario.")
+        else:
+            if ws_sn_key not in st.session_state:
+                st.session_state[ws_sn_key] = selected_sn if _serial_in_labels(selected_sn, ws_labels) else (ws_labels[0] if ws_labels else "")
+            ws_sn = st.selectbox("WS69 disponibles (SN)", options=ws_labels, key=ws_sn_key)
+            if ws_sn:
+                compound = f"ws69-{ws_sn}"
 
     # ── EM500 standalone branch ─────────────────────────────────────────────
     elif root_type == "em500":

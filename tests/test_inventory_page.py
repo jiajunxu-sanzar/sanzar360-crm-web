@@ -37,6 +37,39 @@ def test_em500_edit_serial_number_has_no_quotes_hint() -> None:
     assert _field_help("serial_number", model="em500", mode="edit") is None
 
 
+def test_ecowitt_models_create_serial_number_shows_quotes_hint() -> None:
+    for model in ("wh51l", "ws6210sc", "ws69"):
+        assert _field_label("serial_number", model=model, mode="create") == "Serial number *"
+        assert _field_help("serial_number", model=model, mode="create") == SERIAL_NUMBER_QUOTES_HELP
+
+
+def test_ecowitt_auto_quote_on_create_and_edit() -> None:
+    from pages.inventory import _should_auto_quote_serial
+
+    assert _should_auto_quote_serial("wh51l", mode="create") is True
+    assert _should_auto_quote_serial("wh51l", mode="edit") is True
+    assert _should_auto_quote_serial("ws6210sc", mode="edit") is True
+    assert _should_auto_quote_serial("ug67", mode="edit") is False
+    assert _should_auto_quote_serial("ug67", mode="create") is True
+
+
+def test_ecowitt_default_model_fields_and_required_gateway() -> None:
+    from pages.inventory import DEFAULT_MODEL_FIELDS, REQUIRED_MODEL_FIELDS, FIELD_OPTIONS
+
+    assert "placa_solar" in DEFAULT_MODEL_FIELDS["ws6210sc"]
+    assert "associated_sim_inventory_id" in DEFAULT_MODEL_FIELDS["ws6210sc"]
+    assert "associated_gateway_inventory_id" in DEFAULT_MODEL_FIELDS["wh51l"]
+    assert "associated_gateway_inventory_id" in DEFAULT_MODEL_FIELDS["ws69"]
+    assert REQUIRED_MODEL_FIELDS["wh51l"] == ["associated_gateway_inventory_id"]
+    assert REQUIRED_MODEL_FIELDS["ws69"] == ["associated_gateway_inventory_id"]
+    assert FIELD_OPTIONS["placa_solar"] == ["SI", "NO"]
+
+    empty_catalog = pd.DataFrame(columns=["model", "field_key", "order_index", "active"])
+    wh_keys = _model_field_keys("wh51l", empty_catalog)
+    assert "associated_gateway_inventory_id" in wh_keys
+    assert "placa_solar" in _model_field_keys("ws6210sc", empty_catalog)
+
+
 def test_other_models_serial_number_has_no_quotes_hint() -> None:
     assert _field_label("serial_number", model="uc501", mode="create") == "Serial number"
     assert _field_help("serial_number", model="uc501", mode="create") is None

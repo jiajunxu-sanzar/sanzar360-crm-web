@@ -155,6 +155,31 @@ def test_infer_sensor_root_type_ug67() -> None:
     assert _infer_sensor_root_type("ug67-UG001-SIM900,em500-EM001") == "ug67"
 
 
+def test_infer_sensor_root_type_ecowitt() -> None:
+    assert _infer_sensor_root_type("ws6210sc-GW001-SIM900,wh51l-WH001") == "ws6210sc"
+    assert _infer_sensor_root_type("wh51l-WH001") == "wh51l"
+    assert _infer_sensor_root_type("ws69-WS001") == "ws69"
+
+
+def test_ecowitt_parse_and_collect_serials() -> None:
+    from pages.contacts import _extract_ws6210_bundle, _extract_wh51l_sn
+    from services.history_service import parse_sensor_assets
+
+    assert _extract_ws6210_bundle("ws6210sc-GW001-SIM900,wh51l-WH001") == ("GW001", "SIM900")
+    assert _extract_wh51l_sn("wh51l-WH001") == "WH001"
+    assets = parse_sensor_assets("ws6210sc-GW001-SIM900,wh51l-WH001,ws69-WS001")
+    types = [a.asset_type for a, _ in assets]
+    assert types == ["ws6210sc", "sim", "wh51l", "ws69"]
+    serials = _collect_all_serials_from_sensor_sn("ws6210sc-GW001-SIM900,wh51l-WH001")
+    assert serials == ["GW001", "SIM900", "WH001"]
+
+
+def test_ecowitt_summary_lines() -> None:
+    lines = sensor_serial_number_summary_lines("ws6210sc-GW001-SIM900,wh51l-WH001")
+    assert any("WS6210S_C" in line and "GW001" in line for line in lines)
+    assert any("WH51L" in line for line in lines)
+
+
 def test_infer_sensor_root_type_em500() -> None:
     assert _infer_sensor_root_type("em500-EM001") == "em500"
 

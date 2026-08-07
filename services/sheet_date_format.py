@@ -126,6 +126,9 @@ _UC501_GATEWAY_ONLY_RE = re.compile(r"^uc501-[^,\s-]+$", re.IGNORECASE)
 _UG67_GATEWAY_RE = re.compile(r"^ug67-[^,\s-]+-[^,\s-]+$", re.IGNORECASE)
 _UG67_GATEWAY_NO_SIM_RE = re.compile(r"^ug67-[^,\s-]+$", re.IGNORECASE)
 _UG67_DEVICE_RE = re.compile(r"^(em500|em300|uc512)-[^,\s-]+$", re.IGNORECASE)
+_WS6210_GATEWAY_RE = re.compile(r"^ws6210sc-[^,\s-]+-[^,\s-]+$", re.IGNORECASE)
+_WS6210_GATEWAY_NO_SIM_RE = re.compile(r"^ws6210sc-[^,\s-]+$", re.IGNORECASE)
+_ECOWITT_DEVICE_RE = re.compile(r"^(wh51l|ws69)-[^,\s-]+$", re.IGNORECASE)
 _SOLENOIDE_RE = re.compile(r"^solenoide-[^,\s]+$", re.IGNORECASE)
 _SIM_STANDALONE_RE = re.compile(r"^sim-[^,\s]+$", re.IGNORECASE)
 
@@ -161,6 +164,8 @@ SENSOR_SERIAL_NUMBER_FORMAT_HELP = (
     "- UG67 con SIM: ug67-serial_gateway-sim, em500-serial, ... Ejemplo: ug67-UG001-SIM900, em500-EM50001\n"
     "- UG67 sin SIM: ug67-serial_gateway, em500-serial, ... Ejemplo: ug67-UG001, em500-EM50001\n"
     "- Nodo suelto: em500-EM50001, em300-EM30001 o uc512-UCDEM00341\n"
+    "- Ecowitt gateway: ws6210sc-serial[-sim], wh51l-serial, ws69-serial\n"
+    "- Ecowitt suelto: wh51l-SERIAL o ws69-SERIAL\n"
     "- Electroválvula solenoide: solenoide-SOL001\n"
     "- SIM individual: sim-SERIAL. Ejemplo: sim-SIM001"
 )
@@ -234,10 +239,22 @@ def is_valid_sensor_serial_number(value: str) -> bool:
             expecting_ug67_devices = False
             ug67_devices_count = 0
             continue
+        if _WS6210_GATEWAY_RE.match(item) or _WS6210_GATEWAY_NO_SIM_RE.match(item):
+            if expecting_ug67_devices and ug67_devices_count == 0:
+                return False
+            expecting_ug67_devices = False
+            ug67_devices_count = 0
+            continue
         if _UG67_DEVICE_RE.match(item):
             if not expecting_ug67_devices:
                 continue
             ug67_devices_count += 1
+            continue
+        if _ECOWITT_DEVICE_RE.match(item):
+            if expecting_ug67_devices and ug67_devices_count == 0:
+                return False
+            expecting_ug67_devices = False
+            ug67_devices_count = 0
             continue
         if _SOLENOIDE_RE.match(item):
             if expecting_ug67_devices and ug67_devices_count == 0:
@@ -260,7 +277,7 @@ def sensor_serial_number_summary_lines(value: str) -> list[str]:
     if not value:
         return []
     out: list[str] = []
-    current_ug67: str | None = None
+    current_gateway: str | None = None
     for item in [part.strip() for part in value.split(",") if part.strip()]:
         low = item.lower()
         if low.startswith("uc501-"):
@@ -273,7 +290,7 @@ def sensor_serial_number_summary_lines(value: str) -> list[str]:
                 out.append(f"UC501 | UC501 SN: {fields[1]} | Sin sonda/SIM en historial")
             else:
                 out.append(f"UC501 | {item}")
-            current_ug67 = None
+            current_gateway = None
         elif low.startswith("ug67-"):
             fields = item.split("-")
             if len(fields) == 3:
@@ -282,18 +299,36 @@ def sensor_serial_number_summary_lines(value: str) -> list[str]:
                 out.append(f"UG67 | Gateway SN: {fields[1]} | Sin SIM")
             else:
                 out.append(f"UG67 | {item}")
-            current_ug67 = item
+            current_gateway = item
+        elif low.startswith("ws6210sc-"):
+            fields = item.split("-")
+            if len(fields) == 3:
+                out.append(f"WS6210S_C | Gateway SN: {fields[1]} | SIM: {fields[2]}")
+            elif len(fields) == 2:
+                out.append(f"WS6210S_C | Gateway SN: {fields[1]} | Sin SIM")
+            else:
+                out.append(f"WS6210S_C | {item}")
+            current_gateway = item
+        elif low.startswith("wh51l-") or low.startswith("ws69-"):
+            asset_type, serial = item.split("-", 1)
+            if current_gateway is not None and current_gateway.lower().startswith("ws6210sc-"):
+                out.append(f"  - {asset_type.upper()}: {serial}")
+            else:
+                label = "WH51L" if asset_type.lower() == "wh51l" else "WS69"
+                out.append(f"{label} | SN: {serial}")
+            if not (current_gateway and current_gateway.lower().startswith("ws6210sc-")):
+                current_gateway = None
         elif low.startswith("solenoide-"):
             parts_sol = item.split("-", 1)
             sol_serial = parts_sol[1] if len(parts_sol) == 2 else item
             out.append(f"Solenoide | SN: {sol_serial}")
-            current_ug67 = None
+            current_gateway = None
         elif low.startswith("sim-"):
             parts_sim = item.split("-", 1)
             sim_serial = parts_sim[1] if len(parts_sim) == 2 else item
             out.append(f"SIM individual | SN: {sim_serial}")
-            current_ug67 = None
-        elif current_ug67 is not None and "-" in item:
+            current_gateway = None
+        elif current_gateway is not None and "-" in item:
             asset_type, serial = item.split("-", 1)
             out.append(f"  - Nodo {asset_type.upper()}: {serial}")
         else:

@@ -264,6 +264,7 @@ INVENTORY_HEADERS: tuple[str, ...] = (
     "sim_eid_number",
     "eui",
     "configured",
+    "placa_solar",
     "gateway_config_name",
     "ui_password",
     "proforma_invoice_url",

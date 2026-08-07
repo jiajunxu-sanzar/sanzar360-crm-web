@@ -57,26 +57,50 @@ def _extract_ug67_bundle(serial_value: str) -> tuple[str, str]:
         return parts[1].strip(), ""
     return "", ""
 
-def _extract_solenoide_sn(serial_value: str) -> str:
+
+def _extract_ws6210_bundle(serial_value: str) -> tuple[str, str]:
+    """Return (ws6210sc_sn, sim_sn) from a ws6210sc-* pack string."""
     raw = (serial_value or "").strip()
-    if not raw.lower().startswith("solenoide-"):
+    if not raw:
+        return "", ""
+    first = raw.split(",")[0].strip()
+    if not first.lower().startswith("ws6210sc-"):
+        return "", ""
+    first = normalize_sensor_serial_number(first)
+    parts = first.split("-")
+    if len(parts) == 3:
+        return parts[1].strip(), parts[2].strip()
+    if len(parts) == 2:
+        return parts[1].strip(), ""
+    return "", ""
+
+
+def _extract_prefixed_sn(serial_value: str, prefix: str) -> str:
+    raw = (serial_value or "").strip()
+    if not raw.lower().startswith(f"{prefix}-"):
         return ""
-    parts = raw.split("-", 1)
+    parts = normalize_sensor_serial_number(raw.split(",")[0].strip()).split("-", 1)
     return parts[1].strip() if len(parts) == 2 else ""
+
+
+def _extract_solenoide_sn(serial_value: str) -> str:
+    return _extract_prefixed_sn(serial_value, "solenoide")
+
 
 def _extract_sim_sn(serial_value: str) -> str:
-    raw = (serial_value or "").strip()
-    if not raw.lower().startswith("sim-"):
-        return ""
-    parts = raw.split("-", 1)
-    return parts[1].strip() if len(parts) == 2 else ""
+    return _extract_prefixed_sn(serial_value, "sim")
+
 
 def _extract_em500_sn(serial_value: str) -> str:
-    raw = (serial_value or "").strip()
-    if not raw.lower().startswith("em500-"):
-        return ""
-    parts = raw.split("-", 1)
-    return parts[1].strip() if len(parts) == 2 else ""
+    return _extract_prefixed_sn(serial_value, "em500")
+
+
+def _extract_wh51l_sn(serial_value: str) -> str:
+    return _extract_prefixed_sn(serial_value, "wh51l")
+
+
+def _extract_ws69_sn(serial_value: str) -> str:
+    return _extract_prefixed_sn(serial_value, "ws69")
 
 def _find_inventory_option_by_serial(
     options: list[InventoryAssetOption],
@@ -126,6 +150,12 @@ def _infer_sensor_root_type(serial_value: str) -> str:
     first = (serial_value or "").strip().split(",")[0].strip().lower()
     if first.startswith("ug67-"):
         return "ug67"
+    if first.startswith("ws6210sc-"):
+        return "ws6210sc"
+    if first.startswith("wh51l-"):
+        return "wh51l"
+    if first.startswith("ws69-"):
+        return "ws69"
     if first.startswith("em500-"):
         return "em500"
     if first.startswith("solenoide-"):
@@ -133,6 +163,7 @@ def _infer_sensor_root_type(serial_value: str) -> str:
     if first.startswith("sim-"):
         return "sim"
     return "uc501"
+
 
 def _collect_all_serials_from_sensor_sn(sensor_serial_number: str) -> list[str]:
     """Extract every individual serial number from a canonical sensor_serial_number string."""
@@ -145,7 +176,7 @@ def _collect_all_serials_from_sensor_sn(sensor_serial_number: str) -> list[str]:
                 serials.extend([parts[1], parts[2], parts[3]])
             elif len(parts) == 2:
                 serials.append(parts[1])
-        elif lower.startswith("ug67-"):
+        elif lower.startswith("ug67-") or lower.startswith("ws6210sc-"):
             parts = item.split("-")
             if len(parts) == 3:
                 serials.extend([parts[1], parts[2]])

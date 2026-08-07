@@ -51,6 +51,9 @@ _MODEL_CHIP_MODIFIER = {
     "solenoide": "solenoide",
     "teros10": "probe",
     "teros12": "probe",
+    "wh51l": "ecowitt",
+    "ws69": "ecowitt",
+    "ws6210sc": "ecowitt-gw",
 }
 
 _CONFIGURED_TRUE = {"si", "sí", "true", "1", "yes", "configurado"}
@@ -95,6 +98,13 @@ def _tech_fields_for_model(model: str) -> list[tuple[str, str, bool]]:
         ]
     if m == "ug67":
         return [("EUI", "eui", False), ("SIM asociada", "associated_sim_inventory_id", True)]
+    if m == "ws6210sc":
+        return [
+            ("Placa solar", "placa_solar", False),
+            ("SIM asociada", "associated_sim_inventory_id", True),
+        ]
+    if m in {"wh51l", "ws69"}:
+        return [("Gateway", "associated_gateway_inventory_id", True)]
     if m == "sim":
         return [("EID", "sim_eid_number", False)]
     return [("Proveedor", "supplier", False)]

@@ -127,6 +127,83 @@ def test_parse_sensor_assets_extracts_physical_assets() -> None:
     assert count_sensor_packs("uc501-a-b-c,ug67-x-y") == 2
 
 
+def test_parse_sensor_assets_ecowitt_pack() -> None:
+    assets = parse_sensor_assets("ws6210sc-GW001-SIM900,wh51l-WH001,ws69-WS001")
+    keys = {asset.key for asset, _ in assets}
+    assert ("ws6210sc", "gw001") in keys
+    assert ("sim", "sim900") in keys
+    assert ("wh51l", "wh001") in keys
+    assert ("ws69", "ws001") in keys
+    alone = parse_sensor_assets("wh51l-WH001")
+    assert alone[0][0].asset_type == "wh51l"
+
+
+def test_open_histories_blocking_sensor_close() -> None:
+    from services.history_service import HISTORY_SPECS
+
+    camp_headers = list(HISTORY_SPECS["campanas"].headers)
+    inc_headers = list(HISTORY_SPECS["incidencias"].headers)
+    sheets = FakeSheets(sensor_rows=[])
+    sheets.frames["HistoricoCampanas"] = pd.DataFrame(
+        [
+            {h: "" for h in camp_headers}
+            | {
+                "historial_campana_id": "camp-1",
+                "contact_id": "c1",
+                "nombre_campana": "Trigo 26",
+                "historial_sensor_id": "sens-1",
+                "estado_cierre_campana": "abierto",
+            },
+            {h: "" for h in camp_headers}
+            | {
+                "historial_campana_id": "camp-2",
+                "contact_id": "c1",
+                "nombre_campana": "Cerrada",
+                "historial_sensor_id": "sens-1",
+                "estado_cierre_campana": "cerrado",
+            },
+        ],
+        columns=camp_headers,
+    ).fillna("").astype(str)
+    sheets.frames["HistoricoIncidencias"] = pd.DataFrame(
+        [
+            {h: "" for h in inc_headers}
+            | {
+                "historial_incidencia_id": "inc-1",
+                "contact_id": "c1",
+                "tipo_incidencia": "Fallo radio",
+                "historial_sensor_id": "sens-1",
+                "estado": "abierta",
+                "fecha_apertura": "01/01/2026",
+            },
+            {h: "" for h in inc_headers}
+            | {
+                "historial_incidencia_id": "inc-2",
+                "contact_id": "c1",
+                "tipo_incidencia": "Ya ok",
+                "historial_sensor_id": "sens-1",
+                "estado": "cerrada",
+                "fecha_cierre": "02/01/2026",
+            },
+        ],
+        columns=inc_headers,
+    ).fillna("").astype(str)
+
+    hist = HistoryService(sheets)
+    blockers = hist.open_histories_blocking_sensor_close("c1", "sens-1")
+    assert len(blockers) == 2
+    assert any("Trigo 26" in m for m in blockers)
+    assert any("Fallo radio" in m for m in blockers)
+
+    assert hist.open_histories_blocking_sensor_close("c1", "sens-other") == []
+    # Closed deps only → allow (reload so HistoryService sees sheet mutations)
+    sheets.frames["HistoricoCampanas"].loc[0, "estado_cierre_campana"] = "cerrado"
+    sheets.frames["HistoricoIncidencias"].loc[0, "estado"] = "cerrada"
+    sheets.frames["HistoricoIncidencias"].loc[0, "fecha_cierre"] = "03/01/2026"
+    hist.invalidate_all()
+    assert hist.open_histories_blocking_sensor_close("c1", "sens-1") == []
+
+
 def test_parse_sensor_assets_uc501_gateway_only() -> None:
     assets = parse_sensor_assets("uc501-6772F19007800001")
     assert len(assets) == 1

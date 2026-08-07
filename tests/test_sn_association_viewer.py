@@ -149,6 +149,41 @@ def test_ug67_group_with_sim_and_sensors() -> None:
     assert conflicts == []
 
 
+def test_ws6210sc_group_with_sim_and_ecowitt_children() -> None:
+    df = _inv_df(
+        _row(
+            inventory_id="gw-1",
+            model="ws6210sc",
+            serial_number='"GW-ECO-1"',
+            associated_sim_inventory_id="sim-3",
+            placa_solar="SI",
+        ),
+        _row(inventory_id="sim-3", model="sim", serial_number="SIM-ECO"),
+        _row(
+            inventory_id="wh-1",
+            model="wh51l",
+            serial_number='"WH-1"',
+            associated_gateway_inventory_id="gw-1",
+        ),
+        _row(
+            inventory_id="ws-1",
+            model="ws69",
+            serial_number='"WS69-1"',
+            associated_gateway_inventory_id="gw-1",
+        ),
+    )
+    groups, conflicts = build_inventory_association_map(df)
+    assert len(groups) == 1
+    g = groups[0]
+    assert g.role == "ws6210sc"
+    roles = [c.role for c in g.children]
+    assert "sim" in roles
+    assert roles.count("sensor") == 2
+    child_models = {c.model for c in g.children if c.role == "sensor"}
+    assert child_models == {"wh51l", "ws69"}
+    assert conflicts == []
+
+
 def test_group_matches_query_normalizes_quoted_serials_and_location_detail() -> None:
     group = AssociationGroup(
         role="ug67",
