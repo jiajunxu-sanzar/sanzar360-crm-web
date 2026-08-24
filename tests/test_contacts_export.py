@@ -103,3 +103,31 @@ def test_export_filenames_use_exported_at() -> None:
     _, pdf_name = build_overview_pdf_bytes(overview, exported_at=_EXPORTED_AT)
     assert xlsx_name == "contactos_sensores_20250618.xlsx"
     assert pdf_name == "contactos_sensores_20250618.pdf"
+
+
+def test_build_overview_pdf_handles_many_rows_and_long_text() -> None:
+    """LongTable + truncation must not raise LayoutError on large overview."""
+    rows = []
+    long_detail = ("Seguimiento pendiente con mucho detalle. " * 40).strip()
+    for i in range(80):
+        rows.append(
+            {
+                "contact_id": f"c{i}",
+                "nombre": f"Cliente {i}",
+                "num_sensores": 1,
+                "sensor_sns": f"UC{i:04d}",
+                "ultimo_contacto": "01/06/2025",
+                "ultimo_contacto_canal": "email",
+                "ultimo_contacto_detalle": long_detail if i % 10 == 0 else "",
+                "proxima_accion_fecha": "10/06/2025",
+                "proxima_accion_detalle": long_detail if i % 7 == 0 else "Llamar",
+                "incidencias_abiertas": i % 3,
+                "incidencias_detalle": long_detail if i % 11 == 0 else "",
+                "semaforo": "verde" if i % 2 == 0 else "amarillo",
+            }
+        )
+    overview = pd.DataFrame(rows)
+    content, fname = build_overview_pdf_bytes(overview, exported_at=_EXPORTED_AT)
+    assert fname.endswith(".pdf")
+    assert content[:4] == b"%PDF"
+    assert len(content) > 500

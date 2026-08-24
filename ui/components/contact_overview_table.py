@@ -190,7 +190,13 @@ def render_contact_overview_dialog_content(overview_df: pd.DataFrame) -> None:
     st.caption(f"{len(sorted_df)} contactos (filtros aplicados)")
 
     xlsx_bytes, xlsx_name = build_overview_xlsx_bytes(visible_df)
-    pdf_bytes, pdf_name = build_overview_pdf_bytes(visible_df)
+    pdf_bytes: bytes | None = None
+    pdf_name = "contactos_sensores.pdf"
+    try:
+        pdf_bytes, pdf_name = build_overview_pdf_bytes(visible_df)
+    except Exception:
+        pdf_bytes = None
+
     export_col1, export_col2 = st.columns(2, gap="small")
     export_col1.download_button(
         "Exportar Excel",
@@ -200,14 +206,17 @@ def render_contact_overview_dialog_content(overview_df: pd.DataFrame) -> None:
         key="contacts_export_overview_xlsx",
         width="stretch",
     )
-    export_col2.download_button(
-        "Exportar PDF",
-        data=pdf_bytes,
-        file_name=pdf_name,
-        mime="application/pdf",
-        key="contacts_export_overview_pdf",
-        width="stretch",
-    )
+    if pdf_bytes is not None:
+        export_col2.download_button(
+            "Exportar PDF",
+            data=pdf_bytes,
+            file_name=pdf_name,
+            mime="application/pdf",
+            key="contacts_export_overview_pdf",
+            width="stretch",
+        )
+    else:
+        export_col2.caption("PDF no disponible (error al generar).")
 
     options: list[str] = []
     id_by_label: dict[str, str] = {}

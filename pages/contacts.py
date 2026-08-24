@@ -42,6 +42,11 @@ from config.settings import (
 from services.contact_proxima_index import enrich_contacts_with_proxima, latest_commercial_contact_row
 from services.tareas_validation import next_open_tarea
 from services.contact_deletion import delete_contact_and_related_data
+from services.contact_ficha_export import (
+    build_contact_ficha_pdf_bytes,
+    build_contact_ficha_xlsx_bytes,
+    collect_histories_for_contact,
+)
 from services.contact_sensor_overview import (
     filter_by_sensor_overview,
     semaforo_by_contact_id,
@@ -513,7 +518,15 @@ def _render_overview_table() -> None:
         return
 
     xlsx_bytes, xlsx_name = overview_xlsx_bytes_cached(overview_df)
-    pdf_bytes, pdf_name = overview_pdf_bytes_cached(overview_df)
+    pdf_bytes: bytes | None = None
+    pdf_name = "contactos_sensores.pdf"
+    pdf_error: str | None = None
+    try:
+        pdf_bytes, pdf_name = overview_pdf_bytes_cached(overview_df)
+    except Exception as exc:
+        # LayoutError u otros fallos de ReportLab no deben tumbar Contactos.
+        pdf_error = str(exc) or exc.__class__.__name__
+
     export_cols = st.columns([0.2, 0.2, 0.6], gap="small")
     export_cols[0].download_button(
         "Exportar Excel",
@@ -523,14 +536,19 @@ def _render_overview_table() -> None:
         key="contacts_export_overview_xlsx",
         width="stretch",
     )
-    export_cols[1].download_button(
-        "Exportar PDF",
-        data=pdf_bytes,
-        file_name=pdf_name,
-        mime="application/pdf",
-        key="contacts_export_overview_pdf",
-        width="stretch",
-    )
+    if pdf_bytes is not None:
+        export_cols[1].download_button(
+            "Exportar PDF",
+            data=pdf_bytes,
+            file_name=pdf_name,
+            mime="application/pdf",
+            key="contacts_export_overview_pdf",
+            width="stretch",
+        )
+    else:
+        export_cols[1].caption("PDF no disponible")
+        if pdf_error:
+            export_cols[1].caption(f"Error al generar PDF: {pdf_error[:120]}")
     export_cols[2].caption("<div style='text-align:right'>Ordenados por próxima acción</div>", unsafe_allow_html=True)
 
     ids = [str(row.get("contact_id", "")).strip() for row in records]
@@ -905,6 +923,8 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
         return new_df
 
     st.divider()
+    _render_contact_ficha_export(contact)
+    st.divider()
     danger_cols = st.columns([0.66, 0.34], gap="small", vertical_alignment="center")
     danger_cols[0].caption("Eliminar borra la ficha y todos sus históricos (acciones, sensores, campañas, suscripciones e incidencias).")
     if danger_cols[1].button(
@@ -915,6 +935,71 @@ def _render_contact_form(df: pd.DataFrame, row_idx: int, contact: dict[str, str]
     ):
         _delete_contact_dialog(cid, nombre_ficha)
     return None
+
+
+CONTACT_FICHA_EXPORT_PREFIX = "contact_ficha_export"
+
+
+def _render_contact_ficha_export(contact: dict[str, str]) -> None:
+    """Caption + botón Exportar; al pulsar genera PDF/Excel y muestra downloads."""
+    cid = str(contact.get("contact_id", "") or "").strip()
+    if not cid:
+        return
+    xlsx_key = f"{CONTACT_FICHA_EXPORT_PREFIX}_xlsx_{cid}"
+    pdf_key = f"{CONTACT_FICHA_EXPORT_PREFIX}_pdf_{cid}"
+    xlsx_name_key = f"{CONTACT_FICHA_EXPORT_PREFIX}_xlsx_name_{cid}"
+    pdf_name_key = f"{CONTACT_FICHA_EXPORT_PREFIX}_pdf_name_{cid}"
+
+    export_cols = st.columns([0.66, 0.34], gap="small", vertical_alignment="center")
+    export_cols[0].caption(
+        "Exporta los detalles de la ficha en PDF y en Excel "
+        "(ficha del cliente + seguimiento, tareas, notas, sensores, campañas, suscripciones e incidencias)."
+    )
+    if export_cols[1].button(
+        "Exportar datos del contacto",
+        key=f"btn_export_contact_ficha_{cid}",
+        width="stretch",
+        icon=":material/download:",
+        type="primary",
+    ):
+        try:
+            histories = collect_histories_for_contact(history_service(), cid)
+            xlsx_bytes, xlsx_name = build_contact_ficha_xlsx_bytes(contact, histories)
+            pdf_bytes, pdf_name = build_contact_ficha_pdf_bytes(contact, histories)
+            st.session_state[xlsx_key] = xlsx_bytes
+            st.session_state[pdf_key] = pdf_bytes
+            st.session_state[xlsx_name_key] = xlsx_name
+            st.session_state[pdf_name_key] = pdf_name
+            st.toast("Exportación lista: descarga PDF y Excel abajo.", icon="✅")
+        except Exception as exc:
+            st.error(f"No se pudo generar la exportación: {exc}")
+
+    xlsx_bytes = st.session_state.get(xlsx_key)
+    pdf_bytes = st.session_state.get(pdf_key)
+    if xlsx_bytes is None and pdf_bytes is None:
+        return
+
+    dl_cols = st.columns(2, gap="small")
+    if xlsx_bytes is not None:
+        dl_cols[0].download_button(
+            "Descargar Excel",
+            data=xlsx_bytes,
+            file_name=str(st.session_state.get(xlsx_name_key) or "contacto.xlsx"),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"dl_contact_ficha_xlsx_{cid}",
+            width="stretch",
+            icon=":material/table:",
+        )
+    if pdf_bytes is not None:
+        dl_cols[1].download_button(
+            "Descargar PDF",
+            data=pdf_bytes,
+            file_name=str(st.session_state.get(pdf_name_key) or "contacto.pdf"),
+            mime="application/pdf",
+            key=f"dl_contact_ficha_pdf_{cid}",
+            width="stretch",
+            icon=":material/picture_as_pdf:",
+        )
 
 def _render_form_sections(
     values: dict[str, str],

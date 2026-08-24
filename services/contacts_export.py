@@ -191,7 +191,7 @@ def build_overview_pdf_bytes(
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
         from reportlab.lib.units import cm
-        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+        from reportlab.platypus import LongTable, Paragraph, SimpleDocTemplate, Spacer, TableStyle
     except ModuleNotFoundError:
         minimal = (
             "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
@@ -235,14 +235,26 @@ def build_overview_pdf_bytes(
     )
     story.append(Spacer(1, 0.4 * cm))
 
+    def _cell_text(value: object) -> str:
+        text = str(value or "")
+        if len(text) > 400:
+            return text[:399] + "…"
+        return text
+
     data_rows = _overview_rows(overview_df)
     semaforos = _semaforo_values(overview_df)
-    tbl_data: list[list[object]] = [_EXPORT_HEADERS.copy()]
+    tbl_data: list[list[object]] = [
+        [Paragraph(_escape_xml(h), cell_style) for h in _EXPORT_HEADERS]
+    ]
     for row_values in data_rows:
-        tbl_data.append([Paragraph(_escape_xml(str(v)), cell_style) for v in row_values])
+        tbl_data.append(
+            [Paragraph(_escape_xml(_cell_text(v)), cell_style) for v in row_values]
+        )
 
     tw = doc.width
-    tbl = Table(
+    # LongTable splits across pages; avoids LayoutError when a row is taller than a page
+    # after wrapping long Paragraph cells.
+    tbl = LongTable(
         tbl_data,
         colWidths=[
             tw * 0.20,
