@@ -8,6 +8,7 @@ import streamlit as st
 from app.telemetry import timed
 from services.blogs_service import BlogsService
 from services.compras_service import ComprasService
+from services.licitaciones_service import LicitacionesService
 from services.cultivos_kc_service import CultivosKcService
 from services.contact_sensor_overview import build_contact_sensor_overview
 from services.contacts_export import build_overview_pdf_bytes, build_overview_xlsx_bytes
@@ -29,6 +30,11 @@ def blogs_service() -> BlogsService:
 @st.cache_resource
 def compras_service() -> ComprasService:
     return ComprasService(sheets_service())
+
+
+@st.cache_resource
+def licitaciones_service() -> LicitacionesService:
+    return LicitacionesService(sheets_service())
 
 
 @st.cache_resource
@@ -98,6 +104,12 @@ def load_blogs_cached(version: int = 0):
 def load_compras_cached(version: int = 0):
     with timed("load_compras_cached", version=version):
         return compras_service().compras_df()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_licitaciones_cached(version: int = 0):
+    with timed("load_licitaciones_cached", version=version):
+        return licitaciones_service().licitaciones_df()
 
 
 @st.cache_data(ttl=300, show_spinner=False)

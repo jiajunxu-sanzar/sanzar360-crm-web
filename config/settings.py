@@ -436,6 +436,33 @@ COMPRAS_HEADERS: tuple[str, ...] = (
     "updated_at",
 )
 
+LICITACIONES_WORKSHEET_NAME = "Licitaciones"
+LICITACIONES_PRIORIDAD_OPCIONES: tuple[str, ...] = ("aplicar", "duda")
+LICITACIONES_URGENTE_DIAS_HABILES = 3
+LICITACIONES_HEADERS: tuple[str, ...] = (
+    "id",
+    "expediente",
+    "titulo",
+    "organo",
+    "cpv",
+    "importe",
+    "estado_placsp",
+    "fecha_publicacion",
+    "fecha_fin_presentacion",
+    "enlace",
+    "es_relevante",
+    "sectores_match",
+    "sectores_etiquetas",
+    "notificado",
+    "primera_vista_utc",
+    "ultima_actualizacion_utc",
+    "descartado",
+    "resumen_tecnico",
+    "porque_decision",
+    "prioridad",
+    "nota_prioridad",
+)
+
 
 @dataclass(frozen=True)
 class AppConfig:

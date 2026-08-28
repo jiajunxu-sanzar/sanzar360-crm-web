@@ -552,6 +552,23 @@ class SheetsService:
         self._batch_delete_row_numbers(ws, rows_to_delete)
         return len(rows_to_delete)
 
+    def delete_rows_by_row_numbers(self, worksheet_title: str, row_numbers_1based: list[int]) -> int:
+        """Elimina filas ya localizadas por numero, en un unico ``batchUpdate``.
+
+        Complementa a ``delete_rows_where_column_equals`` para el caso en que
+        el criterio de borrado no es una simple igualdad de columna (p.ej.
+        una fecha ya pasada): el llamador localiza los numeros de fila con
+        ``row_numbers_by_id`` y los pasa aqui. No relee la hoja.
+        """
+        ws = self._get_worksheet_existing(worksheet_title)
+        if ws is None or not row_numbers_1based:
+            return 0
+        unique_rows = sorted({int(r) for r in row_numbers_1based if int(r) > 1})
+        if not unique_rows:
+            return 0
+        self._batch_delete_row_numbers(ws, unique_rows)
+        return len(unique_rows)
+
     def contact_id_exists_on_contacts_sheet(self, contact_id: str) -> bool:
         """Comprueba si el id existe leyendo solo la columna de ids (1 llamada ligera)."""
         target = str(contact_id).strip()

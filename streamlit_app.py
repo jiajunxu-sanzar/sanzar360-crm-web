@@ -40,6 +40,7 @@ from pages import (
     map,
     pricing,
     compras,
+    licitaciones,
     blogs,
     referidos,
     tecnico,
@@ -390,6 +391,8 @@ elif page == "Inventario":
     inventory.render(contacts_df)
 elif page == "Compras":
     compras.render(contacts_df)
+elif page == "Licitaciones":
+    licitaciones.render(contacts_df)
 elif page == "Facturas":
     invoices.render(contacts_df)
 elif page == "Pricing":

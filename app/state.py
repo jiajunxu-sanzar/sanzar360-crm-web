@@ -24,6 +24,7 @@ DATA_CACHE_VERSION_KEYS: Final[tuple[str, ...]] = (
     "history_cache_version",
     "inventory_cache_version",
     "compras_cache_version",
+    "licitaciones_cache_version",
     "blogs_cache_version",
     "cultivos_kc_cache_version",
     "users_cache_version",
@@ -39,6 +40,7 @@ DEFAULT_STATE = {
     "history_cache_version": 0,
     "inventory_cache_version": 0,
     "compras_cache_version": 0,
+    "licitaciones_cache_version": 0,
     "blogs_cache_version": 0,
     "cultivos_kc_cache_version": 0,
     "alarm_category": "Embudo",
@@ -89,6 +91,10 @@ def bump_inventory_cache() -> None:
 
 def bump_compras_cache() -> None:
     st.session_state.compras_cache_version = int(st.session_state.get("compras_cache_version", 0)) + 1
+
+
+def bump_licitaciones_cache() -> None:
+    st.session_state.licitaciones_cache_version = int(st.session_state.get("licitaciones_cache_version", 0)) + 1
 
 
 def bump_blogs_cache() -> None:

@@ -482,3 +482,52 @@ def test_append_adds_missing_required_headers_with_title() -> None:
     written = ws.appended[0]
     assert written[ws.rows[0].index("latitud")] == "40.1"
     assert written[ws.rows[0].index("longitud")] == "-3.7"
+
+
+# ---------------------------------------------------------------------------
+# delete_rows_by_row_numbers (Licitaciones: borrado de caducadas en lote)
+# ---------------------------------------------------------------------------
+
+
+class _FakeSpreadsheetForRowDelete:
+    def __init__(self) -> None:
+        self.batch_calls: list[dict] = []
+
+    def batch_update(self, body):
+        self.batch_calls.append(body)
+
+
+class _FakeWorksheetForRowDelete:
+    def __init__(self, sheet_id: int = 111) -> None:
+        self.id = sheet_id
+
+
+class _DeleteByRowNumbersService(SheetsService):
+    def __init__(self, ws: _FakeWorksheetForRowDelete, spreadsheet: _FakeSpreadsheetForRowDelete) -> None:
+        super().__init__()
+        self._ws = ws
+        self._sp = spreadsheet
+
+    def spreadsheet(self):  # type: ignore[override]
+        return self._sp
+
+    def _get_worksheet_existing(self, title: str):  # type: ignore[override]
+        return self._ws
+
+
+def test_delete_rows_by_row_numbers_single_batch_call() -> None:
+    fake_sp = _FakeSpreadsheetForRowDelete()
+    ws = _FakeWorksheetForRowDelete()
+    service = _DeleteByRowNumbersService(ws, fake_sp)
+    removed = service.delete_rows_by_row_numbers("Licitaciones", [5, 12, 3, 12])
+    assert removed == 3  # duplicados colapsados
+    assert len(fake_sp.batch_calls) == 1  # un unico batchUpdate, no una llamada por fila
+    assert len(fake_sp.batch_calls[0]["requests"]) == 3
+
+
+def test_delete_rows_by_row_numbers_empty_list_makes_no_api_call() -> None:
+    fake_sp = _FakeSpreadsheetForRowDelete()
+    ws = _FakeWorksheetForRowDelete()
+    service = _DeleteByRowNumbersService(ws, fake_sp)
+    assert service.delete_rows_by_row_numbers("Licitaciones", []) == 0
+    assert fake_sp.batch_calls == []
