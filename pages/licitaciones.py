@@ -14,7 +14,9 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from app.cache import licitaciones_service, load_licitaciones_cached
+from app import auth
+from app.cache import licitaciones_service, load_licitaciones_cached, load_users_cached
+from app.navigation import ROLE_ADMIN, normalize_role
 from app.state import bump_licitaciones_cache
 from config.settings import LICITACIONES_PRIORIDAD_OPCIONES, LICITACIONES_URGENTE_DIAS_HABILES
 from services.licitaciones_service import dias_habiles_restantes, es_urgente, esta_caducada, parse_fecha
@@ -57,6 +59,20 @@ ORDEN_OPCIONES: dict[str, tuple[str, bool]] = {
     "Importe (mayor primero)": ("importe", False),
     "Importe (menor primero)": ("importe", True),
 }
+
+
+def can_use_licitaciones(role: str) -> bool:
+    """Solo administradores pueden consultar y gestionar licitaciones."""
+    return normalize_role(role) == ROLE_ADMIN
+
+
+def _authenticated_user_role() -> str:
+    uid = auth.get_authenticated_user_id()
+    users = load_users_cached(st.session_state.get("users_cache_version", 0))
+    for user in users:
+        if user.employee_id == uid:
+            return str(user.role or "")
+    return ""
 
 
 def _is_quota_error(exc: Exception) -> bool:
@@ -261,6 +277,14 @@ def _render_paginated(df: pd.DataFrame, *, filters_fp: str) -> None:
 
 def render(_: pd.DataFrame) -> None:
     render_page_header("Licitaciones")
+
+    if not can_use_licitaciones(_authenticated_user_role()):
+        st.warning(
+            "Solo los administradores pueden consultar y gestionar licitaciones. "
+            "Si necesitas acceso, pídeselo a un administrador del CRM."
+        )
+        return
+
     st.caption(
         "Licitaciones públicas relevantes desde PLACSP: prioriza, descarta y revisa antes de la fecha límite."
     )

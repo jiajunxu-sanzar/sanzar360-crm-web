@@ -11,6 +11,11 @@ Para cambiar quién ve qué, edita solo las constantes de este módulo; el orden
 del menú sigue siempre ``PAGES`` (canonical). Las etiquetas visibles del radio
 (incl. emojis) están en ``PAGE_MENU_LABELS``; ``page_menu_title()`` devuelve
 ese texto para cabeceras de página y el sidebar.
+
+Páginas en ``PAGES_ADMIN_USE_ONLY`` aparecen en el menú para roles operativos
+pero su contenido y APIs están restringidos al admin en la propia página
+(ej. «Licitaciones»). No usar ``_PAGES_EXCLUSIVE_TO_ADMIN`` para eso — eso las
+oculta del menú.
 """
 
 from __future__ import annotations
@@ -187,6 +192,9 @@ ROLE_LABELS: Final[dict[str, str]] = {
 
 # Pestañas que sólo aparecen si el rol es admin (ej. configuración sensible).
 _PAGES_EXCLUSIVE_TO_ADMIN: Final[frozenset[str]] = frozenset({"Usuarios"})
+
+# Visible en menú para agro/sales/admin; solo admin puede usar la página (guard en render).
+PAGES_ADMIN_USE_ONLY: Final[frozenset[str]] = frozenset({"Licitaciones"})
 
 # Sin «Usuarios» (admin-only). Email está disponible para admin, sales y agro_team.
 AGRO_TEAM_DENIED_PAGES: Final[frozenset[str]] = _PAGES_EXCLUSIVE_TO_ADMIN

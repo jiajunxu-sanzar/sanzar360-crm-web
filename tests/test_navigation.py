@@ -80,6 +80,19 @@ def test_blogs_visible_to_commercial_roles_not_employee() -> None:
     assert commercial_pages.index("Blogs") == commercial_pages.index("Referidos") + 1
 
 
+def test_licitaciones_visible_in_nav_for_commercial_roles_not_employee() -> None:
+    admin = navigation.pages_for_role(navigation.ROLE_ADMIN)
+    sales = navigation.pages_for_role(navigation.ROLE_SALES)
+    agro = navigation.pages_for_role(navigation.ROLE_AGRO_TEAM)
+    emp = navigation.pages_for_role(navigation.ROLE_EMPLOYEE)
+    assert "Licitaciones" in admin
+    assert "Licitaciones" in sales
+    assert "Licitaciones" in agro
+    assert "Licitaciones" not in emp
+    assert "Licitaciones" in navigation.PAGES_ADMIN_USE_ONLY
+    assert "Licitaciones" not in navigation._PAGES_EXCLUSIVE_TO_ADMIN
+
+
 def test_tecnico_visible_to_commercial_roles_not_employee() -> None:
     sales = navigation.pages_for_role(navigation.ROLE_SALES)
     agro = navigation.pages_for_role(navigation.ROLE_AGRO_TEAM)
