@@ -245,22 +245,24 @@ def test_year_summary_carries_the_balance_across_months() -> None:
     holidays = _holidays_frame([])
     festivos = core.holiday_dates_for_year(holidays, 2026)
     registros = []
-    for mes in (1, 2):
-        for dia in core.business_days(2026, mes, festivos):
-            registros.append(core.manual_record(person, dia, 8))
+    # Enero completo y febrero solo a medias: el agujero de febrero se arrastra.
+    for dia in core.business_days(2026, 1, festivos):
+        registros.append(core.manual_record(person, dia, 8))
+    dias_febrero = core.business_days(2026, 2, festivos)
+    for dia in dias_febrero[: len(dias_febrero) - 3]:
+        registros.append(core.manual_record(person, dia, 8))
     frame = core.records_to_frame(registros)
 
     resumen = core.year_summary(
-        [person], 2026, frame, holidays, pd.DataFrame(), today=date(2026, 3, 15)
+        [person], 2026, frame, holidays, pd.DataFrame(), today=date(2026, 2, 28)
     )
 
     por_mes = {int(row["mes_num"]): row for _, row in resumen.iterrows()}
-    assert set(por_mes) == {1, 2, 3}
+    assert set(por_mes) == {1, 2}
     assert por_mes[1]["saldo"] == 0.0
-    assert por_mes[2]["saldo"] == 0.0
-    # Marzo sin ningun fichaje: todo el mes en negativo y arrastrado al acumulado.
-    assert por_mes[3]["saldo"] < 0
-    assert por_mes[3]["saldo_acumulado"] == por_mes[3]["saldo"]
+    assert por_mes[1]["saldo_acumulado"] == 0.0
+    assert por_mes[2]["saldo"] == -24.0
+    assert por_mes[2]["saldo_acumulado"] == -24.0
 
 
 def test_months_of_year_stops_at_the_current_month() -> None:
@@ -447,3 +449,87 @@ def test_day_picker_prefers_the_existing_record_as_the_reason() -> None:
 def test_pending_holidays_do_not_block_the_calendar() -> None:
     ausencias = _absence_days([_absence_row(estado="pendiente")], set())
     assert core.day_picker_state(date(2026, 7, 6), set(), set(), ausencias) == core.DAY_FREE
+
+
+# ---------------------------------------------- saldo realista del acumulado
+
+
+def test_current_month_only_requires_the_days_already_gone() -> None:
+    """El 5 de agosto no se puede exigir agosto entero."""
+    person = _person()
+    resumen = core.month_summary(
+        person, 2026, 8, core.records_to_frame([]), set(), {}, today=date(2026, 8, 5)
+    )
+    assert resumen is not None
+    assert resumen.mes_en_curso is True
+    # 3, 4 y 5 de agosto de 2026 son lunes, martes y miercoles.
+    assert resumen.dias_exigidos == 3
+    assert resumen.horas_exigidas == 24.0
+
+
+def test_a_closed_month_still_requires_every_working_day() -> None:
+    person = _person()
+    resumen = core.month_summary(
+        person, 2026, 7, core.records_to_frame([]), set(), {}, today=date(2026, 8, 5)
+    )
+    assert resumen is not None
+    assert resumen.mes_en_curso is False
+    assert resumen.dias_exigidos == len(core.business_days(2026, 7, set()))
+
+
+def test_months_without_any_record_do_not_drag_the_running_balance() -> None:
+    person = _person()
+    holidays = _holidays_frame([])
+    festivos = core.holiday_dates_for_year(holidays, 2026)
+    # Solo enero tiene registros, y va justo de horas.
+    registros = [core.manual_record(person, dia, 8) for dia in core.business_days(2026, 1, festivos)]
+
+    resumen = core.year_summary(
+        [person], 2026, core.records_to_frame(registros), holidays, pd.DataFrame(),
+        today=date(2026, 3, 31),
+    )
+
+    por_mes = {int(row["mes_num"]): row for _, row in resumen.iterrows()}
+    assert por_mes[1]["sin_datos"] is False
+    assert bool(por_mes[2]["sin_datos"]) is True
+    assert por_mes[2]["saldo"] < 0  # el mes se sigue viendo en rojo
+    assert por_mes[2]["saldo_acumulado"] == 0.0  # pero no arrastra
+    assert por_mes[3]["saldo_acumulado"] == 0.0
+
+
+def test_absences_are_matched_by_name_when_the_ids_do_not_line_up() -> None:
+    """Vacaciones y Usuarios CRM son hojas distintas: los ids pueden no cuadrar."""
+    person = _person()
+    absences = pd.DataFrame([_absence_row(employee_id="OTRO-ID")])
+
+    por_persona = core.absence_days_for_people(absences, [person], 2026, set())
+
+    assert len(por_persona["EMP001"]) == 5
+    assert core.unmatched_absence_names(absences, [person]) == []
+
+
+def test_unmatched_absence_names_are_reported() -> None:
+    absences = pd.DataFrame(
+        [_absence_row(employee_id="EMP999", nombre_employee="Alguien de fuera")]
+    )
+    assert core.absence_days_for_people(absences, [_person()], 2026, set()) == {}
+    assert core.unmatched_absence_names(absences, [_person()]) == ["Alguien de fuera"]
+
+
+def test_holidays_taken_actually_lower_the_required_hours_end_to_end() -> None:
+    """Comprobacion de punta a punta de lo que preguntaba el saldo negativo."""
+    person = _person()
+    holidays = _holidays_frame(["2026-08-14"])
+    absences = pd.DataFrame(
+        [_absence_row(fecha_inicio="2026-08-03", fecha_fin="2026-08-07")]
+    )
+
+    resumen = core.year_summary(
+        [person], 2026, core.records_to_frame([]), holidays, absences, today=date(2026, 8, 31)
+    )
+    agosto = resumen[resumen["mes_num"] == 8].iloc[0]
+
+    laborables_naturales = 21  # agosto 2026 tiene 21 dias de lunes a viernes
+    assert agosto["dias_laborables"] == laborables_naturales - 1  # menos Butarque
+    assert agosto["dias_ausencia"] == 5  # menos la semana de vacaciones
+    assert agosto["dias_exigidos"] == laborables_naturales - 1 - 5

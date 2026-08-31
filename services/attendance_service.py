@@ -296,6 +296,61 @@ def absence_days_by_employee(
     return out
 
 
+def absence_days_for_people(
+    absences: pd.DataFrame,
+    people: list[AttendancePerson],
+    anio: int,
+    holiday_dates: set[date],
+) -> dict[str, dict[date, str]]:
+    """Ausencias aprobadas de cada persona, cruzando por id y, si no, por nombre.
+
+    ``Vacaciones_Empleados`` y ``Usuarios CRM`` son hojas distintas y sus
+    ``employee_id`` no tienen por que coincidir. Cruzar solo por id hacia que
+    las vacaciones de alguien no descontasen nada y su saldo saliera en
+    negativo sin motivo, asi que el nombre sirve de red de seguridad.
+    """
+    out: dict[str, dict[date, str]] = {}
+    approved = approved_absences(absences)
+    if approved.empty or not people:
+        return out
+
+    por_id = {p.employee_id: p for p in people}
+    por_nombre = {_normalize_name(p.nombre): p for p in people}
+
+    filas_por_persona: dict[str, list[dict[str, object]]] = {}
+    for row in approved.to_dict("records"):
+        person = por_id.get(str(row.get("employee_id", "")).strip())
+        if person is None:
+            person = por_nombre.get(_normalize_name(str(row.get("nombre_employee", ""))))
+        if person is None:
+            continue
+        filas_por_persona.setdefault(person.employee_id, []).append(row)
+
+    for employee_id, filas in filas_por_persona.items():
+        out[employee_id] = expand_absence_day_types(filas, anio, holiday_dates)
+    return out
+
+
+def unmatched_absence_names(
+    absences: pd.DataFrame, people: list[AttendancePerson]
+) -> list[str]:
+    """Nombres de Vacaciones que no cuadran con ningun usuario del CRM."""
+    approved = approved_absences(absences)
+    if approved.empty:
+        return []
+    ids = {p.employee_id for p in people}
+    nombres = {_normalize_name(p.nombre) for p in people}
+    sueltos: set[str] = set()
+    for row in approved.to_dict("records"):
+        if str(row.get("employee_id", "")).strip() in ids:
+            continue
+        nombre = str(row.get("nombre_employee", "")).strip()
+        if _normalize_name(nombre) in nombres:
+            continue
+        sueltos.add(nombre or str(row.get("employee_id", "")).strip())
+    return sorted(n for n in sueltos if n)
+
+
 # ------------------------------------------------------------- registros
 
 
@@ -478,6 +533,8 @@ class MonthSummary:
     dias_exigidos: int
     dias_registrados: int
     dias_teletrabajo_auto: int
+    mes_en_curso: bool
+    sin_datos: bool
     horas_exigidas: float
     horas_registradas: float
     horas_teletrabajo: float
@@ -492,13 +549,22 @@ def month_summary(
     records: pd.DataFrame,
     holiday_dates: set[date],
     absence_days: dict[date, str],
+    today: date | None = None,
 ) -> MonthSummary | None:
-    """Resumen de un mes para una persona, o ``None`` si no tiene jornada."""
+    """Resumen de un mes para una persona, o ``None`` si no tiene jornada.
+
+    Del mes en curso solo se exigen los dias que ya han pasado: pedir el mes
+    entero el dia 5 sacaria un saldo negativo enorme que no significa nada.
+    """
     jornada = person.jornada_for(anio, mes)
     if jornada is None:
         return None
 
+    referencia = today or date.today()
+    mes_en_curso = (anio, mes) == (referencia.year, referencia.month)
     laborables = business_days(anio, mes, holiday_dates)
+    if mes_en_curso:
+        laborables = [d for d in laborables if d <= referencia]
     dias_ausencia = [d for d in laborables if absence_days.get(d) == "ausencia"]
     dias_exigidos = [d for d in laborables if absence_days.get(d) != "ausencia"]
 
@@ -530,6 +596,8 @@ def month_summary(
         dias_exigidos=len(dias_exigidos),
         dias_registrados=len(filas),
         dias_teletrabajo_auto=len(teletrabajo_auto),
+        mes_en_curso=mes_en_curso,
+        sin_datos=not filas and not teletrabajo_auto,
         horas_exigidas=horas_exigidas,
         horas_registradas=horas_registradas,
         horas_teletrabajo=horas_teletrabajo,
@@ -557,9 +625,10 @@ def year_summary(
     today: date | None = None,
 ) -> pd.DataFrame:
     """Tabla persona x mes con horas exigidas, hechas, saldo y acumulado."""
+    referencia = today or date.today()
     holiday_set = holiday_dates_for_year(holidays, anio)
-    absence_by_employee = absence_days_by_employee(absences, anio, holiday_set)
-    meses = months_of_year(anio, today)
+    absence_by_employee = absence_days_for_people(absences, people, anio, holiday_set)
+    meses = months_of_year(anio, referencia)
 
     filas: list[dict[str, object]] = []
     for person in people:
@@ -572,10 +641,15 @@ def year_summary(
                 records,
                 holiday_set,
                 absence_by_employee.get(person.employee_id, {}),
+                today=referencia,
             )
             if resumen is None:
                 continue
-            acumulado = round(acumulado + resumen.saldo, 2)
+            # Un mes sin ningun registro no suma al acumulado: casi siempre
+            # significa que falta subir el informe, no que no se trabajara.
+            # En cuanto se procese, el mes entra solo.
+            if not resumen.sin_datos:
+                acumulado = round(acumulado + resumen.saldo, 2)
             fila = resumen.__dict__.copy()
             fila["saldo_acumulado"] = acumulado
             filas.append(fila)

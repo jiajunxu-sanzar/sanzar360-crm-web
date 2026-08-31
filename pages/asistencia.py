@@ -108,6 +108,15 @@ def render(_: pd.DataFrame) -> None:
     _render_action_bar(is_admin)
     _render_open_dialog(people, records, absences, holidays, is_admin)
 
+    sueltos = core.unmatched_absence_names(absences, people)
+    if sueltos:
+        st.warning(
+            "Estas personas tienen ausencias en Vacaciones pero no cuadran con ningun "
+            "usuario de `Usuarios CRM`, asi que sus vacaciones no se estan descontando: "
+            + ", ".join(sueltos)
+            + ". Revisa que el `employee_id` sea el mismo en las dos hojas."
+        )
+
     anio, mes_num, persona = _render_filters(people, records)
     resumen = core.year_summary(people, anio, records, holidays, absences)
 
@@ -234,7 +243,16 @@ _COLUMNAS_VISIBLES = {
     "horas_computadas": "Horas hechas",
     "saldo": "Saldo mes",
     "saldo_acumulado": "Saldo acumulado",
+    "estado": "Estado",
 }
+
+
+def _estado_mes(fila: pd.Series) -> str:
+    if bool(fila.get("sin_datos", False)):
+        return "sin datos"
+    if bool(fila.get("mes_en_curso", False)):
+        return "en curso"
+    return "cerrado"
 
 
 def _render_person_dashboard(
@@ -252,6 +270,8 @@ def _render_person_dashboard(
         )
         return
 
+    con_datos = del_persona[~del_persona["sin_datos"].astype(bool)]
+
     if mes_num is not None:
         fila = del_persona[del_persona["mes_num"] == mes_num]
         if fila.empty:
@@ -260,25 +280,28 @@ def _render_person_dashboard(
             _render_month_metrics(fila.iloc[0])
     else:
         ultimo = del_persona.iloc[-1]
-        total_exigidas = round(float(del_persona["horas_exigidas"].sum()), 2)
-        total_hechas = round(float(del_persona["horas_computadas"].sum()), 2)
+        total_exigidas = round(float(con_datos["horas_exigidas"].sum()), 2)
+        total_hechas = round(float(con_datos["horas_computadas"].sum()), 2)
         c1, c2, c3 = st.columns(3)
         c1.metric("Horas exigidas del ano", f"{total_exigidas:g} h")
         c2.metric("Horas hechas", f"{total_hechas:g} h")
         c3.metric("Saldo acumulado", f"{float(ultimo['saldo_acumulado']):+g} h")
 
     st.subheader("Mes a mes")
-    tabla = del_persona[
-        ["mes", "jornada", "dias_exigidos", "dias_registrados", "horas_exigidas", "horas_computadas", "saldo", "saldo_acumulado"]
+    tabla = del_persona.copy()
+    tabla["estado"] = tabla.apply(_estado_mes, axis=1)
+    tabla = tabla[
+        ["mes", "jornada", "dias_exigidos", "dias_registrados", "horas_exigidas",
+         "horas_computadas", "saldo", "saldo_acumulado", "estado"]
     ].rename(columns=_COLUMNAS_VISIBLES)
     col_tabla, col_grafico = st.columns([3, 2])
     with col_tabla:
         st.dataframe(tabla, width="stretch", hide_index=True)
     with col_grafico:
-        st.bar_chart(del_persona.set_index("mes")[["saldo"]], height=300)
+        st.bar_chart(con_datos.set_index("mes")[["saldo"]], height=300)
 
-    de_mas = del_persona[del_persona["saldo"] > 0]["mes"].tolist()
-    de_menos = del_persona[del_persona["saldo"] < 0]
+    de_mas = con_datos[con_datos["saldo"] > 0]["mes"].tolist()
+    de_menos = con_datos[con_datos["saldo"] < 0]
     if de_mas:
         st.caption("Meses por encima de lo exigido: " + ", ".join(de_mas))
     if not de_menos.empty:
@@ -286,6 +309,12 @@ def _render_person_dashboard(
             f"{row['mes']} ({abs(float(row['saldo'])):g} h)" for _, row in de_menos.iterrows()
         )
         st.caption("Meses por debajo: " + faltan)
+    vacios = del_persona[del_persona["sin_datos"].astype(bool)]["mes"].tolist()
+    if vacios:
+        st.caption(
+            "Sin ningun registro (no suman al acumulado hasta que se procese el informe): "
+            + ", ".join(vacios)
+        )
 
     st.divider()
     _render_detalle(records, anio, mes_num, del_persona.iloc[0]["employee_id"])
@@ -302,7 +331,14 @@ def _render_month_metrics(fila: pd.Series) -> None:
         help="Positivo: horas de mas. Negativo: horas que faltan para cumplir.",
     )
     c4.metric("Saldo acumulado del ano", f"{float(fila['saldo_acumulado']):+g} h")
+    if bool(fila.get("sin_datos", False)):
+        st.info(
+            "Ese mes no tiene ningun registro, asi que no cuenta en el saldo acumulado. "
+            "Procesa su informe de fichajes para que entre."
+        )
     detalle = [f"Jornada de {float(fila['jornada']):g} h", f"{int(fila['dias_exigidos'])} dias exigidos"]
+    if bool(fila.get("mes_en_curso", False)):
+        detalle.append("mes en curso: solo se exigen los dias ya pasados")
     if int(fila["dias_ausencia"]):
         detalle.append(f"{int(fila['dias_ausencia'])} dias de vacaciones o ausencia descontados")
     if int(fila["dias_teletrabajo_auto"]):
@@ -313,6 +349,8 @@ def _render_month_metrics(fila: pd.Series) -> None:
 def _render_team_dashboard(resumen: pd.DataFrame, anio: int, mes_num: int | None) -> None:
     if mes_num is not None:
         vista = resumen[resumen["mes_num"] == mes_num].copy()
+        if not vista.empty:
+            vista["estado"] = vista.apply(_estado_mes, axis=1)
         titulo = f"Resumen de {core.MESES_ES[mes_num]} {anio}"
     else:
         # La jornada puede cambiar de un mes a otro, asi que el resumen anual
@@ -321,8 +359,14 @@ def _render_team_dashboard(resumen: pd.DataFrame, anio: int, mes_num: int | None
         ultimos = resumen[resumen["mes_num"] == ultimo_mes][
             ["employee_id", "jornada", "saldo_acumulado"]
         ]
+        # Los meses sin ningun registro no aportan nada a los totales, igual
+        # que no aportan al acumulado.
+        aportan = resumen.copy()
+        vacios = aportan["sin_datos"].astype(bool)
+        for columna in ("dias_exigidos", "dias_registrados", "horas_exigidas", "horas_computadas", "saldo"):
+            aportan.loc[vacios, columna] = 0
         vista = (
-            resumen.groupby(["employee_id", "nombre"], as_index=False)
+            aportan.groupby(["employee_id", "nombre"], as_index=False)
             .agg(
                 dias_exigidos=("dias_exigidos", "sum"),
                 dias_registrados=("dias_registrados", "sum"),
@@ -354,7 +398,11 @@ def _render_team_dashboard(resumen: pd.DataFrame, anio: int, mes_num: int | None
         )
     with col_grafico:
         st.bar_chart(vista.set_index("nombre")[["saldo"]], height=320)
-    st.caption("Saldo positivo: horas de mas. Saldo negativo: horas que faltan para cumplir.")
+    st.caption(
+        "Saldo positivo: horas de mas. Saldo negativo: horas que faltan para cumplir. "
+        "Del mes en curso solo se exigen los dias que ya han pasado, y los meses sin "
+        "ningun registro no cuentan hasta que se procese su informe."
+    )
 
 
 def _render_detalle(records: pd.DataFrame, anio: int, mes_num: int | None, employee_id: str) -> None:
@@ -436,14 +484,18 @@ exigido, asi que aparece como horas que faltan.
 
 **Horas exigidas del mes.** Jornada de la persona por los dias laborables del
 mes (lunes a viernes, sin los festivos de la hoja `Vacaciones_Festivos`),
-descontando los dias de vacaciones y ausencias aprobadas en Vacaciones.
+descontando los dias de vacaciones y ausencias aprobadas en Vacaciones. Del mes
+en curso solo se exigen los dias que ya han pasado.
 
 **Teletrabajo.** Los dias de teletrabajo aprobado se dan por cumplidos con la
 jornada completa aunque no haya fichaje. Si ademas hay registro de ese dia,
 manda el registro.
 
 **Saldo.** Horas hechas menos horas exigidas. El acumulado suma los saldos de
-los meses del ano, de enero al mes en curso.
+los meses del ano, de enero al mes en curso. Los meses que no tienen ningun
+registro se marcan como "sin datos" y no suman: un mes vacio casi siempre
+significa que falta subir su informe, no que no se trabajara. En cuanto se
+procesa, entra solo.
 
 **Dias sueltos anadidos a mano.** Se marcan como origen `manual` y no se pierden
 al reprocesar un informe: al volver a subir un mes solo se reescriben los dias
