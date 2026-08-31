@@ -7,7 +7,7 @@ facturas y pricing.
 ## Ejecutar En Local
 
 ```bash
-cd /Users/davidxu/Documents/sanzar-crm-web
+cd "/Users/davidxu/Documents/sanzar/2 - operaciones/sanzar-crm-web"
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

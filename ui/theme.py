@@ -1432,6 +1432,58 @@ def apply_theme() -> None:
         .sanzar-legend-ausencia::before  { background: #fecaca; border: 1px solid #fca5a5; }
         .sanzar-legend-teletrabajo::before { background: #fef08a; border: 1px solid #fde047; }
         .sanzar-legend-festivo::before   { background: #dbeafe; border: 1px solid #93c5fd; }
+        .sanzar-legend-ocupado::before   { background: #e2e8f0; border: 1px solid #cbd5e1; }
+
+        /* Asistencia — calendario de seleccion multiple de dias.
+           El estado del dia viaja en el sufijo de la key del checkbox:
+           reg_ (ya tiene registro), aus_ (vacaciones o ausencia),
+           tel_ (teletrabajo aprobado), fes_ (festivo o fin de semana). */
+        .asis-cal-head {
+          text-align: center;
+          font-size: 0.72rem;
+          font-weight: 700;
+          color: #475569;
+          margin: 2px 0 0 0;
+        }
+        .asis-cal-empty {
+          margin: 0;
+          min-height: 30px;
+        }
+        [class*="st-key-asis_day_"] {
+          border: 1px solid var(--ui-border);
+          border-radius: 6px;
+          padding: 2px 4px;
+          margin-bottom: 4px;
+          background: #ffffff;
+        }
+        [class*="st-key-asis_day_fes_"] {
+          background: #dbeafe;
+          border-color: #93c5fd;
+        }
+        [class*="st-key-asis_day_tel_"] {
+          background: #fef08a;
+          border-color: #fde047;
+        }
+        [class*="st-key-asis_day_reg_"] {
+          background: #e2e8f0;
+          border-color: #cbd5e1;
+        }
+        [class*="st-key-asis_day_aus_"] {
+          background: #fecaca;
+          border-color: #fca5a5;
+        }
+        /* Lo marcado manda sobre el color de estado. */
+        [class*="st-key-asis_day_"]:has(input:checked) {
+          background: #dcfce7;
+          border-color: #86efac;
+        }
+        [class*="st-key-asis_day_"] label {
+          gap: 4px;
+        }
+        [class*="st-key-asis_day_"] label p {
+          font-size: 0.78rem;
+          margin: 0;
+        }
 
         /* Form section titles — override inline pastel blocks for one neutral look */
         .sanzar-form-section-title {

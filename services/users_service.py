@@ -9,7 +9,20 @@ from app.navigation import ROLE_ADMIN, ROLE_EMPLOYEE, ROLE_SALES, ROLES_WITH_ACC
 from services.sheets_service import SheetsService
 
 USERS_WS = "Usuarios CRM"
-USER_HEADERS = ["nombre", "employee_id", "rol", "password"]
+USER_HEADERS = [
+    "nombre",
+    "employee_id",
+    "rol",
+    "password",
+    # Columnas de control de asistencia. ``nombre_fichaje`` es el nombre tal y
+    # como aparece en los informes de la maquina de fichar (se rellena a mano
+    # en la hoja); ``jornada`` son las horas diarias habituales y
+    # ``jornada_excepciones`` los meses que se salen de esa jornada, con
+    # formato "2026-07:8, 2026-08:8".
+    "nombre_fichaje",
+    "jornada",
+    "jornada_excepciones",
+]
 
 
 @dataclass(frozen=True)
@@ -18,6 +31,9 @@ class AppUser:
     nombre: str
     role: str
     password: str
+    nombre_fichaje: str = ""
+    jornada: str = ""
+    jornada_excepciones: str = ""
 
 
 def _default_users() -> list[AppUser]:
@@ -57,6 +73,9 @@ def ensure_users_sheet_seed(sheets: SheetsService) -> None:
             "employee_id": user.employee_id,
             "rol": user.role,
             "password": user.password,
+            "nombre_fichaje": user.nombre_fichaje,
+            "jornada": user.jornada,
+            "jornada_excepciones": user.jornada_excepciones,
         }
         for user in _default_users()
     ]
@@ -78,7 +97,17 @@ def load_users(sheets: SheetsService) -> list[AppUser]:
         password = str(row.get("password", "")).strip()
         if not employee_id or not nombre:
             continue
-        out.append(AppUser(employee_id=employee_id, nombre=nombre, role=role, password=password))
+        out.append(
+            AppUser(
+                employee_id=employee_id,
+                nombre=nombre,
+                role=role,
+                password=password,
+                nombre_fichaje=str(row.get("nombre_fichaje", "")).strip(),
+                jornada=str(row.get("jornada", "")).strip(),
+                jornada_excepciones=str(row.get("jornada_excepciones", "")).strip(),
+            )
+        )
     return out or _default_users()
 
 

@@ -30,6 +30,7 @@ PAGES: Final[tuple[str, ...]] = (
     "Clientes",
     "Usuarios",
     "Vacaciones",
+    "Asistencia",
     "Buscador sensores/SIM",
     "Mapa",
     "Email",
@@ -52,6 +53,7 @@ PAGE_MENU_LABELS: Final[dict[str, str]] = {
     "Clientes": "🏢 Clientes",
     "Usuarios": "🔐 Usuarios",
     "Vacaciones": "🏖️ Vacaciones",
+    "Asistencia": "🕐 Asistencia",
     "Buscador sensores/SIM": "🔎 Buscador sensores/SIM",
     "Mapa": "🗺️ Mapa",
     "Email": "✉️ Email",
@@ -80,6 +82,7 @@ PAGE_ICONS: Final[dict[str, str]] = {
     "Clientes": ":material/potted_plant:",
     "Usuarios": ":material/admin_panel_settings:",
     "Vacaciones": ":material/beach_access:",
+    "Asistencia": ":material/schedule:",
     "Buscador sensores/SIM": ":material/search:",
     "Mapa": ":material/map:",
     "Email": ":material/mail:",
@@ -102,6 +105,7 @@ PAGE_DESCRIPTIONS: Final[dict[str, str]] = {
     "Clientes": "Tablero diario de clientes y potenciales",
     "Usuarios": "Gestión de usuarios y roles del CRM",
     "Vacaciones": "Ausencias, teletrabajo y festivos del equipo",
+    "Asistencia": "Horas trabajadas, saldo mensual y registro de jornadas",
     "Buscador sensores/SIM": "Localiza un activo por serial o SIM y consulta su disponibilidad",
     "Mapa": "Contactos geolocalizados sobre el mapa",
     "Email": "Envío de emails con plantillas y seguimiento",
@@ -148,6 +152,7 @@ NAV_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
         "Equipo",
         (
             "Vacaciones",
+            "Asistencia",
             "Usuarios",
         ),
     ),
@@ -200,7 +205,7 @@ PAGES_ADMIN_USE_ONLY: Final[frozenset[str]] = frozenset({"Licitaciones"})
 AGRO_TEAM_DENIED_PAGES: Final[frozenset[str]] = _PAGES_EXCLUSIVE_TO_ADMIN
 
 _EMPLOYEE_TAB_KEYS: Final[frozenset[str]] = frozenset(
-    {"Vacaciones", "Compras", "Facturas"}
+    {"Vacaciones", "Asistencia", "Compras", "Facturas"}
 )
 EMPLOYEE_ALLOWED_PAGES: Final[tuple[str, ...]] = tuple(p for p in PAGES if p in _EMPLOYEE_TAB_KEYS)
 

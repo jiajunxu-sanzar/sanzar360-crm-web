@@ -30,6 +30,7 @@ from services.contacts_schema import init_contacts_schema
 from pages import (
     actions_dashboard,
     alarms,
+    asistencia,
     asset_search,
     clientes,
     contacts,
@@ -99,6 +100,7 @@ def _close_all_overlays() -> None:
         "new_contact_confirmed_override",
         "vac_manage_absences_open",
         "vacaciones.manage_absences_open",
+        "asistencia.dialog_open",
         "pricing_open_dialog",
     ):
         st.session_state.pop(key, None)
@@ -379,6 +381,8 @@ elif page == "Buscador sensores/SIM":
     asset_search.render(contacts_df)
 elif page == "Vacaciones":
     vacaciones.render(contacts_df)
+elif page == "Asistencia":
+    asistencia.render(contacts_df)
 elif page == "Centro de alarmas":
     alarms.render(contacts_df)
 elif page == "Mapa":

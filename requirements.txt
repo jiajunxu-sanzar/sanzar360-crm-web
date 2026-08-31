@@ -12,6 +12,7 @@ geopy
 plotly
 reportlab
 openpyxl
+xlrd
 pillow
 jinja2
 pytest
