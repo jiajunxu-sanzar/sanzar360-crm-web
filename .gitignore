@@ -11,3 +11,6 @@ dist/
 
 _to_delete/
 .DS_Store
+
+# Vista previa local del resumen diario (scripts/send_daily_digest.py --dry-run)
+daily_digest_preview.html

@@ -57,7 +57,7 @@ SELECT_OPTIONS = {
     "metodo_pago": ["transferencia", "tarjeta", "recibo", "efectivo", "otro"],
     "estado_suscripcion": ["activa", "caduca pronto", "inactiva"],
     "tipo_incidencia": ["sensor", "conectividad", "riego", "facturación", "campaña", "otro"],
-    "estado": ["abierta", "en curso", "bloqueada", "cerrada"],
+    "estado": ["abierta", "en curso", "bloqueada", "pendiente de aprobar", "cerrada"],
     "estado_cierre_campana": ["abierto", "cerrado"],
     "prioridad": ["alta", "media", "baja"],
     "resultado_contacto": list(RESULTADO_CONTACTO_OPCIONES),
@@ -69,6 +69,9 @@ SELECT_OPTIONS = {
     "tipo_tarea": list(TIPO_TAREA_OPCIONES),
     "estado_tarea": list(ESTADO_TAREA_OPCIONES),
 }
+
+# Manual de uso del CRM (Google Docs). Antes colgaba de la pestaña Clientes.
+MANUAL_CRM_URL = "https://docs.google.com/document/d/1n4trakXtEXnXpTGld89RQvLyiBzlImVM/edit"
 
 CONTACT_LIST_PANEL_HEIGHT_BASE = 920
 CONTACT_LIST_PANEL_HEIGHT_WITH_DETAIL = 1240

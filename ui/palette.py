@@ -164,10 +164,12 @@ def history_subscription_style(value: str) -> VisualStatusStyle:
 
 
 def history_incident_modifier(estado: str) -> str:
-    """CSS modifier for incident history cards (open=green, closed=red)."""
+    """CSS modifier for incident history cards (open=green, pending=amber, closed=red)."""
     text = _normalize_visual_text(estado)
     if text in {"cerrada", "cerrado", "resuelta", "resuelto"}:
         return "fallido"
+    if text in {"pendiente de aprobar", "pendiente aprobar", "pendiente de aprobacion"}:
+        return "warning"
     if text in {"abierta", "en curso", "bloqueada"}:
         return "exitoso"
     return "neutral"
@@ -177,6 +179,8 @@ def history_incident_style(value: str) -> VisualStatusStyle:
     modifier = history_incident_modifier(value)
     if modifier == "exitoso":
         return STATUS_SUCCESS
+    if modifier == "warning":
+        return STATUS_WARNING
     if modifier == "fallido":
         return STATUS_DANGER
     return STATUS_NEUTRAL
@@ -197,6 +201,8 @@ def incident_status_style(value: object) -> VisualStatusStyle:
     text = _normalize_visual_text(value)
     if text in {"cerrada", "cerrado", "resuelta", "resuelto"}:
         return STATUS_SUCCESS
+    if text in {"pendiente de aprobar", "pendiente aprobar", "pendiente de aprobacion"}:
+        return STATUS_WARNING
     if text:
         return STATUS_DANGER
     return STATUS_NEUTRAL

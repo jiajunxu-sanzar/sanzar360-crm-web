@@ -38,7 +38,9 @@ def test_pending_tareas_inbox_count_includes_due_tarea_and_blog() -> None:
     assert pending_tareas_inbox_count(tareas, blogs, today=today) == 2
 
 
-def test_pending_tareas_inbox_count_includes_visto_hoy() -> None:
+def test_pending_tareas_inbox_count_ignora_contactos() -> None:
+    # La alarma «Visto hoy» se eliminó con la pestaña Clientes: pasar contactos
+    # ya no suma nada, solo cuenta el hueco semanal de blog.
     today = date(2026, 7, 16)
     contacts = pd.DataFrame(
         [
@@ -50,5 +52,4 @@ def test_pending_tareas_inbox_count_includes_visto_hoy() -> None:
             }
         ]
     )
-    # weekly blog gap (1) + visto hoy pending (1)
-    assert pending_tareas_inbox_count([], [], contacts_df=contacts, today=today) == 2
+    assert pending_tareas_inbox_count([], [], contacts_df=contacts, today=today) == 1

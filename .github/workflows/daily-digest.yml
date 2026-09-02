@@ -1,0 +1,93 @@
+name: Resumen diario CRM (6:00 Madrid)
+
+# GitHub Actions solo entiende UTC, así que se dispara a las 04:00 y a las
+# 05:00 UTC y el primer paso corta la ejecución que no corresponda: en horario
+# de verano (CEST, UTC+2) vale la de 04:00 y en invierno (CET, UTC+1) la de
+# 05:00. Así el correo sale siempre a las 6:00 hora de Madrid sin tocar nada
+# dos veces al año.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Solo generar el resumen, sin enviarlo"
+        type: boolean
+        default: false
+      fecha:
+        description: "Fecha de referencia DD/MM/AAAA (vacío = hoy)"
+        type: string
+        default: ""
+
+concurrency:
+  group: daily-digest
+  cancel-in-progress: false
+
+jobs:
+  enviar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Comprobar que en Madrid son las 6
+        id: hora
+        run: |
+          HORA_MADRID=$(TZ=Europe/Madrid date +%H)
+          echo "Hora en Madrid: ${HORA_MADRID}"
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "seguir=true" >> "$GITHUB_OUTPUT"
+          elif [ "$HORA_MADRID" = "06" ]; then
+            echo "seguir=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No son las 6:00 en Madrid; esta ejecución no envía nada."
+            echo "seguir=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.hora.outputs.seguir == 'true'
+
+      - uses: actions/setup-python@v5
+        if: steps.hora.outputs.seguir == 'true'
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependencias
+        if: steps.hora.outputs.seguir == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas gspread google-auth python-dotenv
+
+      - name: Escribir credenciales de la cuenta de servicio
+        if: steps.hora.outputs.seguir == 'true'
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          mkdir -p config/credentials
+          printf '%s' "$GOOGLE_SERVICE_ACCOUNT_JSON" > config/credentials/service_account.json
+          python -c "import json;json.load(open('config/credentials/service_account.json'));print('credenciales OK')"
+
+      - name: Enviar resumen diario
+        if: steps.hora.outputs.seguir == 'true'
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_WORKSHEET_NAME: ${{ vars.GOOGLE_WORKSHEET_NAME || 'Contacts' }}
+          GOOGLE_ACTIVITY_LOG_WORKSHEET_NAME: ${{ vars.GOOGLE_ACTIVITY_LOG_WORKSHEET_NAME || 'HistoricoSeguimientoComercial' }}
+          GOOGLE_SERVICE_ACCOUNT_PATH: config/credentials/service_account.json
+          SMTP_PROFILE_JIAJUN_HOST: ${{ secrets.SMTP_PROFILE_JIAJUN_HOST }}
+          SMTP_PROFILE_JIAJUN_PORT: ${{ secrets.SMTP_PROFILE_JIAJUN_PORT }}
+          SMTP_PROFILE_JIAJUN_USER: ${{ secrets.SMTP_PROFILE_JIAJUN_USER }}
+          SMTP_PROFILE_JIAJUN_PASSWORD: ${{ secrets.SMTP_PROFILE_JIAJUN_PASSWORD }}
+          SMTP_PROFILE_JIAJUN_USE_TLS: "true"
+          DAILY_DIGEST_SMTP_PROFILE: jiajun
+          DAILY_DIGEST_RECIPIENTS: ${{ vars.DAILY_DIGEST_RECIPIENTS || 'carla.moreno@sanzar-group.com,david.ortiz@sanzar-group.com,info@sanzar-group.com,jiajun.xu@sanzar-group.com' }}
+          DAILY_DIGEST_SEND_IF_EMPTY: "true"
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${{ inputs.fecha }}" ]; then ARGS="$ARGS --fecha ${{ inputs.fecha }}"; fi
+          python -m scripts.send_daily_digest $ARGS
+
+      - name: Borrar credenciales
+        if: always()
+        run: rm -f config/credentials/service_account.json

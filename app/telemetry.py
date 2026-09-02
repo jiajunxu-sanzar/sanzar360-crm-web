@@ -6,7 +6,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass, asdict
 from typing import Any, Iterator
 
-import streamlit as st
+try:  # Streamlit no está en los scripts de cron (p. ej. el resumen diario).
+    import streamlit as st
+except ModuleNotFoundError:  # pragma: no cover - entorno sin Streamlit
+    st = None  # type: ignore[assignment]
 
 logger = logging.getLogger("sanzar.crm.web")
 
@@ -23,10 +26,13 @@ def _events_buffer() -> list[dict[str, Any]]:
     """Buffer de eventos de telemetría dentro de ``session_state``.
 
     Si el ``session_state`` no persiste (p. ej. ejecución fuera del runtime
-    de Streamlit, como en algunos tests unitarios) devolvemos una lista
+    de Streamlit, como en algunos tests unitarios o en el cron del resumen
+    diario, donde Streamlit ni siquiera está instalado) devolvemos una lista
     efímera en vez de propagar un ``KeyError``: la telemetría es accesoria,
     no debe romper la lógica de negocio.
     """
+    if st is None:
+        return []
     try:
         buffer = st.session_state["telemetry_events"]
         if isinstance(buffer, list):

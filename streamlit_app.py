@@ -32,10 +32,10 @@ from pages import (
     alarms,
     asistencia,
     asset_search,
-    clientes,
     contacts,
     dashboard,
     email,
+    incidencias,
     inventory,
     invoices,
     map,
@@ -370,8 +370,8 @@ elif page == ACCIONES_PAGE:
     actions_dashboard.render()
 elif page == "Contactos":
     contacts.render(contacts_df)
-elif page == "Clientes":
-    clientes.render(contacts_df)
+elif page == "Incidencias":
+    incidencias.render(contacts_df)
 elif page == "Usuarios":
     if normalize_role(selected_user.role) != ROLE_ADMIN:
         st.error("La sección Usuarios solo está disponible para administradores.")

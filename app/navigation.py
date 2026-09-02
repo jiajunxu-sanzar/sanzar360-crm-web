@@ -27,7 +27,7 @@ PAGES: Final[tuple[str, ...]] = (
     "Acciones",
     "Centro de alarmas",
     "Contactos",
-    "Clientes",
+    "Incidencias",
     "Usuarios",
     "Vacaciones",
     "Asistencia",
@@ -50,7 +50,7 @@ PAGE_MENU_LABELS: Final[dict[str, str]] = {
     "Acciones": "⚡ Acciones",
     "Centro de alarmas": "🚨 Centro de alarmas",
     "Contactos": "👥 Contactos",
-    "Clientes": "🏢 Clientes",
+    "Incidencias": "🛟 Incidencias",
     "Usuarios": "🔐 Usuarios",
     "Vacaciones": "🏖️ Vacaciones",
     "Asistencia": "🕐 Asistencia",
@@ -79,7 +79,7 @@ PAGE_ICONS: Final[dict[str, str]] = {
     "Acciones": ":material/bolt:",
     "Centro de alarmas": ":material/notifications_active:",
     "Contactos": ":material/group:",
-    "Clientes": ":material/potted_plant:",
+    "Incidencias": ":material/report:",
     "Usuarios": ":material/admin_panel_settings:",
     "Vacaciones": ":material/beach_access:",
     "Asistencia": ":material/schedule:",
@@ -102,7 +102,7 @@ PAGE_DESCRIPTIONS: Final[dict[str, str]] = {
     "Acciones": "Actividad comercial del equipo por semana y canal",
     "Centro de alarmas": "Bandeja de trabajo: incidencias y seguimientos pendientes",
     "Contactos": "Fichas, seguimiento comercial e históricos",
-    "Clientes": "Tablero diario de clientes y potenciales",
+    "Incidencias": "Incidencias abiertas, pendientes de aprobar y cerradas",
     "Usuarios": "Gestión de usuarios y roles del CRM",
     "Vacaciones": "Ausencias, teletrabajo y festivos del equipo",
     "Asistencia": "Horas trabajadas, saldo mensual y registro de jornadas",
@@ -128,7 +128,7 @@ NAV_SECTIONS: Final[tuple[tuple[str, tuple[str, ...]], ...]] = (
             "Dashboard",
             "Acciones",
             "Contactos",
-            "Clientes",
+            "Incidencias",
             "Centro de alarmas",
             "Mapa",
             "Email",
@@ -224,7 +224,7 @@ def normalize_role(role: str) -> str:
 
 # Pages that load the main Contacts dataframe from Google Sheets (skip on other pages).
 PAGES_REQUIRING_CONTACTS: Final[frozenset[str]] = frozenset(
-    {"Dashboard", "Contactos", "Clientes", "Centro de alarmas", "Mapa", "Email", "Facturas", "Inventario", "Técnico"}
+    {"Dashboard", "Contactos", "Incidencias", "Centro de alarmas", "Mapa", "Email", "Facturas", "Inventario", "Técnico"}
 )
 
 # ── Integrity (fail fast si alguien añade pestañas incoherentes) ────────────

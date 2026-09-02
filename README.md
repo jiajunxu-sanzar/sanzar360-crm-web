@@ -57,6 +57,8 @@ python3 -m compileall app config models services ui pages streamlit_app.py
 - Comprobacion de solapes temporales de sensores entre clientes.
 - Buscador operativo de sensores/SIM con disponibilidad y apertura de ficha.
 - Centro de alarmas como bandeja de trabajo.
+- Pestaña Incidencias: tablero visual de abiertas, pendientes de aprobar y cerradas.
+- Resumen diario por correo a las 6:00 (ver `docs/resumen-diario-6am.md`).
 - Mapa con coordenadas directas.
 - Email con placeholders y preview.
 - Facturas PDF descargables con `reportlab`.

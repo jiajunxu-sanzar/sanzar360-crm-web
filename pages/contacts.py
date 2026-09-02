@@ -53,7 +53,7 @@ from services.contact_sensor_overview import (
     semaforo_display_prefix,
 )
 from services.contact_use_cases import create_empty_contact, save_contact_by_id
-from services.clientes_board import (
+from services.contact_flags import (
     TIPO_RELACION_BOARD,
     is_sheet_true,
     is_visto_hoy,
@@ -81,6 +81,7 @@ from ui.components.contact_overview_table import (
 from ui.components.tables import filter_dataframe
 
 from pages.contacts_common import (  # noqa: F401
+    MANUAL_CRM_URL,
     DATE_COLUMNS_BY_KIND,
     SELECT_OPTIONS,
     CONTACT_LIST_PANEL_HEIGHT_BASE,
@@ -231,7 +232,17 @@ def render(df: pd.DataFrame) -> pd.DataFrame:
             _clear_contact_overlay_state(keep_contact_id=current_selected)
             st.session_state["_contacts_last_selected_id"] = current_selected
 
-        render_page_header("Contactos")
+        header_cols = st.columns([0.84, 0.16], vertical_alignment="center")
+        with header_cols[0]:
+            render_page_header("Contactos")
+        with header_cols[1]:
+            st.link_button(
+                "Manual",
+                MANUAL_CRM_URL,
+                width="stretch",
+                icon=":material/menu_book:",
+                help="Abre el manual de uso del CRM en Google Docs",
+            )
         # Toast en vez de banner: no desplaza el contenido de la página al
         # confirmar un guardado/borrado, así la vista no "salta".
         if st.session_state.get(CONTACTS_SAVE_SUCCESS_KEY):
