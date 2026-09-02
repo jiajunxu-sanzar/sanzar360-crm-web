@@ -37,6 +37,15 @@ GitHub Actions desde este mismo repositorio:
 - Workflow: `.github/workflows/daily-digest.yml`
 - Script: `scripts/send_daily_digest.py`
 - Lógica y maquetación del correo: `services/daily_digest.py`
+- Dependencias del cron: `requirements-cron.txt`
+
+El cron corre con cuatro paquetes (pandas, gspread, google-auth,
+python-dotenv), no con todos los de la app. Si alguien añade a esa cadena
+de imports algo pesado (Streamlit, geopy, folium…) el envío reventaría a
+las 6:00 sin que nadie se entere, así que `tests/test_daily_digest_dependencias.py`
+lo vigila y el workflow comprueba los imports antes de intentar enviar.
+Cuando haga falta una dependencia nueva, mira primero si el import se
+puede hacer perezoso (dentro de la función) antes de engordar el cron.
 
 GitHub Actions solo entiende UTC, así que el workflow se dispara a las **04:00
 y 05:00 UTC** y el primer paso corta la ejecución que no toque: en horario de

@@ -2,11 +2,18 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from geopy.geocoders import Nominatim
-
 
 @lru_cache(maxsize=1000)
 def geocode_address(address: str) -> tuple[float, float] | None:
+    """Geocodifica una dirección con Nominatim.
+
+    ``geopy`` se importa aquí dentro y no arriba a propósito: este módulo lo
+    arrastra ``history_service``, y los scripts de cron (resumen diario)
+    importan esa cadena sin necesitar geocodificación. Con el import perezoso
+    el cron corre con cuatro dependencias en vez de con todas las de la app.
+    """
+    from geopy.geocoders import Nominatim
+
     address = (address or "").strip()
     if not address:
         return None

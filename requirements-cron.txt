@@ -1,0 +1,8 @@
+# Dependencias del cron del resumen diario (.github/workflows/daily-digest.yml).
+# Deliberadamente mínimas: el script no arranca Streamlit ni dibuja mapas.
+# Si alguna vez hay que añadir algo aquí, revisa antes si el import se puede
+# hacer perezoso; tests/test_daily_digest_dependencias.py vigila esa frontera.
+pandas
+gspread
+google-auth
+python-dotenv
