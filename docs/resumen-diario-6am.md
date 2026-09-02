@@ -66,8 +66,8 @@ Solo si algún día hay que cambiarlos sin tocar el código:
 | Nombre | Valor por defecto si no se crea |
 |---|---|
 | `DAILY_DIGEST_RECIPIENTS` | Las cuatro direcciones de arriba, separadas por coma |
-| `GOOGLE_WORKSHEET_NAME` | `Contacts` |
-| `GOOGLE_ACTIVITY_LOG_WORKSHEET_NAME` | `HistoricoSeguimientoComercial` |
+| `GOOGLE_WORKSHEET_NAME` | `contacts` |
+| `GOOGLE_ACTIVITY_LOG_WORKSHEET_NAME` | `Acciones` |
 
 La cuenta de servicio necesita permiso de lectura sobre el Google Sheet; es la
 misma que ya usa la app, así que si el CRM lee, esto también.

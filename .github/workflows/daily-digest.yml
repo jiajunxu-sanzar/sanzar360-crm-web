@@ -71,8 +71,8 @@ jobs:
         if: steps.hora.outputs.seguir == 'true'
         env:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          GOOGLE_WORKSHEET_NAME: ${{ vars.GOOGLE_WORKSHEET_NAME || 'Contacts' }}
-          GOOGLE_ACTIVITY_LOG_WORKSHEET_NAME: ${{ vars.GOOGLE_ACTIVITY_LOG_WORKSHEET_NAME || 'HistoricoSeguimientoComercial' }}
+          GOOGLE_WORKSHEET_NAME: ${{ vars.GOOGLE_WORKSHEET_NAME || 'contacts' }}
+          GOOGLE_ACTIVITY_LOG_WORKSHEET_NAME: ${{ vars.GOOGLE_ACTIVITY_LOG_WORKSHEET_NAME || 'Acciones' }}
           GOOGLE_SERVICE_ACCOUNT_PATH: config/credentials/service_account.json
           SMTP_PROFILE_JIAJUN_HOST: ${{ secrets.SMTP_PROFILE_JIAJUN_HOST }}
           SMTP_PROFILE_JIAJUN_PORT: ${{ secrets.SMTP_PROFILE_JIAJUN_PORT }}
